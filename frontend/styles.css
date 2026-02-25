@@ -1089,3 +1089,307 @@ canvas {
   margin-top: 4px;
   font-family: 'Share Tech Mono', monospace;
 }
+
+/* ===== MOBILE TOUCH CONTROLS ===== */
+#mobileControls {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  pointer-events: none;
+}
+
+#mobileControls.active {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 10px 10px;
+}
+
+.touch-joystick-area {
+  width: 150px;
+  height: 150px;
+  position: relative;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-joystick-base {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+.touch-joystick-thumb {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(255, 170, 68, 0.35);
+  border: 2px solid rgba(255, 170, 68, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: background 0.1s;
+}
+
+.touch-joystick-thumb.active {
+  background: rgba(255, 170, 68, 0.55);
+}
+
+.touch-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding-bottom: 10px;
+  pointer-events: auto;
+}
+
+.touch-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0f0f0;
+  font-size: 22px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.1s, transform 0.1s;
+}
+
+.touch-btn:active, .touch-btn.pressed {
+  background: rgba(255, 170, 68, 0.35);
+  border-color: rgba(255, 170, 68, 0.6);
+  transform: scale(0.92);
+}
+
+.touch-btn-fire {
+  width: 80px;
+  height: 80px;
+  font-size: 28px;
+  background: rgba(255, 60, 60, 0.15);
+  border-color: rgba(255, 60, 60, 0.4);
+}
+
+.touch-btn-fire:active, .touch-btn-fire.pressed {
+  background: rgba(255, 60, 60, 0.4);
+  border-color: rgba(255, 60, 60, 0.7);
+}
+
+/* ===== RESPONSIVE / MOBILE ===== */
+@media (max-width: 900px) {
+  body {
+    padding: 10px;
+    overflow-y: auto;
+  }
+
+  #lobbyLayout {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  #globalOnlinePanel,
+  #globalControlsPanel {
+    flex: none;
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
+  }
+
+  #globalControlsPanel {
+    display: none; /* Hide on mobile — players use touch controls */
+  }
+
+  #menu {
+    padding: 24px;
+    max-width: 100%;
+  }
+
+  #menu h2 {
+    font-size: 28px;
+  }
+
+  #menu input {
+    font-size: 18px;
+    padding: 12px 14px;
+  }
+
+  #menu button {
+    font-size: 18px;
+    padding: 14px 22px;
+  }
+
+  #roomListScreen {
+    padding: 24px;
+    max-width: 100%;
+  }
+
+  #roomScreen {
+    padding: 24px;
+    max-width: 100%;
+  }
+
+  #readyScreen {
+    padding: 24px 32px !important;
+    width: 90vw !important;
+    max-width: 400px !important;
+  }
+
+  #readyScreen h2 {
+    font-size: 28px !important;
+  }
+
+  #victoryScreen {
+    padding: 30px 24px;
+    width: 92vw;
+    max-width: 420px;
+  }
+
+  #victoryMessage {
+    font-size: 32px;
+  }
+
+  /* HUD adjustments */
+  #gameUI {
+    width: 100%;
+    border-radius: 0;
+  }
+
+  .hud-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .hud-section {
+    padding: 6px 12px;
+    font-size: 14px;
+  }
+
+  .hud-health {
+    min-width: 150px;
+  }
+
+  .hud-kills #killsDisplay {
+    font-size: 18px;
+  }
+
+  .hud-weapon #shotsDisplay {
+    font-size: 16px;
+  }
+
+  .hud-hp-bar-container {
+    height: 26px;
+  }
+
+  .hud-hp-bar-container #healthDisplay {
+    font-size: 15px;
+  }
+
+  /* Hide keyboard-only controls hint */
+  #inGameControls {
+    display: none !important;
+  }
+
+  /* Kill feed */
+  #killFeed {
+    top: 6px;
+  }
+
+  .kill-entry {
+    font-size: 13px;
+    padding: 4px 10px;
+  }
+
+  /* Scoreboard */
+  #playerList {
+    min-width: 0;
+    width: 90vw;
+    max-width: 360px;
+    padding: 16px;
+  }
+
+  /* Leaderboard modal */
+  #leaderboardModal {
+    min-width: 0 !important;
+    width: 92vw;
+    max-width: 400px;
+    padding: 24px !important;
+  }
+
+  .github-footer-link {
+    display: none;
+  }
+
+  canvas {
+    border-width: 1px;
+  }
+}
+
+@media (max-width: 480px) {
+  #menu {
+    padding: 18px;
+  }
+
+  #menu h2 {
+    font-size: 24px;
+    letter-spacing: 1px;
+  }
+
+  .menu-subtitle {
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+
+  #menu input {
+    font-size: 16px;
+    padding: 10px 12px;
+  }
+
+  .github-link {
+    font-size: 12px;
+  }
+
+  #roomListScreen {
+    padding: 18px;
+  }
+
+  #roomScreen {
+    padding: 18px;
+  }
+
+  #roomReadyBtn {
+    padding: 14px 32px !important;
+    font-size: 20px !important;
+  }
+
+  .room-player .player-name {
+    font-size: 16px;
+  }
+
+  .skin-option {
+    width: 28px;
+    height: 28px;
+  }
+
+  .hud-bar {
+    gap: 0;
+  }
+
+  .hud-section {
+    padding: 5px 8px;
+  }
+}

@@ -3,7 +3,7 @@ const GAME_CONFIG = {
   ARENA_WIDTH: 1400,
   ARENA_HEIGHT: 900,
   PLAYER_RADIUS: 15,
-  PLAYER_SPEED: 6,
+  PLAYER_SPEED: 8,
   SHOTS_PER_MAGAZINE: 30,
   MAX_BLOOD_STAINS: 150,
   MAX_PARTICLES: 100,
@@ -39,10 +39,10 @@ const WEAPON_NAMES = {
   minigun: "🔥 Minigun",
 };
 const WEAPON_COOLDOWNS = {
-  machinegun: 80,
-  shotgun: 800,
-  knife: 300,
-  minigun: 25,
+  machinegun: 60,
+  shotgun: 500,
+  knife: 200,
+  minigun: 18,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
@@ -1320,6 +1320,9 @@ function login() {
       canvas.height = GAME_CONFIG.ARENA_HEIGHT;
       gridCanvas = null; // Invalidate cached grid
       resizeCanvas();
+
+      // Initialize mobile touch controls
+      initMobileControls();
     }
 
     if (data.type === "respawn") {
@@ -1723,6 +1726,10 @@ function login() {
           document.getElementById("readyScreen").style.display = "none";
           document.getElementById("killFeed").style.display = "none";
 
+          // Hide mobile controls
+          const mobileCtrl = document.getElementById("mobileControls");
+          if (mobileCtrl) mobileCtrl.classList.remove("active");
+
           // Show room list (player stays logged in)
           document.getElementById("lobbyLayout").style.display = "";
           document.getElementById("roomListScreen").style.display = "block";
@@ -1794,6 +1801,8 @@ function login() {
     document.getElementById("lobbyLayout").style.display = "";
     document.getElementById("menu").style.display = "block";
     if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
+    const mobileCtrlClose = document.getElementById("mobileControls");
+    if (mobileCtrlClose) mobileCtrlClose.classList.remove("active");
 
     const loginBtn = document.querySelector("#menu button");
     loginBtn.disabled = false;
@@ -2232,6 +2241,210 @@ document.addEventListener("keyup", (e) => {
     }
   }
 });
+
+// ===== MOBILE TOUCH CONTROLS =====
+
+const isTouchDevice = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+let joystickActive = false;
+let joystickTouchId = null;
+let joystickCenterX = 0;
+let joystickCenterY = 0;
+const JOYSTICK_MAX_RADIUS = 45;
+
+function initMobileControls() {
+  const mobileControls = document.getElementById("mobileControls");
+  if (!mobileControls) return;
+  if (!isTouchDevice) return;
+
+  mobileControls.classList.add("active");
+
+  const joystickArea = document.getElementById("joystickArea");
+  const joystickThumb = document.getElementById("joystickThumb");
+  const joystickBase = document.getElementById("joystickBase");
+  const fireBtn = document.getElementById("touchFireBtn");
+  const weaponBtn = document.getElementById("touchWeaponBtn");
+
+  // Joystick touch handling
+  joystickArea.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    if (joystickTouchId !== null) return;
+    const touch = e.changedTouches[0];
+    joystickTouchId = touch.identifier;
+    const rect = joystickBase.getBoundingClientRect();
+    joystickCenterX = rect.left + rect.width / 2;
+    joystickCenterY = rect.top + rect.height / 2;
+    joystickActive = true;
+    joystickThumb.classList.add("active");
+    updateJoystick(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  joystickArea.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === joystickTouchId) {
+        updateJoystick(touch.clientX, touch.clientY);
+        break;
+      }
+    }
+  }, { passive: false });
+
+  const endJoystick = (e) => {
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === joystickTouchId) {
+        joystickTouchId = null;
+        joystickActive = false;
+        joystickThumb.classList.remove("active");
+        joystickThumb.style.left = "60px";
+        joystickThumb.style.top = "60px";
+        // Release all movement keys
+        releaseAllMoveKeys();
+        break;
+      }
+    }
+  };
+
+  joystickArea.addEventListener("touchend", endJoystick);
+  joystickArea.addEventListener("touchcancel", endJoystick);
+
+  function updateJoystick(touchX, touchY) {
+    let dx = touchX - joystickCenterX;
+    let dy = touchY - joystickCenterY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > JOYSTICK_MAX_RADIUS) {
+      dx = (dx / dist) * JOYSTICK_MAX_RADIUS;
+      dy = (dy / dist) * JOYSTICK_MAX_RADIUS;
+    }
+    // Update thumb visual position
+    joystickThumb.style.left = (60 + dx) + "px";
+    joystickThumb.style.top = (60 + dy) + "px";
+
+    // Map to WASD with deadzone
+    const deadzone = 15;
+    const newKeys = { w: false, a: false, s: false, d: false };
+    if (dy < -deadzone) newKeys.w = true;
+    if (dy > deadzone) newKeys.s = true;
+    if (dx < -deadzone) newKeys.a = true;
+    if (dx > deadzone) newKeys.d = true;
+
+    // Send key changes to server
+    applyMobileKeys(newKeys);
+  }
+
+  // Fire button
+  let fireTouchId = null;
+  fireBtn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    fireTouchId = e.changedTouches[0].identifier;
+    fireBtn.classList.add("pressed");
+    isMouseDown = true;
+  }, { passive: false });
+
+  const endFire = (e) => {
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === fireTouchId) {
+        fireTouchId = null;
+        fireBtn.classList.remove("pressed");
+        isMouseDown = false;
+        break;
+      }
+    }
+  };
+  fireBtn.addEventListener("touchend", endFire);
+  fireBtn.addEventListener("touchcancel", endFire);
+
+  // Weapon switch button
+  weaponBtn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    weaponBtn.classList.add("pressed");
+    if (ws && gameReady) {
+      ws.send(JSON.stringify({ type: "switchWeapon" }));
+    }
+    setTimeout(() => weaponBtn.classList.remove("pressed"), 150);
+  }, { passive: false });
+
+  // Touch aiming — touch anywhere on canvas moves the crosshair
+  canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    initAudio();
+    handleCanvasTouch(e);
+  }, { passive: false });
+
+  canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    handleCanvasTouch(e);
+  }, { passive: false });
+
+  function handleCanvasTouch(e) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    mouseX = (touch.clientX - rect.left) * scaleX;
+    mouseY = (touch.clientY - rect.top) * scaleY;
+
+    // Send aim angle
+    if (ws && playerId && gameReady) {
+      const aimAngle = Math.atan2(mouseY - predictedY, mouseX - predictedX);
+      ws.send(JSON.stringify({ type: "aim", aimAngle }));
+    }
+  }
+}
+
+// Track which mobile keys are currently pressed to send only changes
+const mobileKeys = { w: false, a: false, s: false, d: false };
+
+function applyMobileKeys(newKeys) {
+  if (!ws || !gameReady) return;
+
+  for (const key of ["w", "a", "s", "d"]) {
+    if (newKeys[key] !== mobileKeys[key]) {
+      mobileKeys[key] = newKeys[key];
+      inputSequence++;
+
+      currentKeys[key] = newKeys[key];
+
+      const input = {
+        type: newKeys[key] ? "keydown" : "keyup",
+        key: key,
+        sequence: inputSequence,
+        timestamp: Date.now(),
+      };
+      ws.send(JSON.stringify(input));
+
+      pendingInputs.push({
+        sequence: inputSequence,
+        keys: { ...currentKeys },
+        timestamp: Date.now(),
+      });
+
+      const player = players.find((p) => p.id === playerId);
+      if (player) {
+        const predicted = applyInput(
+          predictedX,
+          predictedY,
+          currentKeys,
+          player.weapon,
+          player.speedBoosted,
+        );
+        predictedX = predicted.x;
+        predictedY = predicted.y;
+      }
+    }
+  }
+}
+
+function releaseAllMoveKeys() {
+  applyMobileKeys({ w: false, a: false, s: false, d: false });
+}
+
+// Initialize mobile controls on page load
+if (isTouchDevice) {
+  // Prevent double-tap zoom and pull-to-refresh on mobile
+  document.addEventListener("touchmove", (e) => {
+    if (gameReady) e.preventDefault();
+  }, { passive: false });
+}
 
 // ===== KILL FEED =====
 
