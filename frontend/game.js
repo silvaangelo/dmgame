@@ -1470,28 +1470,27 @@ function login() {
       const ldy = ly - predictedY;
       const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
 
-      // Play lightning sound — louder when closer
-      const maxHearDist = 600;
-      if (ldist < maxHearDist) {
-        const volume = Math.max(0.1, 1.0 - (ldist / maxHearDist));
+      // Only players near the strike hear/feel it
+      const maxEffectDist = lRadius * 2.5;
+      if (ldist < maxEffectDist) {
+        // Sound — louder when closer
+        const volume = Math.max(0.05, 1.0 - ldist / maxEffectDist);
         playSound("lightning", volume, 0.9 + Math.random() * 0.2);
+
+        // Screen shake — stronger when closer
+        const lShake = Math.max(1, 12 * (1 - ldist / maxEffectDist));
+        triggerScreenShake(lShake);
+
+        // Flashbang — strong inside radius, fades out past it
+        if (ldist < lRadius) {
+          flashbangOverlay.alpha = 0.9;
+        } else {
+          const proximity = 1 - (ldist - lRadius) / (maxEffectDist - lRadius);
+          flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, proximity * 0.45);
+        }
       }
 
-      // Screen shake
-      const lShake = Math.max(2, 12 - ldist / 60);
-      triggerScreenShake(lShake);
-
-      // Flashbang effect — if player is inside the radius, apply strong flash
-      if (ldist < lRadius) {
-        // Inside radius: 90% white flash
-        flashbangOverlay.alpha = 0.9;
-      } else if (ldist < lRadius * 3) {
-        // Near radius: partial flash based on proximity
-        const proximity = 1 - ((ldist - lRadius) / (lRadius * 2));
-        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, proximity * 0.6);
-      }
-
-      // Create lightning visual effect
+      // Always create the visual bolt on the map (visible if on screen)
       createLightningStrike(lx, ly, lRadius);
     }
 

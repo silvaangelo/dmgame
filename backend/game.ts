@@ -691,10 +691,10 @@ export function checkVictory(game: Game) {
       clearInterval(game.pickupSpawnInterval);
     }
     if (game.bombSpawnInterval) {
-      clearInterval(game.bombSpawnInterval);
+      clearTimeout(game.bombSpawnInterval);
     }
     if (game.lightningSpawnInterval) {
-      clearInterval(game.lightningSpawnInterval);
+      clearTimeout(game.lightningSpawnInterval);
     }
 
     // Save stats for all players

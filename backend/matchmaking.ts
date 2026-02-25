@@ -368,19 +368,25 @@ function beginMatch(game: Game) {
     }
   }, GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
 
-  game.bombSpawnInterval = setInterval(() => {
-    if (!games.has(game.id)) {
-      clearInterval(game.bombSpawnInterval);
-      return;
-    }
-    spawnBomb(game);
-  }, GAME_CONFIG.BOMB_SPAWN_INTERVAL);
+  // Schedule bombs with randomized timing (0.5x–1.5x base interval)
+  const scheduleBomb = () => {
+    const delay = GAME_CONFIG.BOMB_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.bombSpawnInterval = setTimeout(() => {
+      if (!games.has(game.id)) return;
+      spawnBomb(game);
+      scheduleBomb();
+    }, delay);
+  };
+  scheduleBomb();
 
-  game.lightningSpawnInterval = setInterval(() => {
-    if (!games.has(game.id)) {
-      clearInterval(game.lightningSpawnInterval);
-      return;
-    }
-    spawnLightning(game);
-  }, GAME_CONFIG.LIGHTNING_SPAWN_INTERVAL);
+  // Schedule lightning with randomized timing (0.5x–1.5x base interval)
+  const scheduleLightning = () => {
+    const delay = GAME_CONFIG.LIGHTNING_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.lightningSpawnInterval = setTimeout(() => {
+      if (!games.has(game.id)) return;
+      spawnLightning(game);
+      scheduleLightning();
+    }, delay);
+  };
+  scheduleLightning();
 }
