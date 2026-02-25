@@ -741,6 +741,8 @@ function initAudio() {
   loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
   loadAudioBuffer("readyalarm", `${assetBase}/assets/readyalarm.wav`);
   loadAudioBuffer("lightning", `${assetBase}/assets/lightning-strike.mp3`);
+  loadAudioBuffer("matchwin", `${assetBase}/assets/match-win.mp3`);
+  loadAudioBuffer("matchlose", `${assetBase}/assets/match-lose.mp3`);
 }
 
 async function loadAudioBuffer(name, url) {
@@ -1308,6 +1310,12 @@ function login() {
       stopReadyAlarm();
       document.getElementById("readyScreen").style.display = "none";
 
+      // On large screens, always show the scoreboard
+      if (window.innerWidth > 1200) {
+        const pl = document.getElementById("playerList");
+        if (pl) pl.style.display = "block";
+      }
+
       // Show dramatic game start toast
       showToast("🔥 VAI! 🔥", "#ff6b35");
 
@@ -1470,24 +1478,21 @@ function login() {
       const ldy = ly - predictedY;
       const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
 
-      // Only players near the strike hear/feel it
-      const maxEffectDist = lRadius * 2.5;
-      if (ldist < maxEffectDist) {
-        // Sound — louder when closer
-        const volume = Math.max(0.05, 1.0 - ldist / maxEffectDist);
+      // Only players INSIDE the lightning radius hear/feel it
+      if (ldist < lRadius) {
+        // Proximity: 1.0 at center, 0.0 at edge
+        const proximity = 1.0 - ldist / lRadius;
+
+        // Sound: 100% at center, 50% at edge
+        const volume = 0.5 + proximity * 0.5;
         playSound("lightning", volume, 0.9 + Math.random() * 0.2);
 
-        // Screen shake — stronger when closer
-        const lShake = Math.max(1, 12 * (1 - ldist / maxEffectDist));
+        // Screen shake: stronger at center
+        const lShake = 3 + proximity * 10;
         triggerScreenShake(lShake);
 
-        // Flashbang — strong inside radius, fades out past it
-        if (ldist < lRadius) {
-          flashbangOverlay.alpha = 0.9;
-        } else {
-          const proximity = 1 - (ldist - lRadius) / (maxEffectDist - lRadius);
-          flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, proximity * 0.45);
-        }
+        // Flashbang: 100% white at center, 80% at edge
+        flashbangOverlay.alpha = 0.8 + proximity * 0.2;
       }
 
       // Always create the visual bolt on the map (visible if on screen)
@@ -1722,6 +1727,9 @@ function login() {
       // Determine if local player won
       const localPlayer = data.scoreboard.find((p) => p.username === loggedInUsername);
       const isLocalWinner = localPlayer && localPlayer.isWinner;
+
+      // Play win/lose sound
+      playSound(isLocalWinner ? "matchwin" : "matchlose", 0.8);
 
       // Show victory screen with scoreboard
       const scoreboardHTML = data.scoreboard
@@ -2141,11 +2149,13 @@ const keysPressed = new Set();
 document.addEventListener("keydown", (e) => {
   if (!ws || !gameReady) return;
 
-  // Tab to show scoreboard
+  // Tab to show scoreboard (only needed on small screens; large screens always show it)
   if (e.key === "Tab") {
     e.preventDefault();
-    const pl = document.getElementById("playerList");
-    if (pl) pl.style.display = "block";
+    if (window.innerWidth <= 1200) {
+      const pl = document.getElementById("playerList");
+      if (pl) pl.style.display = "block";
+    }
     return;
   }
 
@@ -2229,11 +2239,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keyup", (e) => {
-  // Tab release hides scoreboard
+  // Tab release hides scoreboard (only on small screens)
   if (e.key === "Tab") {
     e.preventDefault();
-    const pl = document.getElementById("playerList");
-    if (pl) pl.style.display = "none";
+    if (window.innerWidth <= 1200) {
+      const pl = document.getElementById("playerList");
+      if (pl) pl.style.display = "none";
+    }
     return;
   }
 
@@ -3135,8 +3147,8 @@ function renderLightningBolts() {
 
 function updateFlashbang() {
   if (flashbangOverlay.alpha > 0) {
-    // Decay over 2 seconds (from current alpha to 0)
-    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.008);
+    // Decay over ~1 second (from current alpha to 0)
+    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.017);
   }
 }
 

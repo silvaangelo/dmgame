@@ -829,6 +829,26 @@ canvas {
   letter-spacing: 1px;
 }
 
+/* Large screens: scoreboard pinned to top-right, always visible */
+@media (min-width: 1201px) {
+  #playerList {
+    top: 12px;
+    right: 12px;
+    left: auto;
+    transform: none;
+    min-width: 260px;
+    max-width: 300px;
+    padding: 14px 18px;
+    background: rgba(12, 18, 12, 0.75);
+    pointer-events: none;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+  }
+
+  #playerList .tab-hint {
+    display: none;
+  }
+}
+
 /* Kill Feed */
 #killFeed {
   position: fixed;

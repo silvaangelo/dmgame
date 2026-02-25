@@ -63,6 +63,23 @@ function handleKill(
     });
   }
 
+  // Drop a bomb at the victim's death position
+  if (games.has(game.id)) {
+    const deathBomb: Bomb = {
+      id: uuid(),
+      x: victim.x,
+      y: victim.y,
+      createdAt: Date.now(),
+    };
+    game.bombs.push(deathBomb);
+    broadcast(game, {
+      type: "bombSpawned",
+      id: deathBomb.id,
+      x: Math.round(deathBomb.x),
+      y: Math.round(deathBomb.y),
+    });
+  }
+
   checkVictory(game);
 
   if (games.has(game.id)) {
