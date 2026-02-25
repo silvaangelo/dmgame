@@ -368,10 +368,17 @@ function beginMatch(game: Game) {
   }, GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
 
   game.bombSpawnInterval = setInterval(() => {
-    if (games.has(game.id)) {
-      spawnBomb(game);
-    } else {
+    if (!games.has(game.id)) {
       clearInterval(game.bombSpawnInterval);
+      return;
+    }
+    // Spawn a burst of bombs with delay between each
+    for (let i = 0; i < GAME_CONFIG.BOMB_BURST_COUNT; i++) {
+      setTimeout(() => {
+        if (games.has(game.id)) {
+          spawnBomb(game);
+        }
+      }, i * GAME_CONFIG.BOMB_BURST_DELAY);
     }
   }, GAME_CONFIG.BOMB_SPAWN_INTERVAL);
 }
