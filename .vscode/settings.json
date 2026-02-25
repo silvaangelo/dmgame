@@ -1,0 +1,43 @@
+{
+  // ── Editor ──────────────────────────────────────────────
+  "editor.formatOnSave": true,
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.rulers": [100],
+
+  // ── TypeScript ──────────────────────────────────────────
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.preferences.importModuleSpecifierEnding": "js",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // ── JavaScript (frontend) ──────────────────────────────
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // ── ESLint ──────────────────────────────────────────────
+  "eslint.useFlatConfig": true,
+  "eslint.validate": ["typescript", "javascript"],
+
+  // ── Files ───────────────────────────────────────────────
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.exclude": {
+    "dist": true,
+    "node_modules": true
+  },
+
+  // ── Search ──────────────────────────────────────────────
+  "search.exclude": {
+    "dist": true,
+    "node_modules": true,
+    "pnpm-lock.yaml": true
+  }
+}

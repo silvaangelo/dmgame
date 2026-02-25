@@ -1,0 +1,32 @@
+# ─── Production Compose (DigitalOcean Droplet) ─────────────
+# Used by GitHub Actions deploy step.
+# The image is built in CI and pulled on the droplet.
+# ────────────────────────────────────────────────────────────
+
+services:
+  app:
+    image: ${DOCKER_IMAGE:-ghcr.io/your-username/deathmatch-arena:latest}
+    container_name: deathmatch-arena
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    volumes:
+      # Persist player stats/history across deploys
+      - game-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  game-data:

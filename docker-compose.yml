@@ -1,0 +1,36 @@
+services:
+  # ── Development ─────────────────────────────────────────
+  game-dev:
+    build:
+      context: .
+      dockerfile: docker/dev/Dockerfile
+    container_name: deathmatch-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source for live editing (no rebuild needed)
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      # Avoid overwriting container node_modules
+      - /app/node_modules
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+    restart: unless-stopped
+    profiles:
+      - dev
+
+  # ── Production ──────────────────────────────────────────
+  game-prod:
+    build:
+      context: .
+      dockerfile: docker/prod/Dockerfile
+    container_name: deathmatch-prod
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    restart: unless-stopped
+    profiles:
+      - prod

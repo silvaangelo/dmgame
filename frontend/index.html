@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Deathmatch Arena</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+<!-- Lobby Layout: [Online] [Main] [Controls] -->
+<div id="lobbyLayout">
+
+<!-- Left: Online Panel -->
+<div id="globalOnlinePanel">
+  <h3>🟢 Online (<span id="globalOnlineCount">0</span>)</h3>
+  <div id="globalOnlineContent">
+    <p style="color: #8aaa8a; font-style: italic; font-size: 14px;">Conecte para ver jogadores</p>
+  </div>
+</div>
+
+<!-- Center: Main content screens -->
+<div id="lobbyCenter">
+
+<div id="menu">
+  <div class="menu-glow"></div>
+  <h2>⚔ DEATHMATCH</h2>
+  <p class="menu-subtitle">ARENA DE COMBATE</p>
+  <p style="color: #8aaa8a; font-size: 16px; margin-bottom: 20px; font-family: 'Share Tech Mono', monospace; letter-spacing: 1px;">DIGITE SEU CODINOME</p>
+  <input id="username" placeholder="Seu codinome..." maxlength="16" autocomplete="off" />
+  <div id="usernameError" style="color: #ff4444; font-size: 15px; margin: 8px 0; display: none; font-weight: 600; font-family: 'Share Tech Mono', monospace;"></div>
+  <button onclick="login()">ENTRAR</button>
+  <p style="margin-top: 16px; font-size: 15px; color: #7a9a7a; font-family: 'Share Tech Mono', monospace;">🎯 Primeiro a 5 abates vence!</p>
+</div>
+
+<!-- Room List Screen -->
+<div id="roomListScreen" style="display:none;">
+  <h2 style="color: #f0f0f0; margin-bottom: 6px; font-size: 30px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">⚔ DEATHMATCH</h2>
+  <p style="color: #8aaa8a; font-size: 15px; margin-bottom: 20px; font-family: 'Share Tech Mono', monospace;">Entre numa sala ou crie a sua</p>
+  <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; align-items: stretch;">
+    <button id="createRoomBtn" onclick="doCreateRoom()" style="background: linear-gradient(180deg, #ff6b35 0%, #cc4422 100%); border-color: #ff8855; font-size: 24px; padding: 20px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">⚔ JOGAR</button>
+    <button onclick="requestLeaderboard()" style="background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 10px 20px; font-size: 14px;">🏆 Ranking</button>
+  </div>
+  <div id="roomListContent">
+    <p style="color: #8aaa8a; font-style: italic; font-size: 14px;">Nenhuma sala disponível. Crie uma!</p>
+  </div>
+  <div id="matchHistorySection" style="display:none; margin-top: 22px;">
+    <h3 style="color: #ff6b35; font-size: 18px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'Rajdhani', sans-serif;">📜 Partidas Recentes</h3>
+    <div id="matchHistoryContent"></div>
+  </div>
+</div>
+
+<!-- Leaderboard Modal -->
+<div id="leaderboardModal" style="display:none;">
+  <h2 style="color: #ff6b35; margin: 0 0 20px 0; font-size: 28px; text-transform: uppercase; letter-spacing: 3px;">🏆 Ranking Global</h2>
+  <div id="leaderboardContent"></div>
+  <button onclick="document.getElementById('leaderboardModal').style.display='none'" style="margin-top: 18px; padding: 10px 30px; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; font-size: 16px; cursor: pointer; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 2px;">Fechar</button>
+</div>
+
+<!-- Room Screen -->
+<div id="roomScreen" style="display:none;">
+  <h2 id="roomName" style="color: #ff6b35; margin-bottom: 6px; font-size: 28px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">Nome da Sala</h2>
+  <p id="roomCountdown" style="color: #8aaa8a; font-size: 15px; margin-bottom: 16px; font-family: 'Share Tech Mono', monospace;"></p>
+  <div id="roomPlayerList" style="margin-bottom: 14px;"></div>
+  <div id="skinSelector" style="margin-bottom: 14px;">
+    <p style="color: #8aaa8a; font-size: 13px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace;">Escolha sua skin:</p>
+    <div id="skinOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
+  </div>
+  <div style="display: flex; gap: 12px; justify-content: center; flex-direction: column; align-items: center;">
+    <button id="roomReadyBtn" onclick="doRoomReady()">⚔ ESTOU PRONTO! ⚔</button>
+    <button id="roomLeaveBtn" onclick="doLeaveRoom()" style="background: linear-gradient(180deg, #5a3a3a 0%, #4a2a2a 100%); border-color: #6a4a4a; padding: 10px 24px; font-size: 14px;">Sair da Sala</button>
+  </div>
+</div>
+
+</div><!-- end lobbyCenter -->
+
+<!-- Right: Controls & How to Play -->
+<div id="globalControlsPanel">
+  <h4>🎮 Como Jogar</h4>
+  <div style="margin-bottom: 8px;">
+    <div>⚔ Crie ou entre numa sala</div>
+    <div>⚔ Clique <b style="color:#f0f0f0">Pronto</b></div>
+    <div>⏰ Começa em 60s ou todos prontos</div>
+    <div>🎯 Primeiro a 5 abates vence!</div>
+  </div>
+  <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
+    <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔫 Armas</div>
+    <div><b style="color:#f0f0f0">[1]</b> Metralhadora — Rápido</div>
+    <div><b style="color:#f0f0f0">[2]</b> Shotgun — Alto dano</div>
+    <div><b style="color:#f0f0f0">[3]</b> Faca — Corpo a corpo</div>
+  </div>
+  <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px;">
+    <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🖥 Controles</div>
+    <div><kbd>WASD</kbd> / <kbd>↑↓←→</kbd> — Mover</div>
+    <div><kbd>Click</kbd> / <kbd>Espaço</kbd> — Atirar (segure para tiro automático)</div>
+    <div><kbd>Q</kbd> — Trocar Arma</div>
+    <div><kbd>1</kbd> Metralhadora · <kbd>2</kbd> Shotgun · <kbd>3</kbd> Faca</div>
+    <div><kbd>Tab</kbd> — Placar</div>
+  </div>
+</div>
+
+</div><!-- end lobbyLayout -->
+
+<canvas id="game" width="1400" height="900" style="display:none"></canvas>
+
+<div id="playerList" style="display:none;">
+  <h3>⚔ Placar ⚔</h3>
+  <div id="playerListContent"></div>
+  <div class="tab-hint">Segure TAB para ver</div>
+</div>
+
+<div id="readyScreen" style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(12,18,12,0.95); color: #f0f0f0; padding: 44px 64px; border-radius: 4px; text-align: center; z-index: 999; box-shadow: 0 0 60px rgba(0,0,0,0.7); border: 1px solid #4a7a4a;">
+  <h2 style="font-size: 38px; margin: 0 0 14px 0; color: #ff6b35; font-weight: 800; text-transform: uppercase; letter-spacing: 3px; text-shadow: 0 0 20px rgba(255,107,53,0.3);">⚔ DEATHMATCH ⚔</h2>
+  <p style="font-size: 20px; margin: 0 0 10px 0; color: #ffaa44; font-family: 'Share Tech Mono', monospace;">Primeiro a 5 abates vence! 🔥</p>
+  <p id="preGameTimer" style="font-size: 16px; margin: 0 0 18px 0; color: #d9a04a; font-family: 'Share Tech Mono', monospace;"></p>
+  <p style="font-size: 17px; margin: 0 0 28px 0; color: #8aaa8a;">Clique para confirmar que está pronto</p>
+  <button id="readyButton" onclick="confirmReady()" style="padding: 16px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif; transition: all 0.2s;">
+    BORA! 💪
+  </button>
+  <p id="waitingForPlayers" style="font-size: 16px; margin-top: 20px; color: #7a9a7a; font-family: 'Share Tech Mono', monospace;"></p>
+</div>
+
+<div id="victoryScreen" style="display:none;">
+  <h1 id="victoryMessage"></h1>
+  <p id="victorySubtext" style="font-size: 22px; margin: 0 0 14px 0; color: #ffaa44; font-family: 'Share Tech Mono', monospace;"></p>
+  <p id="countdownMessage"></p>
+</div>
+
+<div id="gameUI" style="display:none;">
+  <div class="hud-bar">
+    <div class="hud-section hud-kills">
+      <span id="killsDisplay">🏆 0/5</span>
+    </div>
+    <div class="hud-section hud-health">
+      <div class="hud-hp-bar-container">
+        <div id="hpBarFill" class="hud-hp-bar-fill"></div>
+        <span id="healthDisplay">❤️ 4/4</span>
+      </div>
+    </div>
+    <div class="hud-section hud-weapon">
+      <span id="shotsDisplay">🔫 Pistola | 10/30</span>
+    </div>
+    <div class="hud-section hud-status">
+      <span id="cooldownDisplay"></span>
+      <span id="reloadDisplay"></span>
+      <span id="speedBoostDisplay"></span>
+    </div>
+  </div>
+</div>
+
+<div id="inGameControls" style="display:none;">
+  <div>WASD/Setas Mover · Click/Espaço Atirar (segure = automático)</div>
+  <div>Q Trocar Arma · 1 Metralhadora · 2 Shotgun · 3 Faca · Tab Placar</div>
+</div>
+
+<div id="killFeed" style="display:none;"></div>
+
+<script src="game.js"></script>
+
+</body>
+</html>

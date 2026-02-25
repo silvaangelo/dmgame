@@ -1,0 +1,38 @@
+{
+  "name": "deathmatch-arena",
+  "version": "1.0.0",
+  "description": "Multiplayer deathmatch game",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx backend/index.ts",
+    "build": "tsc",
+    "start": "node dist/backend/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "express": "^5.2.1",
+    "uuid": "^13.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/compression": "^1.8.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.1",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "eslint": "^10.0.1",
+    "globals": "^17.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.0"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  }
+}

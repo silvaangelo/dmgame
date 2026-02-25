@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files
+.env
+.env.production
+.env.local
+.env.*.local
+
+# Game data (persistent stats — generated at runtime)
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.idea/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
