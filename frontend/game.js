@@ -1119,8 +1119,99 @@ function tryShoot() {
 // ===== NETWORKING =====
 
 let loggedInUsername = "";
+let loggedIn = false;
+let sessionToken = "";
 
-function login() {
+// ===== SESSION PERSISTENCE =====
+
+function saveSession(token, username) {
+  sessionToken = token;
+  loggedInUsername = username;
+
+  // Save to localStorage
+  try {
+    localStorage.setItem("dm_token", token);
+    localStorage.setItem("dm_username", username);
+  } catch { /* private browsing */ }
+
+  // Save to cookie (30 days)
+  document.cookie = `dm_token=${token}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Lax`;
+
+  // Set URL hash
+  if (window.location.hash !== `#u=${token.slice(0, 16)}`) {
+    history.replaceState(null, "", `#u=${token.slice(0, 16)}`);
+  }
+}
+
+function loadSavedToken() {
+  // Try localStorage first
+  try {
+    const token = localStorage.getItem("dm_token");
+    if (token) return token;
+  } catch { /* private browsing */ }
+
+  // Try cookie
+  const match = document.cookie.match(/dm_token=([a-f0-9]+)/);
+  if (match) return match[1];
+
+  return null;
+}
+
+async function checkExistingSession() {
+  const savedToken = loadSavedToken();
+  try {
+    const url = savedToken ? `/api/session?token=${savedToken}` : "/api/session";
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.username && data.token) {
+      saveSession(data.token, data.username);
+      return { username: data.username, token: data.token };
+    }
+  } catch { /* offline or error */ }
+  return null;
+}
+
+async function apiRegister(username) {
+  const res = await fetch("/api/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  saveSession(data.token, data.username);
+  return data;
+}
+
+// ===== WEBSOCKET CONNECTION =====
+
+function connectSpectator() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    // If we have a pending login, send it now
+    if (loggedInUsername && !loggedIn) {
+      if (sessionToken) {
+        ws.send(JSON.stringify({ type: "login", token: sessionToken }));
+      } else {
+        ws.send(JSON.stringify({ type: "login", username: loggedInUsername }));
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    // Reconnect spectator if not logged in
+    if (!loggedIn) {
+      setTimeout(connectSpectator, 3000);
+    }
+  };
+
+  setupWsMessageHandler();
+}
+
+async function login() {
   const username = document.getElementById("username").value;
   const loginButton = document.querySelector("#menu button");
   const errorElement = document.getElementById("usernameError");
@@ -1149,24 +1240,37 @@ function login() {
   // Hide error if username is valid
   errorElement.style.display = "none";
 
-  // Prevent multiple logins
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    return;
-  }
+  // Prevent double login
+  if (loggedIn) return;
 
   // Disable button to prevent double-clicks
   loginButton.disabled = true;
   loginButton.style.opacity = "0.6";
   loginButton.textContent = "Conectando...";
 
+  // Register via API first to get token
+  try {
+    await apiRegister(trimmed);
+  } catch (err) {
+    errorElement.textContent = "⚠ " + err.message;
+    errorElement.style.display = "block";
+    loginButton.disabled = false;
+    loginButton.style.opacity = "1";
+    loginButton.textContent = "ENTRAR";
+    return;
+  }
+
   loggedInUsername = trimmed;
 
-  ws = new WebSocket(wsUrl);
+  // Send WS login with token
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "login", token: sessionToken }));
+  } else {
+    connectSpectator();
+  }
+}
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: "login", username: trimmed }));
-  };
-
+function setupWsMessageHandler() {
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
 
@@ -1174,9 +1278,13 @@ function login() {
       const errorEl = document.getElementById("usernameError");
       errorEl.textContent = "⚠ " + data.message;
       errorEl.style.display = "block";
-      loginButton.disabled = false;
-      loginButton.style.opacity = "1";
-      loginButton.textContent = "ENTRAR";
+      const loginButton = document.querySelector("#menu button");
+      if (loginButton) {
+        loginButton.disabled = false;
+        loginButton.style.opacity = "1";
+        loginButton.textContent = "ENTRAR";
+      }
+      loggedInUsername = "";
       return;
     }
 
@@ -1186,6 +1294,7 @@ function login() {
 
     if (data.type === "loginSuccess") {
       playerId = data.playerId;
+      loggedIn = true;
       // Show room list screen
       document.getElementById("menu").style.display = "none";
       document.getElementById("roomListScreen").style.display = "block";
@@ -1832,15 +1941,19 @@ function login() {
 
   ws.onerror = (error) => {
     console.error("WebSocket error:", error);
-    loginButton.disabled = false;
-    loginButton.style.opacity = "1";
-    loginButton.style.background = "";
-    loginButton.textContent = "ENTRAR";
+    const loginButton = document.querySelector("#menu button");
+    if (loginButton) {
+      loginButton.disabled = false;
+      loginButton.style.opacity = "1";
+      loginButton.style.background = "";
+      loginButton.textContent = "ENTRAR";
+    }
   };
 
   ws.onclose = () => {
     console.log("WebSocket closed");
     ws = null;
+    loggedIn = false;
 
     // Clear online panel when disconnected
     const content = document.getElementById("globalOnlineContent");
@@ -1867,11 +1980,52 @@ function login() {
     if (mobileCtrlClose) mobileCtrlClose.classList.remove("active");
 
     const loginBtn = document.querySelector("#menu button");
-    loginBtn.disabled = false;
-    loginBtn.style.opacity = "1";
-    loginBtn.textContent = "ENTRAR";
+    if (loginBtn) {
+      loginBtn.disabled = false;
+      loginBtn.style.opacity = "1";
+      loginBtn.textContent = "ENTRAR";
+    }
+
+    // Keep session token but reset login state for reconnection
+    loggedInUsername = "";
+    loggedIn = false;
+
+    // If we have a saved session, restore username for auto-reconnect
+    const savedToken = loadSavedToken();
+    if (savedToken && savedToken === sessionToken) {
+      try {
+        const savedName = localStorage.getItem("dm_username");
+        if (savedName) loggedInUsername = savedName;
+      } catch { /* ignore */ }
+    }
+
+    // Reconnect spectator after a delay
+    setTimeout(connectSpectator, 3000);
   };
 }
+
+// On page load: check for existing session, then connect
+(async function init() {
+  // Connect spectator WebSocket first for online list
+  connectSpectator();
+
+  // Check for saved session (token in localStorage/cookie or IP match)
+  const session = await checkExistingSession();
+  if (session) {
+    loggedInUsername = session.username;
+    sessionToken = session.token;
+
+    // Pre-fill username input
+    const usernameInput = document.getElementById("username");
+    if (usernameInput) usernameInput.value = session.username;
+
+    // Auto-login via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "login", token: session.token }));
+    }
+    // If WS isn't open yet, the onopen handler will send the login
+  }
+})();
 
 // ===== ROOM UI FUNCTIONS =====
 
@@ -2697,7 +2851,7 @@ function selectSkin(index) {
 // ===== LEADERBOARD =====
 
 function requestLeaderboard() {
-  if (!ws) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "getLeaderboard" }));
 }
 

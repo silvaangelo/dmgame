@@ -119,3 +119,11 @@ export type MatchHistoryEntry = {
   players: { username: string; kills: number; deaths: number; isWinner: boolean }[];
   winnerName: string;
 };
+
+export type RegisteredUser = {
+  username: string;
+  token: string;
+  ips: string[];
+  createdAt: number;
+  lastSeen: number;
+};

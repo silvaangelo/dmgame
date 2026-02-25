@@ -19,10 +19,10 @@ import {
   findRoomByPlayer,
 } from "./room.js";
 import { WebSocket } from "ws";
-import { getLeaderboard, getPlayerStats, getMatchHistory } from "./database.js";
+import { getLeaderboard, getPlayerStats, getMatchHistory, getUserByToken, trackUserIp } from "./database.js";
 
 export function setupSocket() {
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     let player: Player | null = null;
 
     // Reject if too many concurrent connections
@@ -52,13 +52,41 @@ export function setupSocket() {
 
       if (data.type === "login") {
         if (player !== null) return;
-        if (!data.username || typeof data.username !== "string") return;
 
-        const trimmed = data.username.trim();
+        let trimmed: string | undefined;
+
+        // Token-based login (returning user)
+        if (data.token && typeof data.token === "string") {
+          const user = getUserByToken(data.token);
+          if (user) {
+            trimmed = user.username;
+            // Track IP from WebSocket upgrade request
+            const forwarded = req.headers["x-forwarded-for"];
+            const ip = typeof forwarded === "string"
+              ? forwarded.split(",")[0].trim()
+              : req.socket.remoteAddress || "";
+            trackUserIp(user.token, ip);
+          } else {
+            ws.send(JSON.stringify({
+              type: "error",
+              message: "Sessão expirada. Faça login novamente.",
+            }));
+            return;
+          }
+        }
+
+        // Username-based login (new session — already registered via /api/register)
+        if (!trimmed) {
+          if (!data.username || typeof data.username !== "string") return;
+          trimmed = data.username.trim();
+        }
+
+        const username = trimmed as string;
+
         if (
-          trimmed.length < GAME_CONFIG.USERNAME_MIN_LENGTH ||
-          trimmed.length > GAME_CONFIG.USERNAME_MAX_LENGTH ||
-          !GAME_CONFIG.USERNAME_PATTERN.test(trimmed)
+          username.length < GAME_CONFIG.USERNAME_MIN_LENGTH ||
+          username.length > GAME_CONFIG.USERNAME_MAX_LENGTH ||
+          !GAME_CONFIG.USERNAME_PATTERN.test(username)
         ) {
           ws.send(JSON.stringify({
             type: "error",
@@ -69,7 +97,7 @@ export function setupSocket() {
 
         // Check for duplicate username (already online)
         const usernameTaken = Array.from(allPlayers.values()).some(
-          (p) => p.username.toLowerCase() === trimmed.toLowerCase()
+          (p) => p.username.toLowerCase() === username.toLowerCase()
         );
         if (usernameTaken) {
           ws.send(JSON.stringify({
@@ -81,7 +109,7 @@ export function setupSocket() {
 
         player = {
           id: uuid(),
-          username: trimmed,
+          username,
           ws,
           team: 0,
           x: 0,
@@ -111,13 +139,13 @@ export function setupSocket() {
         });
         debouncedBroadcastOnlineList();
 
-        console.log(`👤 ${trimmed} logged in`);
+        console.log(`👤 ${username} logged in`);
 
         // Send login success + room list
         ws.send(JSON.stringify({
           type: "loginSuccess",
           playerId: player.id,
-          username: trimmed,
+          username,
         }));
 
         const roomList = Array.from(rooms.values()).map((r) => ({
@@ -129,11 +157,18 @@ export function setupSocket() {
         ws.send(JSON.stringify({ type: "roomList", rooms: roomList }));
 
         // Send match history for this player
-        const history = getMatchHistory(trimmed, 10);
+        const history = getMatchHistory(username, 10);
         if (history.length > 0) {
           ws.send(JSON.stringify({ type: "matchHistory", history }));
         }
 
+        return;
+      }
+
+      // Allow leaderboard requests before login
+      if (data.type === "getLeaderboard") {
+        const stats = getLeaderboard(10);
+        ws.send(JSON.stringify({ type: "leaderboard", stats }));
         return;
       }
 
@@ -210,12 +245,6 @@ export function setupSocket() {
             });
           }
         }
-        return;
-      }
-
-      if (data.type === "getLeaderboard") {
-        const stats = getLeaderboard(10);
-        ws.send(JSON.stringify({ type: "leaderboard", stats }));
         return;
       }
 
