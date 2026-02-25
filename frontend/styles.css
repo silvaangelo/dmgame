@@ -1143,22 +1143,22 @@ canvas {
   background: rgba(255, 170, 68, 0.55);
 }
 
-.touch-buttons {
+.touch-right-side {
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  padding-bottom: 10px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   pointer-events: auto;
 }
 
 .touch-btn {
-  width: 64px;
-  height: 64px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.08);
   color: #f0f0f0;
-  font-size: 22px;
+  font-size: 20px;
   font-family: 'Rajdhani', sans-serif;
   font-weight: 700;
   display: flex;
@@ -1168,6 +1168,7 @@ canvas {
   user-select: none;
   -webkit-user-select: none;
   transition: background 0.1s, transform 0.1s;
+  pointer-events: auto;
 }
 
 .touch-btn:active, .touch-btn.pressed {
@@ -1176,17 +1177,48 @@ canvas {
   transform: scale(0.92);
 }
 
-.touch-btn-fire {
-  width: 80px;
-  height: 80px;
-  font-size: 28px;
-  background: rgba(255, 60, 60, 0.15);
-  border-color: rgba(255, 60, 60, 0.4);
+.touch-btn-weapon {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
 }
 
-.touch-btn-fire:active, .touch-btn-fire.pressed {
-  background: rgba(255, 60, 60, 0.4);
-  border-color: rgba(255, 60, 60, 0.7);
+.touch-aim-area {
+  width: 150px;
+  height: 150px;
+}
+
+.touch-aim-base {
+  background: rgba(255, 60, 60, 0.08);
+  border-color: rgba(255, 60, 60, 0.2);
+  bottom: 10px;
+  right: 10px;
+  left: auto;
+}
+
+.touch-aim-thumb {
+  background: rgba(255, 60, 60, 0.3);
+  border-color: rgba(255, 60, 60, 0.55);
+}
+
+.touch-aim-thumb.active {
+  background: rgba(255, 60, 60, 0.55);
+  border-color: rgba(255, 60, 60, 0.8);
+  box-shadow: 0 0 12px rgba(255, 60, 60, 0.4);
+}
+
+.touch-aim-label {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  opacity: 0.3;
+  pointer-events: none;
 }
 
 /* ===== RESPONSIVE / MOBILE ===== */

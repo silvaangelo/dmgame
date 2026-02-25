@@ -2261,7 +2261,6 @@ function initMobileControls() {
   const joystickArea = document.getElementById("joystickArea");
   const joystickThumb = document.getElementById("joystickThumb");
   const joystickBase = document.getElementById("joystickBase");
-  const fireBtn = document.getElementById("touchFireBtn");
   const weaponBtn = document.getElementById("touchWeaponBtn");
 
   // Joystick touch handling
@@ -2330,27 +2329,81 @@ function initMobileControls() {
     applyMobileKeys(newKeys);
   }
 
-  // Fire button
-  let fireTouchId = null;
-  fireBtn.addEventListener("touchstart", (e) => {
+  // Right-side aim joystick — aims + auto-fires while touched
+  const aimArea = document.getElementById("aimJoystickArea");
+  const aimBase = document.getElementById("aimJoystickBase");
+  const aimThumb = document.getElementById("aimJoystickThumb");
+  let aimTouchId = null;
+  let aimCenterX = 0;
+  let aimCenterY = 0;
+  const AIM_JOYSTICK_MAX = 45;
+
+  aimArea.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    fireTouchId = e.changedTouches[0].identifier;
-    fireBtn.classList.add("pressed");
-    isMouseDown = true;
+    initAudio();
+    if (aimTouchId !== null) return;
+    const touch = e.changedTouches[0];
+    aimTouchId = touch.identifier;
+    const rect = aimBase.getBoundingClientRect();
+    aimCenterX = rect.left + rect.width / 2;
+    aimCenterY = rect.top + rect.height / 2;
+    aimThumb.classList.add("active");
+    isMouseDown = true; // Start firing
+    updateAimJoystick(touch.clientX, touch.clientY);
   }, { passive: false });
 
-  const endFire = (e) => {
+  aimArea.addEventListener("touchmove", (e) => {
+    e.preventDefault();
     for (const touch of e.changedTouches) {
-      if (touch.identifier === fireTouchId) {
-        fireTouchId = null;
-        fireBtn.classList.remove("pressed");
-        isMouseDown = false;
+      if (touch.identifier === aimTouchId) {
+        updateAimJoystick(touch.clientX, touch.clientY);
+        break;
+      }
+    }
+  }, { passive: false });
+
+  const endAim = (e) => {
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === aimTouchId) {
+        aimTouchId = null;
+        aimThumb.classList.remove("active");
+        aimThumb.style.left = "60px";
+        aimThumb.style.top = "60px";
+        isMouseDown = false; // Stop firing
         break;
       }
     }
   };
-  fireBtn.addEventListener("touchend", endFire);
-  fireBtn.addEventListener("touchcancel", endFire);
+  aimArea.addEventListener("touchend", endAim);
+  aimArea.addEventListener("touchcancel", endAim);
+
+  function updateAimJoystick(touchX, touchY) {
+    let dx = touchX - aimCenterX;
+    let dy = touchY - aimCenterY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > AIM_JOYSTICK_MAX) {
+      dx = (dx / dist) * AIM_JOYSTICK_MAX;
+      dy = (dy / dist) * AIM_JOYSTICK_MAX;
+    }
+    // Update thumb visual
+    aimThumb.style.left = (60 + dx) + "px";
+    aimThumb.style.top = (60 + dy) + "px";
+
+    // Convert joystick direction to aim angle (only if moved past deadzone)
+    const deadzone = 8;
+    if (dist > deadzone) {
+      const aimAngle = Math.atan2(dy, dx);
+      // Project aim far from player so the crosshair is in the right direction
+      const aimDist = 300;
+      mouseX = predictedX + Math.cos(aimAngle) * aimDist;
+      mouseY = predictedY + Math.sin(aimAngle) * aimDist;
+
+      // Send aim angle to server
+      if (ws && playerId && gameReady) {
+        ws.send(JSON.stringify({ type: "aim", aimAngle }));
+      }
+    }
+  }
 
   // Weapon switch button
   weaponBtn.addEventListener("touchstart", (e) => {
@@ -2361,34 +2414,6 @@ function initMobileControls() {
     }
     setTimeout(() => weaponBtn.classList.remove("pressed"), 150);
   }, { passive: false });
-
-  // Touch aiming — touch anywhere on canvas moves the crosshair
-  canvas.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    initAudio();
-    handleCanvasTouch(e);
-  }, { passive: false });
-
-  canvas.addEventListener("touchmove", (e) => {
-    e.preventDefault();
-    handleCanvasTouch(e);
-  }, { passive: false });
-
-  function handleCanvasTouch(e) {
-    const touch = e.touches[0];
-    if (!touch) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    mouseX = (touch.clientX - rect.left) * scaleX;
-    mouseY = (touch.clientY - rect.top) * scaleY;
-
-    // Send aim angle
-    if (ws && playerId && gameReady) {
-      const aimAngle = Math.atan2(mouseY - predictedY, mouseX - predictedX);
-      ws.send(JSON.stringify({ type: "aim", aimAngle }));
-    }
-  }
 }
 
 // Track which mobile keys are currently pressed to send only changes
