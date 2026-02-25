@@ -49,7 +49,7 @@ The 40 Hz state broadcast uses **arrays instead of objects** to save bandwidth:
 Player: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weaponCode, kills]
 Bullet: [id, x, y, weaponCode]
 ```
-Weapon codes: `0 = fast (rifle)`, `1 = heavy (sniper)`, `2 = knife`
+Weapon codes: `0 = machinegun`, `1 = shotgun`, `2 = knife`, `3 = minigun` (powerup)
 
 If you add a field to the player state, you must update:
 - `backend/utils.ts` → `serializePlayersCompact()`
@@ -64,6 +64,7 @@ If you add a field to the player state, you must update:
 | `index.ts`        | Entry point, static files, startup               | (none — runs on import)            |
 | `types.ts`        | Type definitions                                 | Player, Bullet, Obstacle, Game, Room |
 | `config.ts`       | Constants                                        | GAME_CONFIG, OBSTACLE_CONFIG       |
+| `database.ts`     | JSON file persistence for stats & match history  | initDatabase, updateStats          |
 | `server.ts`       | Express + HTTP + WSS setup                       | app, server, wss                   |
 | `state.ts`        | Mutable shared state                             | rooms, games, allPlayers           |
 | `utils.ts`        | Broadcast, serialization, lookups                | broadcast, serializePlayersCompact |
@@ -86,11 +87,12 @@ If you add a field to the player state, you must update:
 ### Adding a New Weapon
 
 1. Add weapon constants to `backend/config.ts` (`GAME_CONFIG`)
-2. Add weapon handling in `backend/game.ts` → `shoot()` (cooldown, damage, behavior)
-3. Add weapon cycling in `backend/socket.ts` → `switchWeapon` handler
-4. Add weapon rendering in `frontend/game.js` → player rendering section (draw the weapon sprite)
-5. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
-6. Update compact serialization if needed (`utils.ts` + `game.js` state handler)
+2. Add weapon to `WEAPON_CYCLE` in `backend/config.ts` (unless it's a powerup-only weapon)
+3. Add weapon handling in `backend/game.ts` → `shoot()` (cooldown, damage, behavior)
+4. Add weapon cycling in `backend/socket.ts` → `switchWeapon` handler
+5. Add weapon rendering in `frontend/game.js` → player rendering section (draw the weapon sprite)
+6. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
+7. Update compact serialization if needed (`utils.ts` + `game.js` state handler)
 
 ### Adding a New Game Event
 
@@ -158,12 +160,13 @@ There are no automated tests. To verify changes:
 
 ## Tech Stack Reference
 
-| Layer     | Technology                           |
-| --------- | ------------------------------------ |
-| Runtime   | Node.js ≥ 20                         |
-| Backend   | TypeScript, Express 5, ws            |
-| Frontend  | Vanilla JS, Canvas 2D, Web Audio API|
-| Build     | tsc (prod), tsx (dev)                |
-| Package   | pnpm 9                              |
-| Lint      | ESLint 10, typescript-eslint         |
-| Container | Docker, docker-compose               |
+| Layer     | Technology                            |
+| --------- | ------------------------------------- |
+| Runtime   | Node.js ≥ 24                          |
+| Backend   | TypeScript, Express 5, ws             |
+| Frontend  | Vanilla JS, Canvas 2D, Web Audio API  |
+| Build     | tsc (prod), tsx (dev)                 |
+| Package   | pnpm 10                              |
+| Lint      | ESLint 10, typescript-eslint          |
+| Container | Docker, docker-compose                |
+| CI/CD     | GitHub Actions → DigitalOcean Droplet |
