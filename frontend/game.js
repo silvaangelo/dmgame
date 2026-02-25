@@ -40,9 +40,9 @@ const WEAPON_NAMES = {
 };
 const WEAPON_COOLDOWNS = {
   machinegun: 80,
-  shotgun: 600,
+  shotgun: 800,
   knife: 300,
-  minigun: 50,
+  minigun: 25,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
@@ -73,6 +73,7 @@ let lastDustTime = 0;
 let hitMarkers = [];
 let damageIndicators = [];
 let previousBulletPositions = new Map();
+let activeBombs = [];
 
 // Screen shake
 let screenShake = { intensity: 0, decay: 0.92 };
@@ -776,14 +777,16 @@ function playPositionalSound(
   const dx = sourceX - predictedX;
   const dy = sourceY - predictedY;
   const distance = Math.sqrt(dx * dx + dy * dy);
-  const maxDist = Math.sqrt(
-    GAME_CONFIG.ARENA_WIDTH ** 2 + GAME_CONFIG.ARENA_HEIGHT ** 2,
-  );
-  const distanceFactor = Math.max(0, 1 - distance / maxDist);
-  const finalVolume = volume * (0.3 + 0.7 * distanceFactor);
+  // Use a shorter hearing range for more noticeable spatial effect
+  const maxHearingDist = 600;
+  const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
+  // Quadratic falloff for more realistic attenuation
+  const attenuation = distanceFactor * distanceFactor;
+  const finalVolume = volume * (0.05 + 0.95 * attenuation);
+  // Stronger panning for clearer left/right separation
   const pan = Math.max(
     -1,
-    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.4)),
+    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)),
   );
   const source = audioCtx.createBufferSource();
   source.buffer = audioBuffers[bufferName];
@@ -811,7 +814,7 @@ function playKnifeSound(x, y) {
   const dx = x - predictedX;
   const panVal = Math.max(
     -1,
-    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.4)),
+    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)),
   );
   const panner = audioCtx.createStereoPanner();
   panner.pan.value = panVal;
@@ -1078,8 +1081,8 @@ function tryShoot() {
 
       if (player.weapon === "shotgun") {
         // Predict 5 pellets
-        for (let i = 0; i < 6; i++) {
-          const spreadAngle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 0.7;
+        for (let i = 0; i < 5; i++) {
+          const spreadAngle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 0.9;
           const pDirX = Math.cos(spreadAngle);
           const pDirY = Math.sin(spreadAngle);
           const pb = {
@@ -1413,6 +1416,30 @@ function login() {
       }
     }
 
+    if (data.type === "bombSpawned") {
+      activeBombs.push({
+        id: data.id,
+        x: data.x,
+        y: data.y,
+        spawnTime: Date.now(),
+      });
+    }
+
+    if (data.type === "bombExploded") {
+      // Remove from active bombs
+      activeBombs = activeBombs.filter((b) => b.id !== data.id);
+      // Create visual explosion
+      createBombExplosion(data.x, data.y, data.radius || 80);
+      // Screen shake
+      const dx = data.x - predictedX;
+      const dy = data.y - predictedY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const shakeIntensity = Math.max(2, 15 - dist / 50);
+      triggerScreenShake(shakeIntensity);
+      // Explosion sound
+      playGrenadeExplosionSound(data.x, data.y);
+    }
+
     if (data.type === "leaderboard") {
       showLeaderboard(data.stats);
     }
@@ -1715,6 +1742,8 @@ function login() {
           dustClouds = [];
           hitMarkers = [];
           damageIndicators = [];
+          activeBombs = [];
+          bombExplosions = [];
           previousBulletPositions = new Map();
           screenShake = { intensity: 0, decay: 0.92 };
           currentRoomData = null;
@@ -2371,15 +2400,22 @@ function playGrenadeExplosionSound(x, y) {
   if (!audioCtx) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
 
+  const dx = x - predictedX;
+  const dy = y - predictedY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  const maxHearingDist = 600;
+  const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
+  const attenuation = distanceFactor * distanceFactor;
+  const baseVolume = 0.05 + 0.95 * attenuation;
+
   const osc = audioCtx.createOscillator();
   osc.type = "sawtooth";
   osc.frequency.setValueAtTime(60, audioCtx.currentTime);
   osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 0.3);
   const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.4 * baseVolume, audioCtx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-  const dx = x - predictedX;
-  const panVal = Math.max(-1, Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.4)));
+  const panVal = Math.max(-1, Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)));
   const panner = audioCtx.createStereoPanner();
   panner.pan.value = panVal;
   osc.connect(gain);
@@ -2484,6 +2520,172 @@ function renderPickups() {
   });
 }
 
+// ===== BOMB SYSTEM =====
+
+function renderBombs() {
+  const now = Date.now();
+  activeBombs.forEach((bomb) => {
+    const elapsed = now - bomb.spawnTime;
+    const fuseProgress = Math.min(elapsed / 1000, 1); // 1 second fuse
+
+    // Pulsing danger radius (grows as fuse progresses)
+    const pulseSpeed = 6 + fuseProgress * 14; // Pulse faster near explosion
+    const pulse = Math.sin(now / (1000 / pulseSpeed)) * 0.15 + 0.85;
+    const dangerRadius = 80 * fuseProgress * pulse;
+
+    // Danger zone circle
+    ctx.globalAlpha = 0.08 + fuseProgress * 0.15;
+    ctx.fillStyle = "#ff2200";
+    ctx.beginPath();
+    ctx.arc(bomb.x, bomb.y, dangerRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Danger zone border
+    ctx.globalAlpha = 0.3 + fuseProgress * 0.5;
+    ctx.strokeStyle = "#ff4400";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(bomb.x, bomb.y, dangerRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Bomb body
+    ctx.globalAlpha = 1.0;
+    const bombSize = 10 + fuseProgress * 3;
+
+    // Bomb shadow
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(bomb.x + 2, bomb.y + 3, bombSize, bombSize * 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bomb body (dark sphere)
+    ctx.fillStyle = "#2a2a2a";
+    ctx.beginPath();
+    ctx.arc(bomb.x, bomb.y, bombSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bomb highlight
+    ctx.fillStyle = "#444";
+    ctx.beginPath();
+    ctx.arc(bomb.x - 3, bomb.y - 3, bombSize * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Fuse spark (blinks faster as time runs out)
+    const sparkBlink = Math.sin(now / (60 - fuseProgress * 40)) > 0;
+    if (sparkBlink) {
+      const sparkX = bomb.x + Math.cos(-Math.PI / 4) * bombSize;
+      const sparkY = bomb.y + Math.sin(-Math.PI / 4) * bombSize;
+
+      // Spark glow
+      ctx.fillStyle = "rgba(255, 200, 50, 0.6)";
+      ctx.beginPath();
+      ctx.arc(sparkX, sparkY, 5 + Math.random() * 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Spark core
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Warning text
+    ctx.globalAlpha = 0.5 + fuseProgress * 0.5;
+    ctx.fillStyle = "#ff3300";
+    ctx.font = "bold 16px 'Rajdhani', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("💣", bomb.x, bomb.y - bombSize - 8);
+    ctx.textAlign = "start";
+    ctx.globalAlpha = 1.0;
+  });
+}
+
+let bombExplosions = [];
+
+function createBombExplosion(x, y, radius) {
+  const particles = [];
+  const particleCount = 24;
+
+  for (let i = 0; i < particleCount; i++) {
+    const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
+    const speed = 3 + Math.random() * 5;
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1.0,
+      size: 4 + Math.random() * 6,
+      color: `hsl(${Math.random() * 40 + 10}, 100%, ${40 + Math.random() * 30}%)`,
+    });
+  }
+
+  // Add smoke particles
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 2;
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1.0,
+      size: 8 + Math.random() * 10,
+      color: `rgba(80, 70, 60, 0.6)`,
+    });
+  }
+
+  bombExplosions.push({
+    x, y, radius,
+    particles: particles,
+    frame: 0,
+    shockwave: 0,
+  });
+}
+
+function updateBombExplosions() {
+  bombExplosions.forEach((exp) => {
+    exp.frame++;
+    exp.shockwave += 8;
+    exp.particles.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.12;
+      p.vx *= 0.97;
+      p.life -= 0.02;
+    });
+  });
+  bombExplosions = bombExplosions.filter((e) => e.particles.some((p) => p.life > 0));
+}
+
+function renderBombExplosions() {
+  bombExplosions.forEach((exp) => {
+    // Shockwave ring
+    if (exp.shockwave < exp.radius * 1.5) {
+      const alpha = Math.max(0, 1 - exp.shockwave / (exp.radius * 1.5));
+      ctx.globalAlpha = alpha * 0.4;
+      ctx.strokeStyle = "#ff6600";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(exp.x, exp.y, exp.shockwave, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Particles
+    exp.particles.forEach((p) => {
+      if (p.life <= 0) return;
+      ctx.globalAlpha = Math.min(1, p.life * 1.5);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1.0;
+  });
+}
+
 // ===== RENDER LOOP =====
 
 // Pre-render static grid to offscreen canvas for performance
@@ -2549,6 +2751,7 @@ function render() {
   updatePickupEffects();
   updateHitMarkers();
   updateDamageIndicators();
+  updateBombExplosions();
 
   // Dust clouds when local player moves
   const dustNow = Date.now();
@@ -2655,6 +2858,9 @@ function render() {
   // Render pickups
   renderPickups();
   renderPickupEffects();
+
+  // Render bombs
+  renderBombs();
 
   players.forEach((p, index) => {
     // Don't render dead players
@@ -2858,6 +3064,9 @@ function render() {
 
   // Render impact sparks
   renderImpactSparks();
+
+  // Render bomb explosions
+  renderBombExplosions();
 
   // Render hit markers and damage indicators
   renderHitMarkers();

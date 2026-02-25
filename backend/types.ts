@@ -48,6 +48,13 @@ export type Obstacle = {
   type?: string;
 };
 
+export type Bomb = {
+  id: string;
+  x: number;
+  y: number;
+  createdAt: number;
+};
+
 export type Pickup = {
   id: string;
   x: number;
@@ -62,11 +69,13 @@ export type Game = {
   bullets: Bullet[];
   obstacles: Obstacle[];
   pickups: Pickup[];
+  bombs: Bomb[];
   started: boolean;
   lastBroadcastState?: Map<string, unknown>;
   stateSequence: number;
   obstacleSpawnInterval?: NodeJS.Timeout;
   pickupSpawnInterval?: NodeJS.Timeout;
+  bombSpawnInterval?: NodeJS.Timeout;
   preGameTimeout?: NodeJS.Timeout;
   preGameCountdownInterval?: NodeJS.Timeout;
 };

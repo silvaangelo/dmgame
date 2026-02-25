@@ -8,7 +8,7 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { spawnRandomObstacle, spawnPickup } from "./game.js";
+import { spawnRandomObstacle, spawnPickup, spawnBomb } from "./game.js";
 import { broadcastRoomList } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
@@ -248,6 +248,7 @@ export function startGameFromRoom(room: Room) {
     bullets: [],
     obstacles,
     pickups: [],
+    bombs: [],
     started: false,
     lastBroadcastState: new Map(),
     stateSequence: 0,
@@ -365,4 +366,12 @@ function beginMatch(game: Game) {
       clearInterval(game.pickupSpawnInterval);
     }
   }, GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
+
+  game.bombSpawnInterval = setInterval(() => {
+    if (games.has(game.id)) {
+      spawnBomb(game);
+    } else {
+      clearInterval(game.bombSpawnInterval);
+    }
+  }, GAME_CONFIG.BOMB_SPAWN_INTERVAL);
 }

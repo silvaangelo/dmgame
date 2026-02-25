@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
@@ -251,6 +251,46 @@ export function updateGame(game: Game) {
       game.pickups = game.pickups.filter((pk) => !pickupsToRemove.includes(pk.id));
     }
   });
+
+  // Check for bomb explosions
+  const bombsToExplode: Bomb[] = [];
+  game.bombs.forEach((bomb) => {
+    if (now - bomb.createdAt >= GAME_CONFIG.BOMB_FUSE_TIME) {
+      bombsToExplode.push(bomb);
+    }
+  });
+
+  bombsToExplode.forEach((bomb) => {
+    // Damage players in radius
+    game.players.forEach((player) => {
+      if (player.hp <= 0) return;
+      const dx = player.x - bomb.x;
+      const dy = player.y - bomb.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < GAME_CONFIG.BOMB_RADIUS) {
+        player.hp -= GAME_CONFIG.BOMB_DAMAGE;
+        if (player.hp <= 0) {
+          player.hp = 0;
+          handleKill(undefined, player, "bomb", game);
+        }
+      }
+    });
+
+    // Broadcast explosion
+    broadcast(game, {
+      type: "bombExploded",
+      id: bomb.id,
+      x: Math.round(bomb.x),
+      y: Math.round(bomb.y),
+      radius: GAME_CONFIG.BOMB_RADIUS,
+    });
+  });
+
+  if (bombsToExplode.length > 0) {
+    game.bombs = game.bombs.filter(
+      (b) => !bombsToExplode.some((e) => e.id === b.id)
+    );
+  }
 
   // Weapon code mapping
   const weaponCodeMap: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
@@ -523,6 +563,40 @@ export function spawnPickup(game: Game) {
   }
 }
 
+/* ================= BOMBS ================= */
+
+export function spawnBomb(game: Game) {
+  let validPosition = false;
+  let attempts = 0;
+  let bombX = 0;
+  let bombY = 0;
+
+  while (!validPosition && attempts < 20) {
+    bombX = 60 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 120);
+    bombY = 60 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 120);
+
+    validPosition = isPositionClear(bombX, bombY, game.obstacles, 20);
+    attempts++;
+  }
+
+  if (validPosition) {
+    const bomb: Bomb = {
+      id: uuid(),
+      x: bombX,
+      y: bombY,
+      createdAt: Date.now(),
+    };
+    game.bombs.push(bomb);
+
+    broadcast(game, {
+      type: "bombSpawned",
+      id: bomb.id,
+      x: Math.round(bomb.x),
+      y: Math.round(bomb.y),
+    });
+  }
+}
+
 /* ================= VICTORY ================= */
 
 export function checkVictory(game: Game) {
@@ -540,6 +614,9 @@ export function checkVictory(game: Game) {
     }
     if (game.pickupSpawnInterval) {
       clearInterval(game.pickupSpawnInterval);
+    }
+    if (game.bombSpawnInterval) {
+      clearInterval(game.bombSpawnInterval);
     }
 
     // Save stats for all players

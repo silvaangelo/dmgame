@@ -106,17 +106,54 @@ canvas {
 
 .menu-subtitle {
   color: #ff6b35;
-  font-size: 13px;
+  font-size: 16px;
   font-family: 'Share Tech Mono', monospace;
   letter-spacing: 4px;
   margin-bottom: 18px;
   opacity: 0.8;
 }
 
+.github-link {
+  display: block;
+  color: #8aaa8a;
+  font-size: 14px;
+  font-family: 'Share Tech Mono', monospace;
+  text-decoration: none;
+  margin-bottom: 18px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 3px;
+  transition: all 0.3s;
+  letter-spacing: 0.5px;
+}
+
+.github-link:hover {
+  color: #f0f0f0;
+  border-color: #4a6a4a;
+  background: rgba(255,255,255,0.05);
+}
+
+.github-footer-link {
+  position: fixed;
+  bottom: 10px;
+  right: 16px;
+  color: #5a7a5a;
+  font-size: 13px;
+  font-family: 'Share Tech Mono', monospace;
+  text-decoration: none;
+  z-index: 50;
+  transition: color 0.3s;
+  letter-spacing: 0.5px;
+}
+
+.github-footer-link:hover {
+  color: #8aaa8a;
+}
+
 #menu h2 {
   color: #f0f0f0;
   margin-bottom: 6px;
-  font-size: 34px;
+  font-size: 40px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 2px;
@@ -128,7 +165,7 @@ canvas {
   padding: 14px 18px;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 18px;
+  font-size: 20px;
   font-family: 'Share Tech Mono', monospace;
   margin-bottom: 16px;
   background: rgba(0, 0, 0, 0.35);
@@ -153,7 +190,7 @@ canvas {
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -209,7 +246,7 @@ canvas {
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -255,21 +292,21 @@ canvas {
 
 .room-item .room-name {
   color: #f0f0f0;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 600;
   font-family: 'Rajdhani', sans-serif;
 }
 
 .room-item .room-count {
   color: #8aaa8a;
-  font-size: 13px;
+  font-size: 15px;
   font-family: 'Share Tech Mono', monospace;
 }
 
 .room-item button {
   width: auto;
   padding: 8px 20px;
-  font-size: 14px;
+  font-size: 16px;
   margin: 0;
 }
 
@@ -291,7 +328,7 @@ canvas {
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -310,7 +347,7 @@ canvas {
 /* Ready button - prominent blinking CTA */
 #roomReadyBtn {
   padding: 18px 48px !important;
-  font-size: 22px !important;
+  font-size: 24px !important;
   background: linear-gradient(180deg, #ff6b35 0%, #cc4422 100%) !important;
   border: 2px solid #ff8855 !important;
   color: #fff !important;
@@ -382,13 +419,13 @@ canvas {
 
 .room-player .player-name {
   color: #f0f0f0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   font-family: 'Rajdhani', sans-serif;
 }
 
 .room-player .player-status {
-  font-size: 13px;
+  font-size: 15px;
   font-family: 'Share Tech Mono', monospace;
   padding: 2px 8px;
   border-radius: 2px;
@@ -429,7 +466,7 @@ canvas {
 #queueStatus p {
   color: #a0b8a0;
   margin: 6px 0;
-  font-size: 16px;
+  font-size: 18px;
   font-family: 'Share Tech Mono', monospace;
 }
 
@@ -463,7 +500,7 @@ canvas {
   color: #ffffff;
   padding: 8px 20px;
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 16px;
   font-family: 'Share Tech Mono', monospace;
   z-index: 790;
   pointer-events: none;
@@ -496,7 +533,7 @@ canvas {
 /* Kills section */
 .hud-kills #killsDisplay {
   color: #ffaa44;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(255, 170, 68, 0.3);
@@ -552,7 +589,7 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
   z-index: 1;
@@ -566,7 +603,7 @@ canvas {
 
 .hud-weapon #shotsDisplay {
   color: #eef0ee;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: 1px;
   text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
@@ -579,13 +616,13 @@ canvas {
 
 .hud-status #cooldownDisplay {
   color: #ffbb55;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
 }
 
 .hud-status #reloadDisplay {
   color: #ff6b35;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   animation: reloadBlink 0.6s ease-in-out infinite;
 }
@@ -597,7 +634,7 @@ canvas {
 
 .hud-status #speedBoostDisplay {
   color: #44bbff;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
   animation: speedGlow 0.5s ease-in-out infinite;
@@ -652,7 +689,7 @@ canvas {
 }
 
 #victoryMessage {
-  font-size: 48px;
+  font-size: 52px;
   margin: 0 0 8px 0;
   color: #ff6b35;
   font-weight: 800;
@@ -663,7 +700,7 @@ canvas {
 }
 
 #countdownMessage {
-  font-size: 22px;
+  font-size: 24px;
   margin: 0;
   color: #a0b0a0;
 }
@@ -680,14 +717,14 @@ canvas {
   max-height: 70vh;
   overflow-y: auto;
   border: 1px solid #3a5a3a;
-  font-size: 14px;
+  font-size: 16px;
   backdrop-filter: blur(10px);
   align-self: flex-start;
 }
 
 #globalOnlinePanel h3 {
   margin: 0 0 8px 0;
-  font-size: 14px;
+  font-size: 16px;
   color: #66cc66;
   border-bottom: 1px solid #2a4a2a;
   padding-bottom: 6px;
@@ -703,7 +740,7 @@ canvas {
   padding: 14px 16px;
   border-radius: 2px;
   border: 1px solid #3a5a3a;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.8;
   backdrop-filter: blur(10px);
   align-self: flex-start;
@@ -714,7 +751,7 @@ canvas {
 #globalControlsPanel h4 {
   margin: 0 0 5px 0;
   color: #88ccff;
-  font-size: 14px;
+  font-size: 16px;
   text-transform: uppercase;
   letter-spacing: 2px;
   border-bottom: 1px solid #2a3a4a;
@@ -727,7 +764,7 @@ canvas {
   padding: 2px 6px;
   border-radius: 2px;
   font-family: 'Share Tech Mono', monospace;
-  font-size: 13px;
+  font-size: 15px;
   color: #bbddbb;
   border: 1px solid #3a5a3a;
   transition: all 0.2s;
@@ -773,7 +810,7 @@ canvas {
 #playerList h3 {
   margin: 0 0 12px 0;
   color: #d0b870;
-  font-size: 18px;
+  font-size: 20px;
   text-transform: uppercase;
   letter-spacing: 3px;
   border-bottom: 1px solid #3a4a2a;
@@ -786,7 +823,7 @@ canvas {
 #playerList .tab-hint {
   text-align: center;
   color: #5a7a5a;
-  font-size: 11px;
+  font-size: 13px;
   font-family: 'Share Tech Mono', monospace;
   margin-top: 10px;
   letter-spacing: 1px;
@@ -812,7 +849,7 @@ canvas {
   border-radius: 3px;
   border: 1px solid rgba(58, 90, 58, 0.6);
   font-family: 'Share Tech Mono', monospace;
-  font-size: 14px;
+  font-size: 16px;
   color: #c0d0c0;
   white-space: nowrap;
   backdrop-filter: blur(6px);
@@ -957,7 +994,7 @@ canvas {
 }
 
 .lb-rank {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   color: #ff6b35;
   min-width: 30px;
@@ -968,14 +1005,14 @@ canvas {
   flex: 1;
   text-align: left;
   padding: 0 12px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: #f0f0f0;
   font-family: 'Rajdhani', sans-serif;
 }
 
 .lb-stats {
-  font-size: 13px;
+  font-size: 15px;
   color: #8aaa8a;
   font-family: 'Share Tech Mono', monospace;
   white-space: nowrap;
@@ -1011,7 +1048,7 @@ canvas {
 }
 
 .match-result {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -1027,7 +1064,7 @@ canvas {
 }
 
 .match-time {
-  font-size: 12px;
+  font-size: 14px;
   color: #6a8a6a;
   font-family: 'Share Tech Mono', monospace;
 }
@@ -1035,7 +1072,7 @@ canvas {
 .match-stats {
   display: flex;
   gap: 16px;
-  font-size: 13px;
+  font-size: 15px;
   font-family: 'Share Tech Mono', monospace;
   color: #aaccaa;
 }
@@ -1047,7 +1084,7 @@ canvas {
 }
 
 .match-players {
-  font-size: 12px;
+  font-size: 14px;
   color: #6a8a6a;
   margin-top: 4px;
   font-family: 'Share Tech Mono', monospace;
