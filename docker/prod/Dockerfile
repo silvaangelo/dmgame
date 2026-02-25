@@ -39,13 +39,18 @@ COPY --from=builder /app/dist/ ./dist/
 # Copy frontend (static files, no build needed)
 COPY frontend/ ./frontend/
 
-# Create data directory for persistent stats (mount a volume here)
-RUN mkdir -p /app/data
+# Create non-root user and data directory
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --ingroup appgroup appuser && \
+    mkdir -p /app/data && \
+    chown -R appuser:appgroup /app/data
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
 
-# Run compiled JavaScript
+# Run as non-root
+USER appuser
+
 CMD ["node", "dist/backend/index.js"]

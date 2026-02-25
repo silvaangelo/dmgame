@@ -15,6 +15,23 @@ services:
     volumes:
       - game-data:/app/data
     restart: unless-stopped
+    # ── Security ────────────────────────────────────────
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 30s
@@ -37,6 +54,26 @@ services:
     depends_on:
       - app
     restart: unless-stopped
+    # ── Security ────────────────────────────────────────
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+      - /var/cache/nginx:size=50m
+      - /var/run:size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    networks:
+      - internal
+      - web
     logging:
       driver: json-file
       options:
@@ -45,3 +82,9 @@ services:
 
 volumes:
   game-data:
+
+networks:
+  internal:
+    internal: true   # No external access — app ↔ nginx only
+  web:
+    driver: bridge   # Nginx faces the internet

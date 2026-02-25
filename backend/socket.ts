@@ -25,6 +25,12 @@ export function setupSocket() {
   wss.on("connection", (ws) => {
     let player: Player | null = null;
 
+    // Reject if too many concurrent connections
+    if (wss.clients.size > 200) {
+      ws.close(1013, "Server is full");
+      return;
+    }
+
     // Send online list on connection
     const onlineList = Array.from(allPlayers.values()).map((p) => ({
       id: p.id,
@@ -34,7 +40,13 @@ export function setupSocket() {
     ws.send(JSON.stringify({ type: "onlineList", players: onlineList }));
 
     ws.on("message", (msg) => {
-      const data = JSON.parse(msg.toString());
+      let data;
+      try {
+        data = JSON.parse(msg.toString());
+      } catch {
+        return; // Ignore malformed messages
+      }
+      if (!data || typeof data.type !== "string") return;
 
       /* ================= LOGIN ================= */
 
