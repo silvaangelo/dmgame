@@ -1,9 +1,9 @@
 # ─── Dev Dockerfile ───────────────────────────────────────
 # Uses ts-node to run TypeScript directly with hot-reload via --watch
-FROM node:20-slim
+FROM node:24-slim
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
 

@@ -3,9 +3,9 @@
 # ──────────────────────────────────────────────────────────
 
 # ── Stage 1: Build ────────────────────────────────────────
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
 
@@ -21,9 +21,9 @@ COPY backend/ ./backend/
 RUN pnpm build
 
 # ── Stage 2: Production runtime ──────────────────────────
-FROM node:20-slim AS runtime
+FROM node:24-slim AS runtime
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
 
