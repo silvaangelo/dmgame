@@ -5,7 +5,7 @@
 
 services:
   app:
-    image: ${DOCKER_IMAGE:-ghcr.io/your-username/deathmatch-arena:latest}
+    image: ${DOCKER_IMAGE:-ghcr.io/silvaangelo/dmgame:latest}
     container_name: deathmatch-arena
     ports:
       - "3000:3000"
