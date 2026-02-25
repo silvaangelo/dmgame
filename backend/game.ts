@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup, Bomb } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb, Lightning } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
@@ -289,6 +289,46 @@ export function updateGame(game: Game) {
   if (bombsToExplode.length > 0) {
     game.bombs = game.bombs.filter(
       (b) => !bombsToExplode.some((e) => e.id === b.id)
+    );
+  }
+
+  // Check for lightning strikes
+  const lightningsToStrike: Lightning[] = [];
+  game.lightnings.forEach((lightning) => {
+    if (now - lightning.createdAt >= GAME_CONFIG.LIGHTNING_FUSE_TIME) {
+      lightningsToStrike.push(lightning);
+    }
+  });
+
+  lightningsToStrike.forEach((lightning) => {
+    // Damage players in radius
+    game.players.forEach((player) => {
+      if (player.hp <= 0) return;
+      const dx = player.x - lightning.x;
+      const dy = player.y - lightning.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < GAME_CONFIG.LIGHTNING_RADIUS) {
+        player.hp -= GAME_CONFIG.LIGHTNING_DAMAGE;
+        if (player.hp <= 0) {
+          player.hp = 0;
+          handleKill(undefined, player, "lightning", game);
+        }
+      }
+    });
+
+    // Broadcast lightning strike
+    broadcast(game, {
+      type: "lightningStruck",
+      id: lightning.id,
+      x: Math.round(lightning.x),
+      y: Math.round(lightning.y),
+      radius: GAME_CONFIG.LIGHTNING_RADIUS,
+    });
+  });
+
+  if (lightningsToStrike.length > 0) {
+    game.lightnings = game.lightnings.filter(
+      (l) => !lightningsToStrike.some((e) => e.id === l.id)
     );
   }
 
@@ -597,6 +637,41 @@ export function spawnBomb(game: Game) {
   }
 }
 
+/* ================= LIGHTNING STRIKES ================= */
+
+export function spawnLightning(game: Game) {
+  let validPosition = false;
+  let attempts = 0;
+  let lightningX = 0;
+  let lightningY = 0;
+
+  while (!validPosition && attempts < 20) {
+    lightningX = 60 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 120);
+    lightningY = 60 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 120);
+
+    validPosition = isPositionClear(lightningX, lightningY, game.obstacles, 20);
+    attempts++;
+  }
+
+  if (validPosition) {
+    const lightning: Lightning = {
+      id: uuid(),
+      x: lightningX,
+      y: lightningY,
+      createdAt: Date.now(),
+    };
+    game.lightnings.push(lightning);
+
+    broadcast(game, {
+      type: "lightningWarning",
+      id: lightning.id,
+      x: Math.round(lightning.x),
+      y: Math.round(lightning.y),
+      radius: GAME_CONFIG.LIGHTNING_RADIUS,
+    });
+  }
+}
+
 /* ================= VICTORY ================= */
 
 export function checkVictory(game: Game) {
@@ -617,6 +692,9 @@ export function checkVictory(game: Game) {
     }
     if (game.bombSpawnInterval) {
       clearInterval(game.bombSpawnInterval);
+    }
+    if (game.lightningSpawnInterval) {
+      clearInterval(game.lightningSpawnInterval);
     }
 
     // Save stats for all players

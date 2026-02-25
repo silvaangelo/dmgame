@@ -376,6 +376,8 @@ export function setupSocket() {
 
             if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+            if (game.bombSpawnInterval) clearInterval(game.bombSpawnInterval);
+            if (game.lightningSpawnInterval) clearInterval(game.lightningSpawnInterval);
             games.delete(game.id);
           } else {
             checkVictory(game);
@@ -385,6 +387,8 @@ export function setupSocket() {
           if (game.players.length === 0) {
             if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+            if (game.bombSpawnInterval) clearInterval(game.bombSpawnInterval);
+            if (game.lightningSpawnInterval) clearInterval(game.lightningSpawnInterval);
             games.delete(game.id);
           }
         }

@@ -8,7 +8,7 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { spawnRandomObstacle, spawnPickup, spawnBomb } from "./game.js";
+import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning } from "./game.js";
 import { broadcastRoomList } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
@@ -249,6 +249,7 @@ export function startGameFromRoom(room: Room) {
     obstacles,
     pickups: [],
     bombs: [],
+    lightnings: [],
     started: false,
     lastBroadcastState: new Map(),
     stateSequence: 0,
@@ -372,13 +373,14 @@ function beginMatch(game: Game) {
       clearInterval(game.bombSpawnInterval);
       return;
     }
-    // Spawn a burst of bombs with delay between each
-    for (let i = 0; i < GAME_CONFIG.BOMB_BURST_COUNT; i++) {
-      setTimeout(() => {
-        if (games.has(game.id)) {
-          spawnBomb(game);
-        }
-      }, i * GAME_CONFIG.BOMB_BURST_DELAY);
-    }
+    spawnBomb(game);
   }, GAME_CONFIG.BOMB_SPAWN_INTERVAL);
+
+  game.lightningSpawnInterval = setInterval(() => {
+    if (!games.has(game.id)) {
+      clearInterval(game.lightningSpawnInterval);
+      return;
+    }
+    spawnLightning(game);
+  }, GAME_CONFIG.LIGHTNING_SPAWN_INTERVAL);
 }

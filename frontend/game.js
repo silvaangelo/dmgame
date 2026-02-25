@@ -74,6 +74,8 @@ let hitMarkers = [];
 let damageIndicators = [];
 let previousBulletPositions = new Map();
 let activeBombs = [];
+let activeLightnings = [];
+let flashbangOverlay = { alpha: 0 }; // White screen flash for lightning
 
 // Screen shake
 let screenShake = { intensity: 0, decay: 0.92 };
@@ -738,6 +740,7 @@ function initAudio() {
   loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
   loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
   loadAudioBuffer("readyalarm", `${assetBase}/assets/readyalarm.wav`);
+  loadAudioBuffer("lightning", `${assetBase}/assets/lightning-strike.mp3`);
 }
 
 async function loadAudioBuffer(name, url) {
@@ -1443,6 +1446,55 @@ function login() {
       playGrenadeExplosionSound(data.x, data.y);
     }
 
+    // ===== LIGHTNING STRIKE SYSTEM =====
+    if (data.type === "lightningWarning") {
+      activeLightnings.push({
+        id: data.id,
+        x: data.x,
+        y: data.y,
+        radius: data.radius || 100,
+        spawnTime: Date.now(),
+        fuseTime: 250,
+      });
+    }
+
+    if (data.type === "lightningStruck") {
+      // Remove from active warnings
+      activeLightnings = activeLightnings.filter((l) => l.id !== data.id);
+      const lx = data.x;
+      const ly = data.y;
+      const lRadius = data.radius || 100;
+
+      // Calculate distance from player to lightning center
+      const ldx = lx - predictedX;
+      const ldy = ly - predictedY;
+      const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
+
+      // Play lightning sound — louder when closer
+      const maxHearDist = 600;
+      if (ldist < maxHearDist) {
+        const volume = Math.max(0.1, 1.0 - (ldist / maxHearDist));
+        playSound("lightning", volume, 0.9 + Math.random() * 0.2);
+      }
+
+      // Screen shake
+      const lShake = Math.max(2, 12 - ldist / 60);
+      triggerScreenShake(lShake);
+
+      // Flashbang effect — if player is inside the radius, apply strong flash
+      if (ldist < lRadius) {
+        // Inside radius: 90% white flash
+        flashbangOverlay.alpha = 0.9;
+      } else if (ldist < lRadius * 3) {
+        // Near radius: partial flash based on proximity
+        const proximity = 1 - ((ldist - lRadius) / (lRadius * 2));
+        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, proximity * 0.6);
+      }
+
+      // Create lightning visual effect
+      createLightningStrike(lx, ly, lRadius);
+    }
+
     if (data.type === "leaderboard") {
       showLeaderboard(data.stats);
     }
@@ -1751,6 +1803,9 @@ function login() {
           damageIndicators = [];
           activeBombs = [];
           bombExplosions = [];
+          activeLightnings = [];
+          lightningBolts = [];
+          flashbangOverlay = { alpha: 0 };
           previousBulletPositions = new Map();
           screenShake = { intensity: 0, decay: 0.92 };
           currentRoomData = null;
@@ -2240,6 +2295,29 @@ document.addEventListener("keyup", (e) => {
       predictedY = predicted.y;
     }
   }
+});
+
+// ===== WINDOW FOCUS LOSS — RELEASE ALL KEYS =====
+// Fixes the stuck-movement bug: if the window loses focus while a key is held,
+// keyup never fires. We detect blur / visibility-change and release everything.
+
+function releaseAllKeys() {
+  if (!ws || !gameReady) return;
+  for (const key of ["w", "a", "s", "d"]) {
+    if (currentKeys[key]) {
+      currentKeys[key] = false;
+      inputSequence++;
+      ws.send(JSON.stringify({ type: "keyup", key, sequence: inputSequence, timestamp: Date.now() }));
+      pendingInputs.push({ sequence: inputSequence, keys: { ...currentKeys }, timestamp: Date.now() });
+    }
+  }
+  keysPressed.clear();
+  isMouseDown = false;
+}
+
+window.addEventListener("blur", releaseAllKeys);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) releaseAllKeys();
 });
 
 // ===== MOBILE TOUCH CONTROLS =====
@@ -2924,6 +3002,157 @@ function renderBombExplosions() {
   });
 }
 
+// ===== LIGHTNING STRIKE SYSTEM =====
+
+let lightningBolts = [];
+
+function createLightningStrike(x, y, radius) {
+  // Create bolt segments for visual effect
+  const bolts = [];
+  const boltCount = 3 + Math.floor(Math.random() * 3);
+  for (let b = 0; b < boltCount; b++) {
+    const segments = [];
+    let sx = x + (Math.random() - 0.5) * radius * 0.4;
+    let sy = y - 200; // Start from above
+    const targetX = x + (Math.random() - 0.5) * radius * 0.5;
+    const targetY = y + (Math.random() - 0.5) * radius * 0.3;
+    const steps = 8 + Math.floor(Math.random() * 6);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const bx = sx + (targetX - sx) * t + (Math.random() - 0.5) * 30 * (1 - t);
+      const by = sy + (targetY - sy) * t + (Math.random() - 0.5) * 15;
+      segments.push({ x: bx, y: by });
+    }
+    bolts.push(segments);
+  }
+
+  lightningBolts.push({
+    x, y, radius,
+    bolts,
+    timestamp: Date.now(),
+    duration: 400,
+  });
+}
+
+function renderLightningWarnings() {
+  const now = Date.now();
+  activeLightnings.forEach((lightning) => {
+    const elapsed = now - lightning.spawnTime;
+    const progress = Math.min(elapsed / lightning.fuseTime, 1);
+
+    // Flickering warning circle that gets brighter
+    const flicker = Math.sin(now / 30) * 0.3 + 0.7;
+    const urgency = progress * flicker;
+
+    // Warning zone — pulsing electric blue circle
+    ctx.globalAlpha = 0.05 + urgency * 0.2;
+    ctx.fillStyle = "#88ccff";
+    ctx.beginPath();
+    ctx.arc(lightning.x, lightning.y, lightning.radius * progress, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Warning border — dashed electric ring
+    ctx.globalAlpha = 0.4 + urgency * 0.6;
+    ctx.strokeStyle = "#55aaff";
+    ctx.lineWidth = 2 + progress * 2;
+    ctx.setLineDash([8, 4]);
+    ctx.beginPath();
+    ctx.arc(lightning.x, lightning.y, lightning.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Inner crackling ring
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = urgency * 0.5 * flicker;
+    ctx.beginPath();
+    ctx.arc(lightning.x, lightning.y, lightning.radius * 0.5 * progress, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Warning icon
+    ctx.globalAlpha = 0.6 + urgency * 0.4;
+    ctx.font = "bold 20px 'Rajdhani', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffdd44";
+    ctx.fillText("⚡", lightning.x, lightning.y - lightning.radius - 10);
+    ctx.textAlign = "start";
+
+    ctx.globalAlpha = 1.0;
+  });
+}
+
+function renderLightningBolts() {
+  const now = Date.now();
+  lightningBolts = lightningBolts.filter((l) => now - l.timestamp < l.duration);
+
+  lightningBolts.forEach((lightning) => {
+    const age = now - lightning.timestamp;
+    const progress = age / lightning.duration;
+    const alpha = Math.max(0, 1 - progress);
+
+    // Flash on ground
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(lightning.x, lightning.y, lightning.radius * (0.5 + progress * 0.5), 0, Math.PI * 2);
+    ctx.fill();
+
+    // Electric ground ring
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = "#88ccff";
+    ctx.lineWidth = 3 * alpha;
+    ctx.beginPath();
+    ctx.arc(lightning.x, lightning.y, lightning.radius * progress, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Draw bolt segments
+    lightning.bolts.forEach((segments) => {
+      ctx.globalAlpha = alpha * (0.6 + Math.random() * 0.4);
+      // Outer glow
+      ctx.strokeStyle = "#4488ff";
+      ctx.lineWidth = 4 * alpha;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      segments.forEach((s, i) => {
+        if (i === 0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      });
+      ctx.stroke();
+
+      // Inner bright core
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2 * alpha;
+      ctx.beginPath();
+      segments.forEach((s, i) => {
+        if (i === 0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      });
+      ctx.stroke();
+    });
+
+    ctx.globalAlpha = 1.0;
+  });
+}
+
+function updateFlashbang() {
+  if (flashbangOverlay.alpha > 0) {
+    // Decay over 2 seconds (from current alpha to 0)
+    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.008);
+  }
+}
+
+function renderFlashbang() {
+  if (flashbangOverlay.alpha <= 0) return;
+  ctx.save();
+  // Reset any transforms (screen shake) to cover the full canvas
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = flashbangOverlay.alpha;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+}
+
 // ===== RENDER LOOP =====
 
 // Pre-render static grid to offscreen canvas for performance
@@ -2990,6 +3219,7 @@ function render() {
   updateHitMarkers();
   updateDamageIndicators();
   updateBombExplosions();
+  updateFlashbang();
 
   // Dust clouds when local player moves
   const dustNow = Date.now();
@@ -3099,6 +3329,9 @@ function render() {
 
   // Render bombs
   renderBombs();
+
+  // Render lightning warnings
+  renderLightningWarnings();
 
   players.forEach((p, index) => {
     // Don't render dead players
@@ -3306,6 +3539,9 @@ function render() {
   // Render bomb explosions
   renderBombExplosions();
 
+  // Render lightning bolts
+  renderLightningBolts();
+
   // Render hit markers and damage indicators
   renderHitMarkers();
   renderDamageIndicators();
@@ -3347,6 +3583,9 @@ function render() {
   if (shakeOffset.x !== 0 || shakeOffset.y !== 0) {
     ctx.restore();
   }
+
+  // Flashbang overlay (must be last — covers entire screen)
+  renderFlashbang();
 
   requestAnimationFrame(render);
 }
