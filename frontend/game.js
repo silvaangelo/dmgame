@@ -79,8 +79,6 @@ let flashbangOverlay = { alpha: 0, flicker: 0 }; // White screen flash for light
 
 // Low HP vignette + heartbeat
 let lowHPPulseTime = 0;
-let heartbeatOsc = null;
-let heartbeatGain = null;
 let heartbeatActive = false;
 
 // Floating damage numbers
@@ -713,6 +711,10 @@ function renderFloatingNumbers() {
 }
 
 // Low HP vignette rendering
+let lowHPVignetteGradient = null;
+let lowHPVignetteW = 0;
+let lowHPVignetteH = 0;
+
 function renderLowHPVignette() {
   const localPlayer = players.find((p) => p.id === playerId);
   if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 1) return;
@@ -722,18 +724,26 @@ function renderLowHPVignette() {
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // Red vignette around edges
   const w = canvas.width;
   const h = canvas.height;
-  const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.min(w, h) * 0.7);
-  gradient.addColorStop(0, "rgba(255,0,0,0)");
-  gradient.addColorStop(1, `rgba(180,0,0,${pulse})`);
-  ctx.fillStyle = gradient;
+  // Cache gradient — only recreate on canvas resize
+  if (!lowHPVignetteGradient || lowHPVignetteW !== w || lowHPVignetteH !== h) {
+    lowHPVignetteGradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.min(w, h) * 0.7);
+    lowHPVignetteGradient.addColorStop(0, "rgba(255,0,0,0)");
+    lowHPVignetteGradient.addColorStop(1, "rgba(180,0,0,1)");
+    lowHPVignetteW = w;
+    lowHPVignetteH = h;
+  }
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = lowHPVignetteGradient;
   ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 1.0;
   ctx.restore();
 }
 
 // Heartbeat sound for low HP
+let heartbeatTimerId = null;
+
 function startHeartbeat() {
   if (heartbeatActive || !audioCtx) return;
   heartbeatActive = true;
@@ -742,6 +752,7 @@ function startHeartbeat() {
 
 function stopHeartbeat() {
   heartbeatActive = false;
+  if (heartbeatTimerId) { clearTimeout(heartbeatTimerId); heartbeatTimerId = null; }
 }
 
 function playHeartbeatLoop() {
@@ -775,8 +786,8 @@ function playHeartbeatLoop() {
   osc2.start(now + 0.18);
   osc2.stop(now + 0.32);
 
-  // Schedule next heartbeat
-  setTimeout(() => playHeartbeatLoop(), 800);
+  // Schedule next heartbeat (tracked so we can cancel)
+  heartbeatTimerId = setTimeout(() => { heartbeatTimerId = null; playHeartbeatLoop(); }, 800);
 }
 
 // Screen shake system
@@ -1076,6 +1087,7 @@ function returnToLobby() {
   gameReady = false;
   floatingNumbers = [];
   lowHPPulseTime = 0;
+  lowHPVignetteGradient = null;
   stopHeartbeat();
   lastKilledByUsername = "";
   pendingDeathWeapon.clear();
@@ -3789,19 +3801,19 @@ function render() {
   // Render lightning warnings
   renderLightningWarnings();
 
+  // Find bounty leader ONCE (player with most kills, minimum 2)
+  let bountyLeaderId = null;
+  let maxKills = 1;
+  for (let i = 0; i < players.length; i++) {
+    if (players[i].hp > 0 && players[i].kills > maxKills) {
+      maxKills = players[i].kills;
+      bountyLeaderId = players[i].id;
+    }
+  }
+
   players.forEach((p, index) => {
     // Don't render dead players
     if (p.hp <= 0) return;
-
-    // Find bounty leader (player with most kills, minimum 2)
-    let bountyLeaderId = null;
-    let maxKills = 1; // Need at least 2 kills to get bounty
-    players.forEach((pl) => {
-      if (pl.hp > 0 && pl.kills > maxKills) {
-        maxKills = pl.kills;
-        bountyLeaderId = pl.id;
-      }
-    });
 
     let renderX = p.x;
     let renderY = p.y;

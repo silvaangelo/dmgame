@@ -75,23 +75,6 @@ function handleKill(
     });
   }
 
-  // Drop a bomb at the victim's death position
-  if (games.has(game.id)) {
-    const deathBomb: Bomb = {
-      id: uuid(),
-      x: victim.x,
-      y: victim.y,
-      createdAt: Date.now(),
-    };
-    game.bombs.push(deathBomb);
-    broadcast(game, {
-      type: "bombSpawned",
-      id: deathBomb.id,
-      x: Math.round(deathBomb.x),
-      y: Math.round(deathBomb.y),
-    });
-  }
-
   checkVictory(game);
 
   if (games.has(game.id)) {
@@ -251,9 +234,6 @@ export function updateGame(game: Game) {
       const shooter = game.players.find((p) => p.id === bullet.playerId);
 
       if (enemy.hp <= 0) {
-        console.log(
-          `☠️  ${enemy.username} was killed by ${shooter?.username || "Unknown"}!`
-        );
         handleKill(shooter, enemy, bullet.weapon, game);
       }
     }
@@ -655,7 +635,7 @@ export function spawnPickup(game: Game) {
 /* ================= BOMBS ================= */
 
 export function spawnBomb(game: Game) {
-  const count = 2 + Math.floor(Math.random() * 3); // 2–4 bombs per spawn
+  const count = 1 + Math.floor(Math.random() * 2); // 1–2 bombs per spawn
   for (let i = 0; i < count; i++) {
     let validPosition = false;
     let attempts = 0;
@@ -896,10 +876,6 @@ export function respawnPlayer(player: Player, game: Game) {
   // Clamp to arena bounds
   player.x = Math.max(pr, Math.min(GAME_CONFIG.ARENA_WIDTH - pr, player.x));
   player.y = Math.max(pr, Math.min(GAME_CONFIG.ARENA_HEIGHT - pr, player.y));
-
-  console.log(
-    `🔄 ${player.username} respawned at (${Math.round(player.x)}, ${Math.round(player.y)})`
-  );
 
   broadcast(game, {
     type: "respawn",

@@ -15,6 +15,15 @@ let matchHistory: MatchHistoryEntry[] = [];
 let users: Map<string, RegisteredUser> = new Map(); // keyed by token
 
 export function initDatabase() {
+  // Reset database on every deploy (fresh start)
+  if (fs.existsSync(DATA_DIR)) {
+    const files = fs.readdirSync(DATA_DIR);
+    for (const file of files) {
+      try { fs.unlinkSync(path.join(DATA_DIR, file)); } catch { /* ignore */ }
+    }
+    console.log("🗑️  Database reset (fresh deploy)");
+  }
+
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
