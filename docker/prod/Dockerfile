@@ -1,41 +1,20 @@
 # ─── Production Dockerfile ────────────────────────────────
-# Multi-stage build: compile TS → run plain JS
+# Bun runs TypeScript directly — no build step needed
 # ──────────────────────────────────────────────────────────
 
-# ── Stage 1: Build ────────────────────────────────────────
-FROM node:24-slim AS builder
-
-RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
-
-WORKDIR /app
-
-# Install ALL deps (including devDependencies for tsc)
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-
-# Copy source
-COPY tsconfig.json ./
-COPY backend/ ./backend/
-
-# Compile TypeScript
-RUN pnpm build
-
-# ── Stage 2: Production runtime ──────────────────────────
-FROM node:24-slim AS runtime
-
-RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
+FROM oven/bun:1 AS runtime
 
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV NODE_OPTIONS="--max-old-space-size=512"
 
-# Install only production deps
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
+# Install production deps only
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile --production 2>/dev/null || bun install --production
 
-# Copy compiled JS from builder
-COPY --from=builder /app/dist/ ./dist/
+# Copy backend source (Bun runs TS directly)
+COPY backend/ ./backend/
+COPY tsconfig.json ./
 
 # Copy frontend (static files, no build needed)
 COPY frontend/ ./frontend/
@@ -49,9 +28,9 @@ RUN addgroup --system --gid 1001 appgroup && \
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+  CMD bun -e "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
 
 # Run as non-root
 USER appuser
 
-CMD ["node", "dist/backend/index.js"]
+CMD ["bun", "backend/index.ts"]

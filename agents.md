@@ -16,10 +16,10 @@ The collision uses **axis-by-axis resolution** — X movement is resolved first 
 
 ### 2. ESM Module System
 
-The project uses **ES Modules** (`"type": "module"` in package.json). TypeScript is configured with `"module": "NodeNext"`.
+The project uses **ES Modules** (`"type": "module"` in package.json). TypeScript is configured with `"module": "ESNext"` and `"moduleResolution": "bundler"`.
 
 - All backend imports **must use `.js` extensions** (e.g., `import { foo } from "./bar.js"`) even though the source files are `.ts`
-- This is a TypeScript + NodeNext requirement, not a bug
+- This is required for compatibility with the TypeScript compiler and ESM resolution
 
 ### 3. State Mutation Pattern
 
@@ -119,22 +119,22 @@ If you add a field to the player state, you must update:
 
 ```bash
 # Start dev server
-pnpm dev
+bun run dev
 
 # Type-check
-pnpm typecheck
+bun run typecheck
 
 # Lint
-pnpm lint
+bun run lint
 
 # Fix lint issues
-pnpm lint:fix
+bun run lint:fix
 
 # Build for production
-pnpm build
+bun run build
 ```
 
-The dev server uses `tsx` which runs TypeScript directly without a build step. The frontend files are served as-is from the `frontend/` directory.
+The dev server uses Bun which runs TypeScript directly without a build step. The frontend files are served as-is from the `frontend/` directory.
 
 ## Testing Changes
 
@@ -162,11 +162,11 @@ There are no automated tests. To verify changes:
 
 | Layer     | Technology                            |
 | --------- | ------------------------------------- |
-| Runtime   | Node.js ≥ 24                          |
+| Runtime   | Bun ≥ 1.2                             |
 | Backend   | TypeScript, Express 5, ws             |
 | Frontend  | Vanilla JS, Canvas 2D, Web Audio API  |
-| Build     | tsc (prod), tsx (dev)                 |
-| Package   | pnpm 10                              |
+| Build     | tsc (typecheck), Bun (runtime)        |
+| Package   | Bun (built-in package manager)        |
 | Lint      | ESLint 10, typescript-eslint          |
 | Container | Docker, docker-compose                |
 | CI/CD     | GitHub Actions → DigitalOcean Droplet |

@@ -5,9 +5,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "tsx backend/index.ts",
+    "dev": "bun run --watch backend/index.ts",
     "build": "tsc",
-    "start": "node dist/backend/index.js",
+    "start": "bun backend/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
@@ -15,7 +15,6 @@
   "dependencies": {
     "compression": "^1.8.1",
     "express": "^5.2.1",
-    "msgpackr": "^1.11.8",
     "uuid": "^13.0.0",
     "ws": "^8.19.0"
   },
@@ -28,12 +27,10 @@
     "@types/ws": "^8.18.1",
     "eslint": "^10.0.1",
     "globals": "^17.3.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.0"
   },
-  "packageManager": "pnpm@10.30.2",
   "engines": {
-    "node": ">=24"
+    "bun": ">=1.2"
   }
 }

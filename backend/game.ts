@@ -5,7 +5,6 @@ import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
   broadcast,
-  broadcastBinary,
   serializePlayersCompact,
   isPositionClear,
   debouncedBroadcastOnlineList,
@@ -386,7 +385,7 @@ export function updateGame(game: Game) {
   game.lastBroadcastState?.set("hash", stateHash);
 
   game.stateSequence++;
-  broadcastBinary(game, {
+  broadcast(game, {
     type: "state",
     seq: game.stateSequence,
     p: compactPlayers,

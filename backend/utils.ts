@@ -1,5 +1,4 @@
 import { WebSocket } from "ws";
-import { pack } from "msgpackr";
 import type { Game, Obstacle } from "./types.js";
 import { GAME_CONFIG } from "./config.js";
 import { games, allPlayers } from "./state.js";
@@ -9,20 +8,6 @@ import { wss } from "./server.js";
 
 export function broadcast(game: Game, data: unknown) {
   const msg = JSON.stringify(data);
-  game.players.forEach((p) => {
-    try {
-      if (p.ws.readyState === WebSocket.OPEN) {
-        p.ws.send(msg);
-      }
-    } catch (error) {
-      console.error(`Failed to send message to ${p.username}:`, error);
-    }
-  });
-}
-
-/** Send binary MessagePack data — used for high-frequency state broadcasts */
-export function broadcastBinary(game: Game, data: unknown) {
-  const msg = pack(data);
   game.players.forEach((p) => {
     try {
       if (p.ws.readyState === WebSocket.OPEN) {
