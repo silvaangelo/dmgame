@@ -7,7 +7,7 @@
  * Usage: node scripts/build-frontend.js
  */
 
-import { execSync } from "child_process";
+import esbuild from "esbuild";
 import fs from "fs";
 import path from "path";
 
@@ -36,26 +36,26 @@ function copyRecursive(src, dest) {
 }
 copyRecursive(SRC, DIST);
 
-// Minify game.js with esbuild
+// Minify game.js with esbuild API (no npx needed)
 console.log("📦 Minifying game.js...");
-execSync(
-  `npx esbuild "${path.join(SRC, "game.js")}" --bundle=false --minify --target=es2020 --outfile="${path.join(DIST, "game.js")}"`,
-  { stdio: "inherit" }
-);
+await esbuild.build({
+  entryPoints: [path.join(SRC, "game.js")],
+  outfile: path.join(DIST, "game.js"),
+  bundle: false,
+  minify: true,
+  target: "es2020",
+  allowOverwrite: true,
+});
 
-// Minify styles.css with esbuild
+// Minify styles.css with esbuild API
 console.log("📦 Minifying styles.css...");
-execSync(
-  `npx esbuild "${path.join(SRC, "styles.css")}" --bundle=false --minify --outfile="${path.join(DIST, "styles.css")}"`,
-  { stdio: "inherit" }
-);
-
-// Minify msgpack lib
-const msgpackSrc = path.join(SRC, "lib", "msgpack.min.js");
-if (fs.existsSync(msgpackSrc)) {
-  console.log("📦 Copying msgpack.min.js (already minified)...");
-  // Already minified, just ensure it's copied (already done above)
-}
+await esbuild.build({
+  entryPoints: [path.join(SRC, "styles.css")],
+  outfile: path.join(DIST, "styles.css"),
+  bundle: false,
+  minify: true,
+  allowOverwrite: true,
+});
 
 // Report sizes
 const origJS = fs.statSync(path.join(SRC, "game.js")).size;
