@@ -2771,14 +2771,15 @@ function updateShotUI() {
   }
 
   const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
+  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4", grenade_launcher: "5", dual_pistols: "6" };
+  const shortcut = WEAPON_SHORTCUTS[player.weapon] || "";
+  const shortcutTag = shortcut ? `[${shortcut}] ` : "";
   if (player.weapon === "knife") {
-    shotsDisplay.textContent = `${weaponName} | Corpo a corpo`;
+    shotsDisplay.textContent = `${shortcutTag}${weaponName} | Corpo a corpo`;
   } else if (player.weapon === "minigun") {
     shotsDisplay.textContent = `${weaponName} | ∞`;
-  } else if (player.weapon === "grenade_launcher") {
-    shotsDisplay.textContent = `${weaponName} | ${player.shots}/30`;
   } else {
-    shotsDisplay.textContent = `${weaponName} | ${player.shots}/30`;
+    shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/30`;
   }
 
   // Show respawn message if dead
@@ -2850,6 +2851,13 @@ document.addEventListener("keydown", (e) => {
       const pl = document.getElementById("playerList");
       if (pl) pl.style.display = "block";
     }
+    return;
+  }
+
+  // Spacebar to shoot (same as mouse click)
+  if (e.key === " ") {
+    e.preventDefault();
+    isMouseDown = true;
     return;
   }
 
