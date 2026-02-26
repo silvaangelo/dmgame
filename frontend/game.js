@@ -2085,9 +2085,13 @@ function setupWsMessageHandler() {
             targetY: data.y,
           });
         } else {
-          // Local player respawned
+          // Local player respawned — clear all lingering effects
           predictedX = data.x;
           predictedY = data.y;
+          flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+          lightningBolts = [];
+          pageFlashIntensity = 0;
+          document.body.style.filter = "";
         }
 
         console.log(`🔄 ${respawnedPlayer.username} respawned!`);

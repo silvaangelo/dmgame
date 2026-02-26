@@ -916,17 +916,25 @@ export function checkVictory(game: Game) {
 /* ================= RESPAWN ================= */
 
 export function respawnPlayer(player: Player, game: Game) {
-  let bestX = GAME_CONFIG.ARENA_WIDTH / 2;
-  let bestY = GAME_CONFIG.ARENA_HEIGHT / 2;
+  // Default to zone center when shrinking, otherwise arena center
+  let bestX = game.zoneShrinking ? game.zoneX + game.zoneW / 2 : GAME_CONFIG.ARENA_WIDTH / 2;
+  let bestY = game.zoneShrinking ? game.zoneY + game.zoneH / 2 : GAME_CONFIG.ARENA_HEIGHT / 2;
   let bestDistance = 0;
 
   const alivePlayers = game.players.filter(
     (p) => p.hp > 0 && p.id !== player.id
   );
 
+  // When zone is shrinking, constrain spawns to inside the safe zone
+  const spawnMargin = 50;
+  const spawnMinX = game.zoneShrinking ? game.zoneX + spawnMargin : spawnMargin;
+  const spawnMinY = game.zoneShrinking ? game.zoneY + spawnMargin : spawnMargin;
+  const spawnMaxX = game.zoneShrinking ? game.zoneX + game.zoneW - spawnMargin : GAME_CONFIG.ARENA_WIDTH - spawnMargin;
+  const spawnMaxY = game.zoneShrinking ? game.zoneY + game.zoneH - spawnMargin : GAME_CONFIG.ARENA_HEIGHT - spawnMargin;
+
   for (let attempt = 0; attempt < 50; attempt++) {
-    const testX = 50 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 100);
-    const testY = 50 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 100);
+    const testX = spawnMinX + Math.random() * Math.max(0, spawnMaxX - spawnMinX);
+    const testY = spawnMinY + Math.random() * Math.max(0, spawnMaxY - spawnMinY);
 
     if (
       !isPositionClear(testX, testY, game.obstacles, GAME_CONFIG.PLAYER_RADIUS)
@@ -988,9 +996,13 @@ export function respawnPlayer(player: Player, game: Game) {
       }
     }
   }
-  // Clamp to arena bounds
-  player.x = Math.max(pr, Math.min(GAME_CONFIG.ARENA_WIDTH - pr, player.x));
-  player.y = Math.max(pr, Math.min(GAME_CONFIG.ARENA_HEIGHT - pr, player.y));
+  // Clamp to arena bounds (and to safe zone if shrinking)
+  const clampMinX = game.zoneShrinking ? Math.max(pr, game.zoneX + pr) : pr;
+  const clampMinY = game.zoneShrinking ? Math.max(pr, game.zoneY + pr) : pr;
+  const clampMaxX = game.zoneShrinking ? Math.min(GAME_CONFIG.ARENA_WIDTH - pr, game.zoneX + game.zoneW - pr) : GAME_CONFIG.ARENA_WIDTH - pr;
+  const clampMaxY = game.zoneShrinking ? Math.min(GAME_CONFIG.ARENA_HEIGHT - pr, game.zoneY + game.zoneH - pr) : GAME_CONFIG.ARENA_HEIGHT - pr;
+  player.x = Math.max(clampMinX, Math.min(clampMaxX, player.x));
+  player.y = Math.max(clampMinY, Math.min(clampMaxY, player.y));
 
   broadcast(game, {
     type: "respawn",
