@@ -743,16 +743,13 @@ export function checkVictory(game: Game) {
       winnerName: winner.username,
     });
 
+    const endMessage = JSON.stringify({
+      type: "end",
+      winnerName: winner.username,
+      scoreboard: scoreboard,
+    });
+
     game.players.forEach((p) => {
-      const isWinner = p.id === winner.id;
-      const audioCount = isWinner ? 8 : 9;
-      const audioIndex = Math.floor(Math.random() * audioCount) + 1;
-      const endMessage = JSON.stringify({
-        type: "end",
-        winnerName: winner.username,
-        scoreboard: scoreboard,
-        audioIndex: audioIndex,
-      });
       try {
         if (p.ws.readyState === WebSocket.OPEN) {
           p.ws.send(endMessage);

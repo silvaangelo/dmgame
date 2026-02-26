@@ -80,6 +80,7 @@ let flashbangOverlay = { alpha: 0, flicker: 0 }; // White screen flash for light
 // Celebration system (match end explosions + audio)
 let celebrationInterval = null;
 let celebrationIsWinner = false;
+let victoryCountdownInterval = null;
 
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
@@ -899,6 +900,67 @@ function stopReadyAlarm() {
 
 let previousHP = 3;
 
+// Return to lobby (called from victory countdown or Voltar button)
+function returnToLobby() {
+  if (victoryCountdownInterval) { clearInterval(victoryCountdownInterval); victoryCountdownInterval = null; }
+
+  // Hide victory screen and game UI
+  document.getElementById("victoryScreen").style.display = "none";
+  document.getElementById("game").style.display = "none";
+  document.getElementById("gameUI").style.display = "none";
+  document.getElementById("playerList").style.display = "none";
+  document.getElementById("readyScreen").style.display = "none";
+  document.getElementById("killFeed").style.display = "none";
+
+  // Hide mobile controls
+  const mobileCtrl = document.getElementById("mobileControls");
+  if (mobileCtrl) mobileCtrl.classList.remove("active");
+
+  // Show room list (player stays logged in)
+  document.getElementById("lobbyLayout").style.display = "";
+  document.getElementById("roomListScreen").style.display = "block";
+  if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
+
+  // Reset game state
+  players = [];
+  bullets = [];
+  pickups = [];
+  explosions = [];
+  bloodParticles = [];
+  bloodStains = [];
+  muzzleFlashes = [];
+  knifeSlashes = [];
+  shellCasings = [];
+  impactSparks = [];
+  dustClouds = [];
+  hitMarkers = [];
+  damageIndicators = [];
+  activeBombs = [];
+  bombExplosions = [];
+  activeLightnings = [];
+  lightningBolts = [];
+  flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+  if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
+  previousBulletPositions.clear();
+  screenShake = { intensity: 0, decay: 0.92 };
+  currentRoomData = null;
+  killFeedEntries = [];
+  killFeedDirty = true;
+  obstacleCanvasDirty = true;
+  _cachedDOM = null;
+  previousPlayerStates.clear();
+  gameReady = false;
+
+  // Remove any active toasts
+  activeToasts.forEach((t) => t.remove());
+  activeToasts = [];
+}
+
+// Skip victory screen instantly (Voltar button)
+function skipVictoryScreen() {
+  returnToLobby();
+}
+
 // Confirm ready button click
 function confirmReady() {
   if (!ws) return;
@@ -1125,8 +1187,8 @@ function tryShoot() {
         player.weapon === "shotgun" ? 8 : 9;
 
       if (player.weapon === "shotgun") {
-        // Predict 5 pellets
-        for (let i = 0; i < 5; i++) {
+        // Predict 6 pellets
+        for (let i = 0; i < 6; i++) {
           const spreadAngle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 0.9;
           const pDirX = Math.cos(spreadAngle);
           const pDirY = Math.sin(spreadAngle);
@@ -1406,17 +1468,20 @@ function setupWsMessageHandler() {
       // Initialize audio system
       initAudio();
 
-      // Reset ready button for new match
+      // Hide ready button — match auto-starts
       const readyButton = document.getElementById("readyButton");
-      readyButton.disabled = false;
-      readyButton.style.opacity = "1";
-      readyButton.textContent = "BORA! 💪";
+      readyButton.style.display = "none";
 
       // Play match start sound
       playSound("matchstart", 0.7);
 
-      // Play ready alarm (loop)
-      startReadyAlarm();
+      // Show "preparing" message
+      const waitingMsg = document.getElementById("waitingForPlayers");
+      if (waitingMsg) {
+        waitingMsg.textContent = "Preparando partida...";
+        waitingMsg.style.fontSize = "20px";
+        waitingMsg.style.color = "#d9a04a";
+      }
 
       // Initialize predicted position
       const player = players.find((p) => p.id === playerId);
@@ -1890,12 +1955,12 @@ function setupWsMessageHandler() {
       const localPlayer = data.scoreboard.find((p) => p.username === loggedInUsername);
       const isLocalWinner = localPlayer && localPlayer.isWinner;
 
-      // Play server-assigned win/lose sound with initial bomb explosion
+      // Play ONE win/lose sound
       const audioIdx = data.audioIndex || 1;
       const firstSound = isLocalWinner ? `win-${audioIdx}` : `lose-${audioIdx}`;
       playSound(firstSound, 0.7);
 
-      // Start celebration: periodic bomb explosions + random win/lose audio
+      // Start celebration: periodic bomb explosions (visual + one bomb sound each)
       celebrationIsWinner = isLocalWinner;
       let celebrationCount = 0;
       celebrationInterval = setInterval(() => {
@@ -1910,11 +1975,9 @@ function setupWsMessageHandler() {
         const cy = predictedY + (Math.random() - 0.5) * canvas.height * 0.7;
         createBombExplosion(cx, cy, 50 + Math.random() * 40);
         triggerScreenShake(3 + Math.random() * 4);
-        // Play a random win/lose audio each explosion
-        const count = celebrationIsWinner ? 8 : 9;
-        const idx = Math.floor(Math.random() * count) + 1;
-        const snd = celebrationIsWinner ? `win-${idx}` : `lose-${idx}`;
-        playSound(snd, 0.5, 0.9 + Math.random() * 0.2);
+        // One bomb sound per explosion
+        const bIdx = Math.floor(Math.random() * 5) + 1;
+        playSound(`bomb-${bIdx}`, 0.4, 0.9 + Math.random() * 0.2);
       }, 1100);
 
       // Show victory screen with scoreboard
@@ -1946,14 +2009,16 @@ function setupWsMessageHandler() {
           <h3 style="color: #aaccaa; margin-bottom: 15px; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 2px;">Placar Final</h3>
           ${scoreboardHTML}
         </div>
-        <p style="margin-top: 20px; font-size: 18px; color: #8aaa8a;">Voltando pro lobby em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">5</span>s...</p>
+        <button id="voltarBtn" onclick="skipVictoryScreen()" style="margin-top: 18px; padding: 14px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif;">↩ Voltar</button>
+        <p style="margin-top: 12px; font-size: 16px; color: #8aaa8a;">Voltando em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">10</span>s...</p>
       `;
       document.getElementById("victoryScreen").style.display = "block";
 
-      // Countdown from 5 to 1
-      let countdown = 5;
+      // Countdown from 10 to 1
+      let countdown = 10;
 
-      const countdownInterval = setInterval(() => {
+      if (victoryCountdownInterval) clearInterval(victoryCountdownInterval);
+      victoryCountdownInterval = setInterval(() => {
         countdown--;
         if (countdown > 0) {
           const timerElement = document.getElementById("countdownTimer");
@@ -1961,60 +2026,7 @@ function setupWsMessageHandler() {
             timerElement.textContent = countdown.toString();
           }
         } else {
-          clearInterval(countdownInterval);
-
-          // Hide victory screen and game UI
-          document.getElementById("victoryScreen").style.display = "none";
-          document.getElementById("game").style.display = "none";
-          document.getElementById("gameUI").style.display = "none";
-          document.getElementById("playerList").style.display = "none";
-          document.getElementById("readyScreen").style.display = "none";
-          document.getElementById("killFeed").style.display = "none";
-
-          // Hide mobile controls
-          const mobileCtrl = document.getElementById("mobileControls");
-          if (mobileCtrl) mobileCtrl.classList.remove("active");
-
-          // Show room list (player stays logged in)
-          document.getElementById("lobbyLayout").style.display = "";
-          document.getElementById("roomListScreen").style.display = "block";
-          if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
-
-          // Reset game state
-          players = [];
-          bullets = [];
-          pickups = [];
-          explosions = [];
-          bloodParticles = [];
-          bloodStains = [];
-          muzzleFlashes = [];
-          knifeSlashes = [];
-          shellCasings = [];
-          impactSparks = [];
-          dustClouds = [];
-          hitMarkers = [];
-          damageIndicators = [];
-          activeBombs = [];
-          bombExplosions = [];
-          activeLightnings = [];
-          lightningBolts = [];
-          flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
-          if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
-          previousBulletPositions.clear();
-          screenShake = { intensity: 0, decay: 0.92 };
-          currentRoomData = null;
-          killFeedEntries = [];
-          killFeedDirty = true;
-          obstacleCanvasDirty = true;
-          _cachedDOM = null;
-          previousPlayerStates.clear();
-          gameReady = false;
-
-          // Remove any active toasts
-          activeToasts.forEach((t) => t.remove());
-          activeToasts = [];
-
-          // Do NOT close WebSocket — player stays connected
+          returnToLobby();
         }
       }, 1000);
     }

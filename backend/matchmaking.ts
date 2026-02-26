@@ -282,25 +282,16 @@ export function startGameFromRoom(room: Room) {
 /* ================= PRE-GAME READY CHECK ================= */
 
 function startPreGameTimeout(game: Game) {
-  let timeRemaining = GAME_CONFIG.PRE_GAME_READY_TIMEOUT;
+  // Auto-ready all players and start 3s countdown immediately
+  game.players.forEach((p) => { p.ready = true; });
 
-  game.preGameCountdownInterval = setInterval(() => {
-    timeRemaining--;
+  broadcast(game, {
+    type: "readyUpdate",
+    readyCount: game.players.length,
+    totalCount: game.players.length,
+  });
 
-    broadcast(game, {
-      type: "preGameCountdown",
-      timeRemaining,
-    });
-
-    if (timeRemaining <= 0) {
-      clearPreGameTimers(game);
-
-      // Force-start the game regardless of who's ready
-      console.log(`⏰ Pre-game timeout! Force-starting game ${game.id}`);
-      game.players.forEach((p) => { p.ready = true; });
-      beginMatch(game);
-    }
-  }, 1000);
+  checkAllReady(game);
 }
 
 function clearPreGameTimers(game: Game) {
