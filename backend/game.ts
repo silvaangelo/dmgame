@@ -384,7 +384,7 @@ export function updateGame(game: Game) {
   // Weapon code mapping (hoisted constant)
   const weaponCodeMap = WEAPON_CODE_MAP;
 
-  // Delta detection
+  // Delta state compression — only send changed player fields
   const compactPlayers = serializePlayersCompact(game);
   const compactBullets = game.bullets.map((b) => [
     b.id,
@@ -398,25 +398,67 @@ export function updateGame(game: Game) {
     };
     return [pk.id, Math.round(pk.x), Math.round(pk.y), PICKUP_TYPE_CODES[pk.type] ?? 0];
   });
-  // Lightweight hash — avoid full JSON.stringify every tick
-  let stateHash = game.bullets.length + ":" + game.pickups.length;
-  for (const p of compactPlayers) {
-    stateHash += ":" + (p as number[])[1] + "," + (p as number[])[2] + "," + (p as number[])[3] + "," + (p as number[])[9];
-  }
 
-  const lastHash = game.lastBroadcastState?.get("hash");
-  if (stateHash === lastHash && compactBullets.length === 0) {
+  // Build per-player delta arrays
+  if (!game.lastBroadcastState) {
+    game.lastBroadcastState = new Map();
+  }
+  const lastPlayerStates = game.lastBroadcastState.get("players") as Map<string, unknown[]> | undefined;
+  const playerDeltas: unknown[][] = [];
+  const newPlayerStates = new Map<string, unknown[]>();
+  let hasPlayerChanges = false;
+
+  for (const compact of compactPlayers) {
+    const arr = compact as unknown[];
+    const pid = arr[0] as string;
+    const prev = lastPlayerStates?.get(pid);
+
+    if (!prev) {
+      // New player or first tick — send full
+      playerDeltas.push(arr);
+      hasPlayerChanges = true;
+    } else {
+      // Build delta: [id, ...only changed fields as [index, value] pairs]
+      const delta: unknown[] = [pid];
+      let changed = false;
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i] !== prev[i]) {
+          delta.push(i, arr[i]);
+          changed = true;
+        }
+      }
+      if (changed) {
+        playerDeltas.push(delta);
+        hasPlayerChanges = true;
+      }
+      // Even if unchanged, we include an empty entry so the client knows the player exists
+      else {
+        playerDeltas.push([pid]);
+      }
+    }
+    newPlayerStates.set(pid, arr);
+  }
+  game.lastBroadcastState.set("players", newPlayerStates);
+
+  // Skip broadcast if truly nothing changed
+  if (!hasPlayerChanges && compactBullets.length === 0 && compactPickups.length === (game.lastBroadcastState.get("pickupCount") as number || 0)) {
     return;
   }
-  game.lastBroadcastState?.set("hash", stateHash);
+  game.lastBroadcastState.set("pickupCount", compactPickups.length);
 
   game.stateSequence++;
   broadcast(game, {
     type: "state",
     seq: game.stateSequence,
-    p: compactPlayers,
+    p: playerDeltas,
     b: compactBullets,
     pk: compactPickups,
+    z: game.zoneShrinking ? [
+      Math.round(game.zoneX),
+      Math.round(game.zoneY),
+      Math.round(game.zoneW),
+      Math.round(game.zoneH),
+    ] : undefined,
   });
 }
 
@@ -792,6 +834,12 @@ export function checkVictory(game: Game) {
     if (game.lightningSpawnInterval) {
       clearTimeout(game.lightningSpawnInterval);
     }
+    if (game.zoneShrinkInterval) {
+      clearInterval(game.zoneShrinkInterval);
+    }
+    if (game.zoneDamageInterval) {
+      clearInterval(game.zoneDamageInterval);
+    }
 
     // Save stats for all players
     game.players.forEach((p) => {
@@ -1033,4 +1081,69 @@ export function startGameLoop() {
       }
     });
   }, 1000 / GAME_CONFIG.TICK_RATE);
+}
+
+/* ================= DYNAMIC ARENA SHRINKING ================= */
+
+export function startZoneShrink(game: Game) {
+  if (game.zoneShrinking || !games.has(game.id)) return;
+  game.zoneShrinking = true;
+
+  broadcast(game, { type: "zoneWarning" });
+
+  // Shrink the zone every ZONE_SHRINK_INTERVAL ms
+  game.zoneShrinkInterval = setInterval(() => {
+    if (!games.has(game.id)) {
+      clearInterval(game.zoneShrinkInterval);
+      return;
+    }
+
+    const rate = GAME_CONFIG.ZONE_SHRINK_RATE;
+    const minSize = GAME_CONFIG.ZONE_MIN_SIZE;
+
+    if (game.zoneW > minSize) {
+      game.zoneX += rate;
+      game.zoneW -= rate * 2;
+      if (game.zoneW < minSize) game.zoneW = minSize;
+    }
+    if (game.zoneH > minSize) {
+      game.zoneY += rate;
+      game.zoneH -= rate * 2;
+      if (game.zoneH < minSize) game.zoneH = minSize;
+    }
+
+    // Stop shrinking when minimum reached
+    if (game.zoneW <= minSize && game.zoneH <= minSize) {
+      clearInterval(game.zoneShrinkInterval);
+    }
+  }, GAME_CONFIG.ZONE_SHRINK_INTERVAL);
+
+  // Damage players outside the zone every ZONE_DAMAGE_INTERVAL ms
+  game.zoneDamageInterval = setInterval(() => {
+    if (!games.has(game.id)) {
+      clearInterval(game.zoneDamageInterval);
+      return;
+    }
+
+    game.players.forEach((player) => {
+      if (player.hp <= 0) return;
+      const inZone =
+        player.x >= game.zoneX &&
+        player.x <= game.zoneX + game.zoneW &&
+        player.y >= game.zoneY &&
+        player.y <= game.zoneY + game.zoneH;
+
+      if (!inZone) {
+        if (Date.now() < player.shieldUntil) {
+          player.shieldUntil -= 1500;
+        } else {
+          player.hp -= GAME_CONFIG.ZONE_DAMAGE;
+          if (player.hp <= 0) {
+            player.hp = 0;
+            handleKill(undefined, player, "zone", game);
+          }
+        }
+      }
+    });
+  }, GAME_CONFIG.ZONE_DAMAGE_INTERVAL);
 }

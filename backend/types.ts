@@ -98,6 +98,15 @@ export type Game = {
   lightningSpawnInterval?: NodeJS.Timeout;
   preGameTimeout?: NodeJS.Timeout;
   preGameCountdownInterval?: NodeJS.Timeout;
+  // Dynamic arena shrinking
+  matchStartTime: number;
+  zoneShrinkInterval?: NodeJS.Timeout;
+  zoneDamageInterval?: NodeJS.Timeout;
+  zoneX: number;       // Top-left X of safe zone
+  zoneY: number;       // Top-left Y of safe zone
+  zoneW: number;       // Width of safe zone
+  zoneH: number;       // Height of safe zone
+  zoneShrinking: boolean;
 };
 
 export type Room = {

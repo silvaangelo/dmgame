@@ -8,7 +8,7 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning } from "./game.js";
+import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink } from "./game.js";
 import { broadcastRoomList } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
@@ -258,6 +258,12 @@ export function startGameFromRoom(room: Room) {
     started: false,
     lastBroadcastState: new Map(),
     stateSequence: 0,
+    matchStartTime: 0,
+    zoneX: 0,
+    zoneY: 0,
+    zoneW: GAME_CONFIG.ARENA_WIDTH,
+    zoneH: GAME_CONFIG.ARENA_HEIGHT,
+    zoneShrinking: false,
   };
 
   games.set(game.id, game);
@@ -336,6 +342,7 @@ export function checkAllReady(game: Game) {
 
 function beginMatch(game: Game) {
   game.started = true;
+  game.matchStartTime = Date.now();
 
   broadcast(game, {
     type: "allReady",
@@ -385,4 +392,11 @@ function beginMatch(game: Game) {
     }, delay);
   };
   scheduleLightning();
+
+  // Schedule arena zone shrinking after ZONE_SHRINK_START ms
+  setTimeout(() => {
+    if (games.has(game.id)) {
+      startZoneShrink(game);
+    }
+  }, GAME_CONFIG.ZONE_SHRINK_START);
 }

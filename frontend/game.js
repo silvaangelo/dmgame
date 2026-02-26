@@ -32,6 +32,64 @@ const GAME_CONFIG = {
   PICKUP_SPEED_MULTIPLIER: 1.5,
 };
 
+// ===== OBJECT POOLING & IN-PLACE COMPACTION =====
+// Avoid GC pressure from creating new arrays every frame with .filter()
+
+/** Compact array in-place, keeping only elements that pass the predicate. */
+function compactInPlace(arr, predicate) {
+  let write = 0;
+  for (let read = 0; read < arr.length; read++) {
+    if (predicate(arr[read])) {
+      if (write !== read) arr[write] = arr[read];
+      write++;
+    }
+  }
+  arr.length = write;
+}
+
+/** Cap array length in-place (remove oldest entries from the front). */
+function capInPlace(arr, max) {
+  if (arr.length > max) {
+    const excess = arr.length - max;
+    arr.copyWithin(0, excess);
+    arr.length = max;
+  }
+}
+
+/** Simple object pool — acquire reuses recycled objects, release returns them. */
+function createPool(factory) {
+  const free = [];
+  return {
+    acquire() { return free.length > 0 ? free.pop() : factory(); },
+    release(obj) { free.push(obj); },
+    releaseAll(arr) { for (let i = 0; i < arr.length; i++) free.push(arr[i]); },
+    size() { return free.length; },
+  };
+}
+
+// Particle pools for the most-allocated types
+const particlePool = createPool(() => ({
+  x: 0, y: 0, vx: 0, vy: 0, life: 0, size: 0, color: "", rotation: 0, rotSpeed: 0, effectType: "", opacity: 0,
+}));
+
+function acquireParticle(x, y, vx, vy, life, size, color) {
+  const p = particlePool.acquire();
+  p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+  p.life = life; p.size = size; p.color = color;
+  p.rotation = 0; p.rotSpeed = 0; p.effectType = ""; p.opacity = 0;
+  return p;
+}
+
+// ===== OFFSCREEN CULLING HELPERS =====
+// Since viewport = arena (no camera), cull entities outside arena bounds + margin
+
+const CULL_MARGIN = 30; // Extra pixels beyond arena edge before culling
+
+function isOnScreen(x, y) {
+  return x >= -CULL_MARGIN && x <= GAME_CONFIG.ARENA_WIDTH + CULL_MARGIN &&
+         y >= -CULL_MARGIN && y <= GAME_CONFIG.ARENA_HEIGHT + CULL_MARGIN;
+}
+
 // Skin definitions
 const SKINS = [
   { name: "Olive", primary: "#4a7a3a", secondary: "#2a5a2a" },
@@ -116,6 +174,10 @@ let deathAnimations = [];
 let celebrationInterval = null;
 let celebrationIsWinner = false;
 let victoryCountdownInterval = null;
+
+// Dynamic arena zone (shrinking safe zone)
+let arenaZone = null; // { x, y, w, h } or null if not active
+let zoneWarningShown = false;
 
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
@@ -312,7 +374,7 @@ function createBloodStain(x, y) {
 
   // Limit total blood stains to prevent memory issues
   if (bloodStains.length > GAME_CONFIG.MAX_BLOOD_STAINS) {
-    bloodStains = bloodStains.slice(-GAME_CONFIG.MAX_BLOOD_STAINS);
+    capInPlace(bloodStains, GAME_CONFIG.MAX_BLOOD_STAINS);
   }
 }
 
@@ -350,13 +412,15 @@ function createKillEffect(x, y, effectType) {
   }
 
   killEffects.push({ particles, frame: 0, effectType });
-  if (killEffects.length > 15) killEffects = killEffects.slice(-15);
+  capInPlace(killEffects, 15);
 }
 
 function updateKillEffects() {
-  killEffects.forEach((effect) => {
+  for (let i = 0; i < killEffects.length; i++) {
+    const effect = killEffects[i];
     effect.frame++;
-    effect.particles.forEach((p) => {
+    for (let j = 0; j < effect.particles.length; j++) {
+      const p = effect.particles[j];
       p.x += p.vx;
       p.y += p.vy;
       if (effect.effectType === "fire") {
@@ -373,15 +437,17 @@ function updateKillEffects() {
         p.vy *= 0.94;
       }
       p.life -= 0.02;
-    });
-  });
-  killEffects = killEffects.filter((e) => e.particles.some((p) => p.life > 0));
+    }
+  }
+  compactInPlace(killEffects, (e) => e.particles.some((p) => p.life > 0));
 }
 
 function renderKillEffects() {
-  killEffects.forEach((effect) => {
-    effect.particles.forEach((p) => {
-      if (p.life <= 0) return;
+  for (let i = 0; i < killEffects.length; i++) {
+    const effect = killEffects[i];
+    for (let j = 0; j < effect.particles.length; j++) {
+      const p = effect.particles[j];
+      if (p.life <= 0 || !isOnScreen(p.x, p.y)) continue;
       ctx.globalAlpha = Math.max(0, p.life);
       ctx.fillStyle = p.color;
       ctx.beginPath();
@@ -395,106 +461,175 @@ function renderKillEffects() {
         ctx.arc(p.x, p.y, p.size * p.life * 2.5, 0, Math.PI * 2);
         ctx.fill();
       }
-    });
-  });
+    }
+  }
   ctx.globalAlpha = 1.0;
 }
 
-// Death animation system (ragdoll explosion particles)
+// Death animation system (ragdoll explosion particles — dramatic burst)
 function createDeathAnimation(x, y, skinIndex) {
   const skin = SKINS[skinIndex] || SKINS[0];
   const particles = [];
-  const count = 10;
 
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 2 + Math.random() * 4;
-    const isBody = i < 4; // First few are body-colored
-
+  // --- Body chunks (skin-colored, larger, tumbling) ---
+  const bodyCount = 6;
+  for (let i = 0; i < bodyCount; i++) {
+    const angle = (Math.PI * 2 * i) / bodyCount + (Math.random() - 0.5) * 0.5;
+    const speed = 3 + Math.random() * 4;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 1.5,
+      vy: Math.sin(angle) * speed - 2.5,
       life: 1.0,
-      size: isBody ? (4 + Math.random() * 4) : (2 + Math.random() * 3),
-      color: isBody ? skin.primary : `rgb(${139 + Math.floor(Math.random() * 80)}, 0, 0)`,
+      size: 5 + Math.random() * 5,
+      color: i % 2 === 0 ? skin.primary : skin.secondary,
       rotation: Math.random() * Math.PI * 2,
-      rotSpeed: (Math.random() - 0.5) * 0.3,
+      rotSpeed: (Math.random() - 0.5) * 0.5,
     });
   }
 
+  // --- Bone/white fragments (small, fast) ---
+  const boneCount = 4;
+  for (let i = 0; i < boneCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 4 + Math.random() * 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      life: 1.0,
+      size: 2 + Math.random() * 2,
+      color: "#e8dcc8",
+      rotation: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.8,
+    });
+  }
+
+  // --- Blood splatter burst (red particles, many, slower) ---
+  const bloodCount = 10;
+  for (let i = 0; i < bloodCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 3.5;
+    const shade = 100 + Math.floor(Math.random() * 120);
+    particles.push({
+      x: x + (Math.random() - 0.5) * 6,
+      y: y + (Math.random() - 0.5) * 6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      life: 1.0,
+      size: 2 + Math.random() * 3,
+      color: `rgb(${shade}, 0, 0)`,
+      rotation: 0,
+      rotSpeed: 0,
+    });
+  }
+
+  // --- Central flash particle (bright, fades fast) ---
+  particles.push({
+    x, y,
+    vx: 0, vy: 0,
+    life: 1.0,
+    size: 16,
+    color: "#ffffff",
+    rotation: 0,
+    rotSpeed: 0,
+  });
+
   deathAnimations.push({ particles, frame: 0 });
-  if (deathAnimations.length > 10) deathAnimations = deathAnimations.slice(-10);
+  capInPlace(deathAnimations, 10);
 }
 
 function updateDeathAnimations() {
-  deathAnimations.forEach((anim) => {
+  for (let i = 0; i < deathAnimations.length; i++) {
+    const anim = deathAnimations[i];
     anim.frame++;
-    anim.particles.forEach((p) => {
+    for (let j = 0; j < anim.particles.length; j++) {
+      const p = anim.particles[j];
       p.x += p.vx;
       p.y += p.vy;
-      p.vy += 0.15; // Gravity
+      p.vy += 0.12; // Gravity
       p.vx *= 0.97;
       p.rotation += p.rotSpeed;
-      p.life -= 0.015;
-    });
-  });
-  deathAnimations = deathAnimations.filter((a) => a.particles.some((p) => p.life > 0));
+      p.life -= 0.012;
+    }
+  }
+  compactInPlace(deathAnimations, (a) => a.particles.some((p) => p.life > 0));
 }
 
 function renderDeathAnimations() {
-  deathAnimations.forEach((anim) => {
-    anim.particles.forEach((p) => {
-      if (p.life <= 0) return;
+  for (let i = 0; i < deathAnimations.length; i++) {
+    const anim = deathAnimations[i];
+    for (let j = 0; j < anim.particles.length; j++) {
+      const p = anim.particles[j];
+      if (p.life <= 0 || !isOnScreen(p.x, p.y)) continue;
       ctx.globalAlpha = Math.max(0, p.life);
+
+      // Flash particle — large fading circle
+      if (p.color === "#ffffff" && p.size >= 14) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+
+      // Blood particles — circles
+      if (p.rotSpeed === 0 && p.rotation === 0) {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * Math.max(0.3, p.life), 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+
+      // Body chunks and bone fragments — tumbling rectangles
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rotation);
       ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size * p.life, p.size * p.life);
+      const sz = p.size * Math.max(0.2, p.life);
+      ctx.fillRect(-sz / 2, -sz / 2, sz, sz * 0.6);
       ctx.restore();
-    });
-  });
+    }
+  }
   ctx.globalAlpha = 1.0;
 }
 
 function updateExplosions() {
-  explosions.forEach((explosion) => {
+  for (let i = 0; i < explosions.length; i++) {
+    const explosion = explosions[i];
     explosion.frame++;
-    explosion.particles.forEach((p) => {
+    for (let j = 0; j < explosion.particles.length; j++) {
+      const p = explosion.particles[j];
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.15; // Gravity
       p.vx *= 0.98; // Air resistance
       p.life -= 0.02;
-    });
-  });
-
-  // Remove dead explosions
-  explosions = explosions.filter((e) => e.particles.some((p) => p.life > 0));
-  if (explosions.length > GAME_CONFIG.MAX_EXPLOSIONS) {
-    explosions = explosions.slice(-GAME_CONFIG.MAX_EXPLOSIONS);
+    }
   }
 
+  // Remove dead explosions (in-place)
+  compactInPlace(explosions, (e) => e.particles.some((p) => p.life > 0));
+  capInPlace(explosions, GAME_CONFIG.MAX_EXPLOSIONS);
+
   // Update blood particles
-  bloodParticles.forEach((blood) => {
+  for (let i = 0; i < bloodParticles.length; i++) {
+    const blood = bloodParticles[i];
     blood.frame++;
-    blood.particles.forEach((p) => {
+    for (let j = 0; j < blood.particles.length; j++) {
+      const p = blood.particles[j];
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.2; // Gravity
       p.vx *= 0.95; // Air resistance
       p.life -= 0.025;
-    });
-  });
-
-  // Remove dead blood effects
-  bloodParticles = bloodParticles.filter((b) =>
-    b.particles.some((p) => p.life > 0),
-  );
-  if (bloodParticles.length > GAME_CONFIG.MAX_BLOOD_EFFECTS) {
-    bloodParticles = bloodParticles.slice(-GAME_CONFIG.MAX_BLOOD_EFFECTS);
+    }
   }
+
+  // Remove dead blood effects (in-place)
+  compactInPlace(bloodParticles, (b) => b.particles.some((p) => p.life > 0));
+  capInPlace(bloodParticles, GAME_CONFIG.MAX_BLOOD_EFFECTS);
 }
 
 // Muzzle flash system
@@ -510,9 +645,7 @@ function createMuzzleFlash(x, y, dirX, dirY) {
 
 function updateMuzzleFlashes() {
   const now = Date.now();
-  muzzleFlashes = muzzleFlashes.filter(
-    (flash) => now - flash.timestamp < GAME_CONFIG.MUZZLE_FLASH_DURATION,
-  );
+  compactInPlace(muzzleFlashes, (flash) => now - flash.timestamp < GAME_CONFIG.MUZZLE_FLASH_DURATION);
 }
 
 function renderMuzzleFlashes() {
@@ -562,9 +695,7 @@ function createKnifeSlash(x, y, angle) {
 
 function renderKnifeSlashes() {
   const now = Date.now();
-  knifeSlashes = knifeSlashes.filter(
-    (slash) => now - slash.timestamp < slash.duration,
-  );
+  compactInPlace(knifeSlashes, (slash) => now - slash.timestamp < slash.duration);
 
   knifeSlashes.forEach((slash) => {
     const progress = (now - slash.timestamp) / slash.duration;
@@ -628,11 +759,12 @@ function createShellCasing(x, y, angle) {
     life: 1.0,
     size: 3,
   });
-  if (shellCasings.length > 50) shellCasings = shellCasings.slice(-50);
+  capInPlace(shellCasings, 50);
 }
 
 function updateShellCasings() {
-  shellCasings.forEach((s) => {
+  for (let i = 0; i < shellCasings.length; i++) {
+    const s = shellCasings[i];
     s.x += s.vx;
     s.y += s.vy;
     s.vx *= 0.92;
@@ -640,12 +772,14 @@ function updateShellCasings() {
     s.rotation += s.rotSpeed;
     s.rotSpeed *= 0.95;
     s.life -= 0.012;
-  });
-  shellCasings = shellCasings.filter((s) => s.life > 0);
+  }
+  compactInPlace(shellCasings, (s) => s.life > 0);
 }
 
 function renderShellCasings() {
-  shellCasings.forEach((s) => {
+  for (let i = 0; i < shellCasings.length; i++) {
+    const s = shellCasings[i];
+    if (!isOnScreen(s.x, s.y)) continue;
     ctx.save();
     ctx.globalAlpha = Math.min(1, s.life * 2);
     ctx.translate(s.x, s.y);
@@ -656,7 +790,7 @@ function renderShellCasings() {
     ctx.fillRect(-s.size, -1, s.size * 0.6, 2);
     ctx.globalAlpha = 1.0;
     ctx.restore();
-  });
+  }
 }
 
 // Bullet impact spark system
@@ -693,36 +827,36 @@ function createImpactSparks(x, y) {
 }
 
 function updateImpactSparks() {
-  impactSparks.forEach((impact) => {
+  for (let i = 0; i < impactSparks.length; i++) {
+    const impact = impactSparks[i];
     impact.frame++;
-    impact.particles.forEach((p) => {
+    for (let j = 0; j < impact.particles.length; j++) {
+      const p = impact.particles[j];
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.1;
       p.vx *= 0.96;
       p.life -= 0.04;
-    });
-  });
-  impactSparks = impactSparks.filter((i) =>
-    i.particles.some((p) => p.life > 0),
-  );
-  if (impactSparks.length > GAME_CONFIG.MAX_IMPACT_SPARKS) {
-    impactSparks = impactSparks.slice(-GAME_CONFIG.MAX_IMPACT_SPARKS);
+    }
   }
+  compactInPlace(impactSparks, (i) => i.particles.some((p) => p.life > 0));
+  capInPlace(impactSparks, GAME_CONFIG.MAX_IMPACT_SPARKS);
 }
 
 function renderImpactSparks() {
-  impactSparks.forEach((impact) => {
-    impact.particles.forEach((p) => {
-      if (p.life > 0) {
+  for (let i = 0; i < impactSparks.length; i++) {
+    const impact = impactSparks[i];
+    for (let j = 0; j < impact.particles.length; j++) {
+      const p = impact.particles[j];
+      if (p.life > 0 && isOnScreen(p.x, p.y)) {
         ctx.globalAlpha = p.life;
         ctx.fillStyle = p.color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
       }
-    });
-  });
+    }
+  }
   ctx.globalAlpha = 1.0;
 }
 
@@ -741,28 +875,31 @@ function createDustCloud(x, y) {
       opacity: 0.2 + Math.random() * 0.15,
     });
   }
-  if (dustClouds.length > 40) dustClouds = dustClouds.slice(-40);
+  capInPlace(dustClouds, 40);
 }
 
 function updateDustClouds() {
-  dustClouds.forEach((d) => {
+  for (let i = 0; i < dustClouds.length; i++) {
+    const d = dustClouds[i];
     d.x += d.vx;
     d.y += d.vy;
     d.size += 0.1;
     d.life -= 0.02;
     d.vx *= 0.98;
-  });
-  dustClouds = dustClouds.filter((d) => d.life > 0);
+  }
+  compactInPlace(dustClouds, (d) => d.life > 0);
 }
 
 function renderDustClouds() {
-  dustClouds.forEach((d) => {
+  for (let i = 0; i < dustClouds.length; i++) {
+    const d = dustClouds[i];
+    if (!isOnScreen(d.x, d.y)) continue;
     ctx.globalAlpha = d.opacity * d.life;
     ctx.fillStyle = "#8a7a60";
     ctx.beginPath();
     ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
     ctx.fill();
-  });
+  }
   ctx.globalAlpha = 1.0;
 }
 
@@ -773,8 +910,8 @@ function createHitMarker() {
 }
 
 function updateHitMarkers() {
-  hitMarkers.forEach((h) => { h.life -= 0.04; });
-  hitMarkers = hitMarkers.filter((h) => h.life > 0);
+  for (let i = 0; i < hitMarkers.length; i++) hitMarkers[i].life -= 0.04;
+  compactInPlace(hitMarkers, (h) => h.life > 0);
 }
 
 function renderHitMarkers() {
@@ -808,8 +945,8 @@ function createDamageIndicator(fromX, fromY) {
 }
 
 function updateDamageIndicators() {
-  damageIndicators.forEach((d) => { d.life -= 0.025; });
-  damageIndicators = damageIndicators.filter((d) => d.life > 0);
+  for (let i = 0; i < damageIndicators.length; i++) damageIndicators[i].life -= 0.025;
+  compactInPlace(damageIndicators, (d) => d.life > 0);
 }
 
 function renderDamageIndicators() {
@@ -847,17 +984,20 @@ function createFloatingNumber(x, y, amount) {
 }
 
 function updateFloatingNumbers() {
-  floatingNumbers.forEach((f) => {
+  for (let i = 0; i < floatingNumbers.length; i++) {
+    const f = floatingNumbers[i];
     f.y += f.vy;
     f.vy -= 0.02; // Slow upward acceleration
     f.life -= 0.02;
-  });
-  floatingNumbers = floatingNumbers.filter((f) => f.life > 0);
+  }
+  compactInPlace(floatingNumbers, (f) => f.life > 0);
 }
 
 function renderFloatingNumbers() {
   if (floatingNumbers.length === 0) return;
-  floatingNumbers.forEach((f) => {
+  for (let i = 0; i < floatingNumbers.length; i++) {
+    const f = floatingNumbers[i];
+    if (!isOnScreen(f.x, f.y)) continue;
     ctx.save();
     ctx.globalAlpha = Math.max(0, f.life);
     const scale = 1 + (1 - f.life) * 0.3; // Slight grow as it fades
@@ -871,7 +1011,7 @@ function renderFloatingNumbers() {
     ctx.fillStyle = "#ff3333";
     ctx.fillText(f.text, f.x, f.y);
     ctx.restore();
-  });
+  }
   ctx.globalAlpha = 1.0;
 }
 
@@ -879,6 +1019,44 @@ function renderFloatingNumbers() {
 let lowHPVignetteGradient = null;
 let lowHPVignetteW = 0;
 let lowHPVignetteH = 0;
+
+// Arena zone rendering (shrinking safe zone)
+function renderZone() {
+  if (!arenaZone) return;
+  const z = arenaZone;
+
+  // Draw red danger overlay outside the safe zone using clipping
+  ctx.save();
+
+  // Fill entire arena with danger color, then clip out the safe zone
+  ctx.fillStyle = "rgba(180, 30, 30, 0.15)";
+
+  // Top strip
+  if (z.y > 0) ctx.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, z.y);
+  // Bottom strip
+  const bottomY = z.y + z.h;
+  if (bottomY < GAME_CONFIG.ARENA_HEIGHT) ctx.fillRect(0, bottomY, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT - bottomY);
+  // Left strip (between top and bottom)
+  if (z.x > 0) ctx.fillRect(0, z.y, z.x, z.h);
+  // Right strip
+  const rightX = z.x + z.w;
+  if (rightX < GAME_CONFIG.ARENA_WIDTH) ctx.fillRect(rightX, z.y, GAME_CONFIG.ARENA_WIDTH - rightX, z.h);
+
+  // Pulsing border for the safe zone
+  const pulse = 0.5 + 0.3 * Math.sin(Date.now() / 400);
+  ctx.strokeStyle = `rgba(255, 60, 60, ${pulse})`;
+  ctx.lineWidth = 3;
+  ctx.setLineDash([10, 6]);
+  ctx.strokeRect(z.x, z.y, z.w, z.h);
+  ctx.setLineDash([]);
+
+  // Inner glow on the safe zone border
+  ctx.strokeStyle = `rgba(255, 100, 100, ${pulse * 0.3})`;
+  ctx.lineWidth = 8;
+  ctx.strokeRect(z.x - 2, z.y - 2, z.w + 4, z.h + 4);
+
+  ctx.restore();
+}
 
 function renderLowHPVignette() {
   const localPlayer = players.find((p) => p.id === playerId);
@@ -976,9 +1154,11 @@ function updateScreenShake() {
 }
 
 function renderExplosions() {
-  explosions.forEach((explosion) => {
-    explosion.particles.forEach((p) => {
-      if (p.life > 0) {
+  for (let i = 0; i < explosions.length; i++) {
+    const explosion = explosions[i];
+    for (let j = 0; j < explosion.particles.length; j++) {
+      const p = explosion.particles[j];
+      if (p.life > 0 && isOnScreen(p.x, p.y)) {
         ctx.globalAlpha = p.life;
         ctx.fillStyle = p.color;
         ctx.beginPath();
@@ -986,13 +1166,15 @@ function renderExplosions() {
         ctx.fill();
         ctx.globalAlpha = 1.0;
       }
-    });
-  });
+    }
+  }
 
   // Render blood particles
-  bloodParticles.forEach((blood) => {
-    blood.particles.forEach((p) => {
-      if (p.life > 0) {
+  for (let i = 0; i < bloodParticles.length; i++) {
+    const blood = bloodParticles[i];
+    for (let j = 0; j < blood.particles.length; j++) {
+      const p = blood.particles[j];
+      if (p.life > 0 && isOnScreen(p.x, p.y)) {
         ctx.globalAlpha = p.life;
         ctx.fillStyle = p.color;
         ctx.beginPath();
@@ -1000,8 +1182,8 @@ function renderExplosions() {
         ctx.fill();
         ctx.globalAlpha = 1.0;
       }
-    });
-  });
+    }
+  }
 }
 
 // ===== MOVEMENT PREDICTION =====
@@ -1273,6 +1455,8 @@ function returnToLobby() {
   floatingNumbers = [];
   lowHPPulseTime = 0;
   lowHPVignetteGradient = null;
+  arenaZone = null;
+  zoneWarningShown = false;
   stopHeartbeat();
   lastKilledByUsername = "";
   pendingDeathWeapon.clear();
@@ -1932,6 +2116,11 @@ function setupWsMessageHandler() {
       }
     }
 
+    if (data.type === "zoneWarning") {
+      zoneWarningShown = true;
+      showToast("⚠️ ZONA ENCOLHENDO!", "#ff4444");
+    }
+
     if (data.type === "kill") {
       addKillFeedEntry(data.killer, data.victim, data.weapon);
 
@@ -2082,34 +2271,88 @@ function setupWsMessageHandler() {
     }
 
     if (data.type === "state") {
-      // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted]
+      // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted, shielded, invisible, regen]
       const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
       // Build username lookup map for O(1) access instead of O(n) per player
       const usernameMap = new Map();
       players.forEach((pl) => usernameMap.set(pl.id, pl.username));
 
+      // Build previous full state lookup for delta reconstruction
+      const prevFullState = new Map();
+      players.forEach((pl) => prevFullState.set(pl.id, pl));
+
       const parsedPlayers = (data.p || data.players || []).map((p) => {
         if (Array.isArray(p)) {
-          // Compact format
-          return {
-            id: p[0],
-            x: p[1],
-            y: p[2],
-            hp: p[3],
-            shots: p[4],
-            reloading: p[5] === 1,
-            lastProcessedInput: p[6],
-            aimAngle: p[7],
-            weapon: weaponCodeMap[p[8]] || "machinegun",
-            kills: p[9],
-            skin: p[10] || 0,
-            speedBoosted: p[11] === 1,
-            shielded: p[12] === 1,
-            invisible: p[13] === 1,
-            regen: p[14] === 1,
-            // Preserve username from existing player data
-            username: usernameMap.get(p[0]) || "Jogador",
+          // Full compact format (15 elements) or delta format
+          if (p.length >= 15) {
+            // Full player state
+            return {
+              id: p[0],
+              x: p[1],
+              y: p[2],
+              hp: p[3],
+              shots: p[4],
+              reloading: p[5] === 1,
+              lastProcessedInput: p[6],
+              aimAngle: p[7],
+              weapon: weaponCodeMap[p[8]] || "machinegun",
+              kills: p[9],
+              skin: p[10] || 0,
+              speedBoosted: p[11] === 1,
+              shielded: p[12] === 1,
+              invisible: p[13] === 1,
+              regen: p[14] === 1,
+              username: usernameMap.get(p[0]) || "Jogador",
+            };
+          }
+          // Delta format: [id] or [id, idx1, val1, idx2, val2, ...]
+          const pid = p[0];
+          const prev = prevFullState.get(pid);
+          if (!prev) {
+            // Unknown player — can't apply delta, skip
+            return { id: pid, x: 0, y: 0, hp: 0, shots: 0, reloading: false, lastProcessedInput: 0, aimAngle: 0, weapon: "machinegun", kills: 0, skin: 0, speedBoosted: false, shielded: false, invisible: false, regen: false, username: usernameMap.get(pid) || "Jogador" };
+          }
+          // Start with previous state, apply delta fields
+          const rebuilt = {
+            id: pid,
+            x: prev.x,
+            y: prev.y,
+            hp: prev.hp,
+            shots: prev.shots,
+            reloading: prev.reloading,
+            lastProcessedInput: prev.lastProcessedInput,
+            aimAngle: prev.aimAngle,
+            weapon: prev.weapon,
+            kills: prev.kills,
+            skin: prev.skin,
+            speedBoosted: prev.speedBoosted,
+            shielded: prev.shielded,
+            invisible: prev.invisible,
+            regen: prev.regen,
+            username: prev.username,
           };
+          // Apply sparse updates: pairs of [index, value]
+          for (let di = 1; di < p.length; di += 2) {
+            const idx = p[di];
+            const val = p[di + 1];
+            switch (idx) {
+              case 1: rebuilt.x = val; break;
+              case 2: rebuilt.y = val; break;
+              case 3: rebuilt.hp = val; break;
+              case 4: rebuilt.shots = val; break;
+              case 5: rebuilt.reloading = val === 1; break;
+              case 6: rebuilt.lastProcessedInput = val; break;
+              case 7: rebuilt.aimAngle = val; break;
+              case 8: rebuilt.weapon = weaponCodeMap[val] || "machinegun"; break;
+              case 9: rebuilt.kills = val; break;
+              case 10: rebuilt.skin = val || 0; break;
+              case 11: rebuilt.speedBoosted = val === 1; break;
+              case 12: rebuilt.shielded = val === 1; break;
+              case 13: rebuilt.invisible = val === 1; break;
+              case 14: rebuilt.regen = val === 1; break;
+            }
+          }
+          return rebuilt;
         }
         return p; // Already object format
       });
@@ -2136,6 +2379,11 @@ function setupWsMessageHandler() {
         return pk;
       });
       pickups = parsedPickups;
+
+      // Update zone shrinking state
+      if (data.z) {
+        arenaZone = { x: data.z[0], y: data.z[1], w: data.z[2], h: data.z[3] };
+      }
 
       // Check for deaths before updating players
       parsedPlayers.forEach((p) => {
@@ -3313,7 +3561,7 @@ if (isTouchDevice) {
 // ===== KILL FEED =====
 
 function addKillFeedEntry(killer, victim, weapon) {
-  const icon = weapon === "streak" ? "🔥" : (WEAPON_KILL_ICONS[weapon] || "💀");
+  const icon = weapon === "streak" ? "🔥" : weapon === "zone" ? "🔴" : weapon === "bomb" ? "💣" : weapon === "lightning" ? "⚡" : (WEAPON_KILL_ICONS[weapon] || "💀");
   const entry = { killer, victim, icon, timestamp: Date.now() };
   killFeedEntries.push(entry);
   if (killFeedEntries.length > KILL_FEED_MAX) killFeedEntries.shift();
@@ -3523,15 +3771,15 @@ function createPickupEffect(x, y, pickupType) {
     life: 1.0,
     timestamp: Date.now(),
   });
-  if (pickupEffects.length > 20) pickupEffects = pickupEffects.slice(-20);
+  if (pickupEffects.length > 20) capInPlace(pickupEffects, 20);
 }
 
 function updatePickupEffects() {
-  pickupEffects.forEach((e) => {
-    e.y -= 0.5;
-    e.life -= 0.015;
-  });
-  pickupEffects = pickupEffects.filter((e) => e.life > 0);
+  for (let i = 0; i < pickupEffects.length; i++) {
+    pickupEffects[i].y -= 0.5;
+    pickupEffects[i].life -= 0.015;
+  }
+  compactInPlace(pickupEffects, (e) => e.life > 0);
 }
 
 function renderPickupEffects() {
@@ -3718,22 +3966,24 @@ function createBombExplosion(x, y, radius) {
     frame: 0,
     shockwave: 0,
   });
-  if (bombExplosions.length > 12) bombExplosions = bombExplosions.slice(-12);
+  capInPlace(bombExplosions, 12);
 }
 
 function updateBombExplosions() {
-  bombExplosions.forEach((exp) => {
+  for (let i = 0; i < bombExplosions.length; i++) {
+    const exp = bombExplosions[i];
     exp.frame++;
     exp.shockwave += 8;
-    exp.particles.forEach((p) => {
+    for (let j = 0; j < exp.particles.length; j++) {
+      const p = exp.particles[j];
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.12;
       p.vx *= 0.97;
       p.life -= 0.02;
-    });
-  });
-  bombExplosions = bombExplosions.filter((e) => e.particles.some((p) => p.life > 0));
+    }
+  }
+  compactInPlace(bombExplosions, (e) => e.particles.some((p) => p.life > 0));
 }
 
 function renderBombExplosions() {
@@ -3792,7 +4042,7 @@ function createLightningStrike(x, y, radius) {
     timestamp: Date.now(),
     duration: 400,
   });
-  if (lightningBolts.length > 8) lightningBolts = lightningBolts.slice(-8);
+  capInPlace(lightningBolts, 8);
 }
 
 function renderLightningWarnings() {
@@ -3844,7 +4094,7 @@ function renderLightningWarnings() {
 
 function renderLightningBolts() {
   const now = Date.now();
-  lightningBolts = lightningBolts.filter((l) => now - l.timestamp < l.duration);
+  compactInPlace(lightningBolts, (l) => now - l.timestamp < l.duration);
 
   lightningBolts.forEach((lightning) => {
     const age = now - lightning.timestamp;
@@ -4095,6 +4345,9 @@ function render() {
     });
   }
   ctx.globalAlpha = 1.0;
+
+  // Render arena shrinking zone (danger zone overlay)
+  renderZone();
 
   // Render dust clouds (ground level)
   renderDustClouds();

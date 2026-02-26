@@ -66,6 +66,13 @@ export const GAME_CONFIG = {
   KILLS_TO_WIN: 5,
   RESPAWN_TIME: 1500,
   OBSTACLE_SPAWN_INTERVAL: 8000,
+  // Dynamic arena shrinking
+  ZONE_SHRINK_START: 60000,     // 60s after match start
+  ZONE_SHRINK_INTERVAL: 100,    // Tick every 100ms
+  ZONE_SHRINK_RATE: 0.3,        // Pixels per tick to shrink each edge
+  ZONE_DAMAGE_INTERVAL: 1000,   // Damage every 1s
+  ZONE_DAMAGE: 1,               // 1 HP per tick outside zone
+  ZONE_MIN_SIZE: 200,           // Minimum zone size (width/height)
   ROOM_MAX_PLAYERS: 10,
   ROOM_READY_TIMEOUT: 45,
   PRE_GAME_READY_TIMEOUT: 15,

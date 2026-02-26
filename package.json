@@ -11,7 +11,8 @@
     "start": "bun backend/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "test": "bun test"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",
