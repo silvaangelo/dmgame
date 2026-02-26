@@ -240,6 +240,7 @@ export function startGameFromRoom(room: Room) {
     p.ready = false;
     p.aimAngle = 0;
     p.weapon = "machinegun";
+    p.lastKilledBy = "";
   });
 
   const game: Game = {

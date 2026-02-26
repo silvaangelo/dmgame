@@ -39,12 +39,21 @@ function handleKill(
     // Heal on kill — recover 1 HP (capped at max)
     killer.hp = Math.min(GAME_CONFIG.PLAYER_HP, killer.hp + 1);
 
+    // Revenge tracking
+    const isRevenge = victim.lastKilledBy === "" ? false : killer.lastKilledBy === victim.id;
+
     broadcast(game, {
       type: "kill",
       killer: killer.username,
       victim: victim.username,
       weapon,
+      isRevenge,
     });
+
+    // Track who killed this victim
+    victim.lastKilledBy = killer.id;
+    // Reset killer's revenge after they got it
+    if (isRevenge) killer.lastKilledBy = "";
 
     // Check for kill streak announcement
     const streak = STREAK_THRESHOLDS.find((s) => s.kills === killer.killStreak);
@@ -62,6 +71,7 @@ function handleKill(
       killer: killer?.username || "Unknown",
       victim: victim.username,
       weapon,
+      isRevenge: false,
     });
   }
 
@@ -227,6 +237,17 @@ export function updateGame(game: Game) {
       bulletsToRemove.add(bullet.id);
 
       enemy.hp -= bullet.damage;
+
+      // Knockback — small push away from bullet direction
+      const knockbackForce = 3;
+      const bulletLen = Math.sqrt(bullet.dx * bullet.dx + bullet.dy * bullet.dy);
+      if (bulletLen > 0) {
+        const kbX = (bullet.dx / bulletLen) * knockbackForce;
+        const kbY = (bullet.dy / bulletLen) * knockbackForce;
+        enemy.x = Math.max(GAME_CONFIG.PLAYER_RADIUS, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.PLAYER_RADIUS, enemy.x + kbX));
+        enemy.y = Math.max(GAME_CONFIG.PLAYER_RADIUS, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.PLAYER_RADIUS, enemy.y + kbY));
+      }
+
       const shooter = game.players.find((p) => p.id === bullet.playerId);
 
       if (enemy.hp <= 0) {
@@ -424,6 +445,12 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
 
         if (angleDiff < Math.PI / 2) {
           target.hp -= GAME_CONFIG.KNIFE_DAMAGE;
+
+          // Knockback — push target away from attacker
+          const knifeKnockback = 5;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          target.x = Math.max(GAME_CONFIG.PLAYER_RADIUS, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.PLAYER_RADIUS, target.x + (dx / dist) * knifeKnockback));
+          target.y = Math.max(GAME_CONFIG.PLAYER_RADIUS, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.PLAYER_RADIUS, target.y + (dy / dist) * knifeKnockback));
 
           if (target.hp <= 0) {
             handleKill(player, target, "knife", game);

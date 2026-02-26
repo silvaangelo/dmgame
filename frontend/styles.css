@@ -689,13 +689,13 @@ canvas {
 }
 
 #victoryMessage {
-  font-size: 58px;
-  margin: 0 0 8px 0;
+  font-size: 64px;
+  margin: 0 0 4px 0;
   color: #ff6b35;
-  font-weight: 800;
+  font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 3px;
-  text-shadow: 0 0 30px rgba(255, 107, 53, 0.4);
+  letter-spacing: 4px;
+  text-shadow: 0 0 40px rgba(255, 107, 53, 0.6), 0 0 80px rgba(255, 107, 53, 0.25), 0 4px 12px rgba(0, 0, 0, 0.5);
   animation: titlePulse 2s ease-in-out infinite;
 }
 

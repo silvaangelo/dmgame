@@ -24,6 +24,7 @@ export type Player = {
   speedBoostUntil: number;
   minigunUntil: number;
   killStreak: number;
+  lastKilledBy: string;
 };
 
 export type Bullet = {

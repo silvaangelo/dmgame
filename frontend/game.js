@@ -2,7 +2,7 @@
 const GAME_CONFIG = {
   ARENA_WIDTH: 1400,
   ARENA_HEIGHT: 900,
-  PLAYER_RADIUS: 15,
+  PLAYER_RADIUS: 16,
   PLAYER_SPEED: 8,
   SHOTS_PER_MAGAZINE: 30,
   MAX_BLOOD_STAINS: 150,
@@ -76,6 +76,20 @@ let previousBulletPositions = new Map();
 let activeBombs = [];
 let activeLightnings = [];
 let flashbangOverlay = { alpha: 0, flicker: 0 }; // White screen flash for lightning
+
+// Low HP vignette + heartbeat
+let lowHPPulseTime = 0;
+let heartbeatOsc = null;
+let heartbeatGain = null;
+let heartbeatActive = false;
+
+// Floating damage numbers
+let floatingNumbers = [];
+
+// Revenge tracking — store last killer username for local player
+let lastKilledByUsername = "";
+// Last kill weapon per victim (from "kill" messages) for weapon-specific death effects
+let pendingDeathWeapon = new Map(); // victimUsername -> weapon
 
 // Celebration system (match end explosions + audio)
 let celebrationInterval = null;
@@ -657,6 +671,114 @@ function renderDamageIndicators() {
   ctx.globalAlpha = 1.0;
 }
 
+// Floating damage numbers system
+function createFloatingNumber(x, y, amount) {
+  floatingNumbers.push({
+    x: x + (Math.random() - 0.5) * 10,
+    y: y - 10,
+    vy: -1.5,
+    life: 1.0,
+    text: "-" + amount,
+  });
+  if (floatingNumbers.length > 20) floatingNumbers.shift();
+}
+
+function updateFloatingNumbers() {
+  floatingNumbers.forEach((f) => {
+    f.y += f.vy;
+    f.vy -= 0.02; // Slow upward acceleration
+    f.life -= 0.02;
+  });
+  floatingNumbers = floatingNumbers.filter((f) => f.life > 0);
+}
+
+function renderFloatingNumbers() {
+  if (floatingNumbers.length === 0) return;
+  floatingNumbers.forEach((f) => {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, f.life);
+    const scale = 1 + (1 - f.life) * 0.3; // Slight grow as it fades
+    ctx.font = `bold ${Math.round(18 * scale)}px 'Rajdhani', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // Red text with dark outline
+    ctx.strokeStyle = "rgba(0,0,0,0.8)";
+    ctx.lineWidth = 3;
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillStyle = "#ff3333";
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.restore();
+  });
+  ctx.globalAlpha = 1.0;
+}
+
+// Low HP vignette rendering
+function renderLowHPVignette() {
+  const localPlayer = players.find((p) => p.id === playerId);
+  if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 1) return;
+
+  lowHPPulseTime += 0.06;
+  const pulse = 0.25 + 0.15 * Math.sin(lowHPPulseTime * 2); // Pulsing alpha
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // Red vignette around edges
+  const w = canvas.width;
+  const h = canvas.height;
+  const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.min(w, h) * 0.7);
+  gradient.addColorStop(0, "rgba(255,0,0,0)");
+  gradient.addColorStop(1, `rgba(180,0,0,${pulse})`);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+// Heartbeat sound for low HP
+function startHeartbeat() {
+  if (heartbeatActive || !audioCtx) return;
+  heartbeatActive = true;
+  playHeartbeatLoop();
+}
+
+function stopHeartbeat() {
+  heartbeatActive = false;
+}
+
+function playHeartbeatLoop() {
+  if (!heartbeatActive || !audioCtx) return;
+  // Double-thump heartbeat pattern using oscillator
+  const now = audioCtx.currentTime;
+
+  // First thump
+  const osc1 = audioCtx.createOscillator();
+  osc1.type = "sine";
+  osc1.frequency.setValueAtTime(55, now);
+  osc1.frequency.exponentialRampToValueAtTime(35, now + 0.1);
+  const g1 = audioCtx.createGain();
+  g1.gain.setValueAtTime(0.3, now);
+  g1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+  osc1.connect(g1);
+  g1.connect(audioCtx.destination);
+  osc1.start(now);
+  osc1.stop(now + 0.15);
+
+  // Second thump (slightly quieter, slightly delayed)
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = "sine";
+  osc2.frequency.setValueAtTime(50, now + 0.18);
+  osc2.frequency.exponentialRampToValueAtTime(30, now + 0.28);
+  const g2 = audioCtx.createGain();
+  g2.gain.setValueAtTime(0.2, now + 0.18);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+  osc2.connect(g2);
+  g2.connect(audioCtx.destination);
+  osc2.start(now + 0.18);
+  osc2.stop(now + 0.32);
+
+  // Schedule next heartbeat
+  setTimeout(() => playHeartbeatLoop(), 800);
+}
+
 // Screen shake system
 function triggerScreenShake(intensity) {
   screenShake.intensity = Math.min(screenShake.intensity + intensity, 18);
@@ -940,6 +1062,8 @@ function returnToLobby() {
   activeLightnings = [];
   lightningBolts = [];
   flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+  pageFlashIntensity = 0;
+  document.body.style.filter = "";
   if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
   previousBulletPositions.clear();
   screenShake = { intensity: 0, decay: 0.92 };
@@ -950,6 +1074,11 @@ function returnToLobby() {
   _cachedDOM = null;
   previousPlayerStates.clear();
   gameReady = false;
+  floatingNumbers = [];
+  lowHPPulseTime = 0;
+  stopHeartbeat();
+  lastKilledByUsername = "";
+  pendingDeathWeapon.clear();
 
   // Remove any active toasts
   activeToasts.forEach((t) => t.remove());
@@ -1603,14 +1732,23 @@ function setupWsMessageHandler() {
     if (data.type === "kill") {
       addKillFeedEntry(data.killer, data.victim, data.weapon);
 
+      // Track weapon used for weapon-specific death effects
+      pendingDeathWeapon.set(data.victim, data.weapon);
+
       // Show viral toast for local player involvement
       const localPlayer = players.find((p) => p.id === playerId);
       if (localPlayer) {
         if (data.killer === localPlayer.username) {
-          const phrase = SELF_KILL_PHRASES[Math.floor(Math.random() * SELF_KILL_PHRASES.length)]
-            .replace("{victim}", data.victim);
-          showToast(phrase, "#4ad94a");
+          // Revenge check
+          if (data.isRevenge) {
+            showToast("🔥 Você se vingou! VINGANÇA! 🔥", "#ff4400");
+          } else {
+            const phrase = SELF_KILL_PHRASES[Math.floor(Math.random() * SELF_KILL_PHRASES.length)]
+              .replace("{victim}", data.victim);
+            showToast(phrase, "#4ad94a");
+          }
         } else if (data.victim === localPlayer.username) {
+          lastKilledByUsername = data.killer;
           const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)]
             .replace("{killer}", data.killer);
           showToast(phrase, "#d94a4a");
@@ -1704,21 +1842,27 @@ function setupWsMessageHandler() {
       // Players INSIDE the lightning radius — full effect
       if (ldist < lRadius) {
         const proximity = 1.0 - ldist / lRadius;
-        const volume = 0.5 + proximity * 0.5;
+        const volume = 0.3 + proximity * 0.35;
         playSound("lightning", volume, 0.9 + Math.random() * 0.2);
 
         // Screen shake: stronger at center
         const lShake = 5 + proximity * 13;
         triggerScreenShake(lShake);
 
-        // Full white screen at center, fades over 2s (chaotic mode)
-        flashbangOverlay.alpha = 0.85 + proximity * 0.15;
-        flashbangOverlay.flicker = 1; // enable chaotic flicker
+        // Full white screen at center, fades over 3s (chaotic mode)
+        flashbangOverlay.alpha = 0.9 + proximity * 0.1;
+        flashbangOverlay.flicker = 1;
+        // Full-page brightness/blur effect on the entire website
+        applyPageFlash(0.8 + proximity * 0.2);
       } else if (ldist < lRadius * 2.5) {
-        // Nearby but outside — rumble + distant thunder
+        // Nearby but outside — rumble + distant thunder + mild page flash
         const nearFactor = 1.0 - (ldist - lRadius) / (lRadius * 1.5);
         triggerScreenShake(2 + nearFactor * 5);
-        playSound("lightning", nearFactor * 0.3, 0.7 + Math.random() * 0.2);
+        playSound("lightning", nearFactor * 0.2, 0.7 + Math.random() * 0.2);
+        // Mild page flash for nearby players
+        if (nearFactor > 0.3) {
+          applyPageFlash(nearFactor * 0.4);
+        }
       }
 
       // Always create the visual bolt on the map (visible if on screen)
@@ -1793,9 +1937,51 @@ function setupWsMessageHandler() {
         if (prevState && prevState.hp > 0 && p.hp <= 0) {
           // Player just died - create explosion
           createExplosion(p.x, p.y);
+
+          // Weapon-specific death effects
+          const deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
+          pendingDeathWeapon.delete(p.username);
+
+          if (deathWeapon === "knife") {
+            // Knife kills: extra blood splatter
+            createBlood(p.x, p.y);
+            createBlood(p.x, p.y);
+            createBlood(p.x, p.y);
+            createBloodStain(p.x, p.y);
+            createBloodStain(p.x, p.y);
+            createBloodStain(p.x, p.y);
+          } else if (deathWeapon === "shotgun") {
+            // Shotgun kills: body flying effect — large directional explosion
+            for (let i = 0; i < 12; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const speed = 3 + Math.random() * 4;
+              bloodParticles.push({
+                particles: [{
+                  x: p.x, y: p.y,
+                  vx: Math.cos(angle) * speed,
+                  vy: Math.sin(angle) * speed - 2,
+                  life: 1.0,
+                  size: 3 + Math.random() * 4,
+                  color: `rgb(${139 + Math.floor(Math.random() * 116)}, 0, 0)`,
+                }],
+                frame: 0,
+              });
+            }
+            createBloodStain(p.x, p.y);
+            createBloodStain(p.x, p.y);
+          } else {
+            // Default death: normal blood
+            createBlood(p.x, p.y);
+            createBloodStain(p.x, p.y);
+          }
+
+          // Floating damage number for kill
+          createFloatingNumber(p.x, p.y, prevState.hp);
+
           // Screen shake on explosions (stronger if it's us dying)
           if (p.id === playerId) {
             triggerScreenShake(12);
+            stopHeartbeat();
           } else {
             triggerScreenShake(5);
           }
@@ -1805,16 +1991,26 @@ function setupWsMessageHandler() {
           if (p.id !== playerId) createHitMarker();
         } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
           // Player took damage but still alive - create blood
+          const dmg = prevState.hp - p.hp;
           createBlood(p.x, p.y);
           // Create permanent blood stain
           createBloodStain(p.x, p.y);
+          // Floating damage number
+          createFloatingNumber(p.x, p.y, dmg);
           // Hit marker if it's an enemy (we likely shot them)
           if (p.id !== playerId) createHitMarker();
           // Damage indicator + screen shake if it's us taking damage
           if (p.id === playerId) {
             createDamageIndicator(p.x, p.y);
             triggerScreenShake(6);
+            // Start heartbeat if at 1 HP
+            if (p.hp === 1) {
+              startHeartbeat();
+            }
           }
+        } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
+          // Healed — stop heartbeat if above 1 HP
+          if (p.hp > 1) stopHeartbeat();
         }
         previousPlayerStates.set(p.id, { hp: p.hp, x: p.x, y: p.y });
 
@@ -3377,10 +3573,31 @@ function renderLightningBolts() {
   });
 }
 
+// Full-page flash effect (covers entire website, not just canvas)
+let pageFlashIntensity = 0;
+function applyPageFlash(intensity) {
+  pageFlashIntensity = Math.max(pageFlashIntensity, Math.min(1, intensity));
+  document.body.style.filter = `brightness(${1 + pageFlashIntensity * 3}) saturate(${1 - pageFlashIntensity * 0.5})`;
+}
+function updatePageFlash() {
+  if (pageFlashIntensity > 0) {
+    pageFlashIntensity = Math.max(0, pageFlashIntensity - 0.006);
+    if (pageFlashIntensity > 0.01) {
+      const flicker = pageFlashIntensity > 0.3 ? (Math.random() - 0.5) * 0.15 : 0;
+      const b = 1 + (pageFlashIntensity + flicker) * 3;
+      const s = 1 - pageFlashIntensity * 0.5;
+      document.body.style.filter = `brightness(${b}) saturate(${s})`;
+    } else {
+      pageFlashIntensity = 0;
+      document.body.style.filter = "";
+    }
+  }
+}
+
 function updateFlashbang() {
   if (flashbangOverlay.alpha > 0) {
-    // Decay over ~2 seconds
-    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.008);
+    // Decay over ~3 seconds
+    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.005);
     // Chaotic flicker when intensity is high
     if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.2) {
       flashbangOverlay.flickerVal = (Math.random() - 0.5) * 0.2;
@@ -3389,6 +3606,8 @@ function updateFlashbang() {
       flashbangOverlay.flicker = 0;
     }
   }
+  // Decay full-page flash
+  updatePageFlash();
 }
 
 function renderFlashbang() {
@@ -3522,6 +3741,7 @@ function render() {
   updateDamageIndicators();
   updateBombExplosions();
   updateFlashbang();
+  updateFloatingNumbers();
 
   // Dust clouds when local player moves
   if (
@@ -3572,6 +3792,16 @@ function render() {
   players.forEach((p, index) => {
     // Don't render dead players
     if (p.hp <= 0) return;
+
+    // Find bounty leader (player with most kills, minimum 2)
+    let bountyLeaderId = null;
+    let maxKills = 1; // Need at least 2 kills to get bounty
+    players.forEach((pl) => {
+      if (pl.hp > 0 && pl.kills > maxKills) {
+        maxKills = pl.kills;
+        bountyLeaderId = pl.id;
+      }
+    });
 
     let renderX = p.x;
     let renderY = p.y;
@@ -3677,21 +3907,31 @@ function render() {
     // Player body - outer ring
     ctx.fillStyle = darkColor;
     ctx.beginPath();
-    ctx.arc(renderX, renderY, 12, 0, Math.PI * 2);
+    ctx.arc(renderX, renderY, 13, 0, Math.PI * 2);
     ctx.fill();
 
     // Player body - inner
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(renderX, renderY, 9, 0, Math.PI * 2);
+    ctx.arc(renderX, renderY, 10, 0, Math.PI * 2);
     ctx.fill();
+
+    // First character initial on the ball
+    if (p.username) {
+      ctx.font = "bold 12px 'Rajdhani', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.fillText(p.username.charAt(0).toUpperCase(), renderX, renderY + 1);
+      ctx.textBaseline = "alphabetic";
+    }
 
     // Highlight for local player
     if (p.id === playerId) {
       ctx.strokeStyle = "#ffaa44";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 15, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 16, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -3713,11 +3953,22 @@ function render() {
     ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
 
     // Username
-    ctx.font = "bold 13px 'Rajdhani', sans-serif";
+    ctx.font = "bold 16px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillStyle = p.id === playerId ? "#ffcc66" : "#ccddcc";
-    ctx.fillText(p.username, renderX, renderY - 29);
+    // Shadow for readability
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillText(p.username, renderX + 1, renderY - 30);
+    ctx.fillStyle = p.id === playerId ? "#ffcc66" : "#e0ece0";
+    ctx.fillText(p.username, renderX, renderY - 31);
     ctx.textAlign = "start";
+
+    // Bounty skull on the leading player
+    if (bountyLeaderId === p.id) {
+      ctx.font = "16px serif";
+      ctx.textAlign = "center";
+      ctx.fillText("💀", renderX, renderY - 44);
+      ctx.textAlign = "start";
+    }
   });
 
   // Render bullets
@@ -3782,6 +4033,9 @@ function render() {
   renderHitMarkers();
   renderDamageIndicators();
 
+  // Render floating damage numbers
+  renderFloatingNumbers();
+
   // Render crosshair
   if (framePlayer) {
     // Tactical crosshair
@@ -3821,6 +4075,9 @@ function render() {
 
   // Flashbang overlay (must be last — covers entire screen)
   renderFlashbang();
+
+  // Low HP vignette (drawn on top of everything including flashbang)
+  renderLowHPVignette();
 
   requestAnimationFrame(render);
 }

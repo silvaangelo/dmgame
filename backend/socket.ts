@@ -123,6 +123,7 @@ export function setupSocket() {
           speedBoostUntil: 0,
           minigunUntil: 0,
           killStreak: 0,
+          lastKilledBy: "",
         };
 
         allPlayers.set(player.id, {
