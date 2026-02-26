@@ -1054,16 +1054,16 @@ const audioBuffers = {};
 let readyAlarmSource = null;
 let readyAlarmGain = null;
 const activeGameSources = [];
+let machinegunSoundIndex = 0;
 
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   loadAudioBuffer("shot", `${assetBase}/assets/shot.wav`);
-  loadAudioBuffer("shot-1", `${assetBase}/assets/shot/shot-1.mp3`);
-  loadAudioBuffer("shot-2", `${assetBase}/assets/shot/shot-2.mp3`);
-  loadAudioBuffer("shot-3", `${assetBase}/assets/shot/shot-3.mp3`);
-  loadAudioBuffer("shot-4", `${assetBase}/assets/shot/shot-4.mp3`);
-  loadAudioBuffer("shot-5", `${assetBase}/assets/shot/shot-5.wav`);
+  for (let i = 1; i <= 4; i++) loadAudioBuffer(`machinegun-${i}`, `${assetBase}/assets/shot/machinegun-${i}.mp3`);
+  loadAudioBuffer("machinegun-5", `${assetBase}/assets/shot/machinegun-5.wav`);
+  loadAudioBuffer("shotgun-shot", `${assetBase}/assets/shot/shotgun.mp3`);
+  loadAudioBuffer("sniper-shot", `${assetBase}/assets/shot/sniper.mp3`);
   loadAudioBuffer("reload", `${assetBase}/assets/reload.ogg`);
   loadAudioBuffer("scream", `${assetBase}/assets/scream.wav`);
   loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
@@ -2275,11 +2275,14 @@ function setupWsMessageHandler() {
       // Detect new bullets for weapon-specific positional audio
       parsedBullets.forEach((b) => {
         if (!previousBulletPositions.has(b.id)) {
-          const shotSound = "shot-" + (1 + Math.floor(Math.random() * 5));
           if (b.weapon === "shotgun") {
-            playPositionalSound(shotSound, b.x, b.y, 0.45, 0.8 + Math.random() * 0.15);
+            playPositionalSound("shotgun-shot", b.x, b.y, 0.45, 0.8 + Math.random() * 0.15);
+          } else if (b.weapon === "sniper") {
+            playPositionalSound("sniper-shot", b.x, b.y, 0.5, 0.95 + Math.random() * 0.1);
           } else {
-            playPositionalSound(shotSound, b.x, b.y, 0.25, 1.1 + Math.random() * 0.3);
+            // Machinegun / minigun: rotate through machinegun-1..5
+            machinegunSoundIndex = (machinegunSoundIndex % 5) + 1;
+            playPositionalSound(`machinegun-${machinegunSoundIndex}`, b.x, b.y, 0.25, 1.1 + Math.random() * 0.3);
           }
         }
       });
