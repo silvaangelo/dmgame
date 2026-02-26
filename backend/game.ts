@@ -12,7 +12,7 @@ import {
 import { updatePlayerStats, addMatchHistory } from "./database.js";
 import { serialize } from "./protocol.js";
 
-const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3, sniper: 4, grenade_launcher: 5, dual_pistols: 6 };
+const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3, sniper: 4, grenade_launcher: 5 };
 
 /* ================= KILL STREAKS ================= */
 
@@ -616,35 +616,6 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
       playerId: player.id, createdAt: Date.now(),
     };
     game.grenades.push(grenade);
-    return;
-  }
-
-  // Dual Pistols — rapid fire with slight spread
-  if (player.weapon === "dual_pistols") {
-    const cooldown = GAME_CONFIG.DUAL_PISTOL_COOLDOWN;
-    if (now - player.lastShotTime < cooldown) return;
-    if (player.shots <= 0) return;
-    player.lastShotTime = now;
-    player.shots--;
-    if (player.shots === 0) {
-      player.reloading = true;
-      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.RELOAD_TIME);
-    }
-    // Fire two bullets with slight offset
-    const baseAngle = Math.atan2(dirY, dirX);
-    for (let i = 0; i < 2; i++) {
-      const spread = (i === 0 ? -1 : 1) * GAME_CONFIG.DUAL_PISTOL_SPREAD;
-      const angle = baseAngle + spread;
-      const bullet: Bullet = {
-        id: uuid(), x: player.x, y: player.y,
-        dx: Math.cos(angle) * GAME_CONFIG.BULLET_SPEED,
-        dy: Math.sin(angle) * GAME_CONFIG.BULLET_SPEED,
-        team: 0, playerId: player.id,
-        damage: GAME_CONFIG.DUAL_PISTOL_DAMAGE, weapon: "dual_pistols",
-        createdAt: Date.now(),
-      };
-      game.bullets.push(bullet);
-    }
     return;
   }
 

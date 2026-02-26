@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 
-export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper" | "grenade_launcher" | "dual_pistols";
+export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper" | "grenade_launcher";
 
 export type Player = {
   id: string;

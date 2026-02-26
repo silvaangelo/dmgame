@@ -39,7 +39,7 @@ const SKINS = [
 ];
 
 // Weapon definitions
-const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"];
+const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"];
 const WEAPON_NAMES = {
   machinegun: "🔫 Metralhadora",
   shotgun: "🔫 Shotgun",
@@ -47,7 +47,6 @@ const WEAPON_NAMES = {
   minigun: "🔥 Minigun",
   sniper: "🎯 Sniper",
   grenade_launcher: "💣 Lança-Granada",
-  dual_pistols: "🔫 Pistolas Duplas",
 };
 const WEAPON_COOLDOWNS = {
   machinegun: 60,
@@ -56,7 +55,6 @@ const WEAPON_COOLDOWNS = {
   minigun: 18,
   sniper: 1200,
   grenade_launcher: 1500,
-  dual_pistols: 100,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
@@ -64,8 +62,7 @@ const WEAPON_KILL_ICONS = {
   knife: "🔪",
   minigun: "🔥",
   sniper: "🎯",
-  grenade_launcher: "💣",
-  dual_pistols: "🔫",
+  grenade_launcher: "💣"
 };
 
 let ws;
@@ -1517,8 +1514,7 @@ function tryShoot() {
       const bulletSpeed =
         player.weapon === "machinegun" ? 9 :
         player.weapon === "shotgun" ? 8 :
-        player.weapon === "sniper" ? 16 :
-        player.weapon === "dual_pistols" ? 9 : 9;
+        player.weapon === "sniper" ? 16 : 9;
 
       if (player.weapon === "shotgun") {
         // Predict 6 pellets
@@ -1535,22 +1531,7 @@ function tryShoot() {
           bullets.push(pb);
           setTimeout(() => { bullets = bullets.filter((b) => b.id !== pb.id); }, 80);
         }
-      } else if (player.weapon === "dual_pistols") {
-        // Predict 2 bullets with slight spread
-        const baseAngle = Math.atan2(dirY, dirX);
-        for (let i = 0; i < 2; i++) {
-          const spread = (i === 0 ? -1 : 1) * 0.12;
-          const angle = baseAngle + spread;
-          const pb = {
-            id: "predicted_" + Date.now() + "_dp" + i,
-            x: playerX, y: playerY,
-            dx: Math.cos(angle) * bulletSpeed, dy: Math.sin(angle) * bulletSpeed,
-            weapon: "dual_pistols", predicted: true,
-          };
-          bullets.push(pb);
-          setTimeout(() => { bullets = bullets.filter((b) => b.id !== pb.id); }, 100);
-        }
-      } else {
+      }  else {
         const predictedBullet = {
           id: "predicted_" + Date.now(),
           x: playerX, y: playerY,
@@ -2111,7 +2092,7 @@ function setupWsMessageHandler() {
 
     if (data.type === "state") {
       // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted]
-      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper", 5: "grenade_launcher", 6: "dual_pistols" };
+      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper", 5: "grenade_launcher" };
       // Build username lookup map for O(1) access instead of O(n) per player
       const usernameMap = new Map();
       players.forEach((pl) => usernameMap.set(pl.id, pl.username));
@@ -2222,10 +2203,6 @@ function setupWsMessageHandler() {
             createKillEffect(p.x, p.y, "fire");
             createKillEffect(p.x, p.y, "fire");
             createExplosion(p.x, p.y);
-          } else if (deathWeapon === "dual_pistols") {
-            // Dual pistol kills: ice shatter
-            createKillEffect(p.x, p.y, "ice");
-            createBlood(p.x, p.y);
           } else if (deathWeapon === "minigun") {
             // Minigun kills: fire + lightning
             createKillEffect(p.x, p.y, "fire");
@@ -2771,7 +2748,7 @@ function updateShotUI() {
   }
 
   const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
-  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4", grenade_launcher: "5", dual_pistols: "6" };
+  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4", grenade_launcher: "5" };
   const shortcut = WEAPON_SHORTCUTS[player.weapon] || "";
   const shortcutTag = shortcut ? `[${shortcut}] ` : "";
   if (player.weapon === "knife") {
@@ -2880,7 +2857,7 @@ document.addEventListener("keydown", (e) => {
 
   // Number keys 1-6 to select weapon directly
   if (e.key >= "1" && e.key <= "6") {
-    const weapons = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"];
+    const weapons = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"];
     const weaponIndex = parseInt(e.key) - 1;
     ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
     return;
@@ -4335,19 +4312,6 @@ function render() {
       ctx.beginPath();
       ctx.arc(10, 4, 4, 0, Math.PI * 2);
       ctx.fill();
-    } else if (p.weapon === "dual_pistols") {
-      // Dual pistols — two small guns
-      ctx.fillStyle = "#333";
-      ctx.fillRect(6, -5, 14, 3);
-      ctx.fillRect(6, 2, 14, 3);
-      // Muzzles
-      ctx.fillStyle = "#555";
-      ctx.fillRect(20, -5, 3, 3);
-      ctx.fillRect(20, 2, 3, 3);
-      // Grips
-      ctx.fillStyle = "#2a2a2a";
-      ctx.fillRect(8, -3, 3, 2);
-      ctx.fillRect(8, 5, 3, 2);
     }
 
     ctx.restore();
@@ -4466,16 +4430,6 @@ function render() {
       ctx.fillStyle = "rgba(68,170,255,0.25)";
       ctx.beginPath();
       ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (b.weapon === "dual_pistols") {
-      // Dual pistol bullets - cyan-white
-      ctx.fillStyle = "#66ffee";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(102,255,238,0.2)";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
       ctx.fill();
     } else {
       // Machine gun tracer - yellow

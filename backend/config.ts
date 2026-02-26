@@ -51,10 +51,6 @@ export const GAME_CONFIG = {
   GRENADE_RADIUS: 90,
   GRENADE_SPEED: 8,
   GRENADE_FUSE_TIME: 800,
-  // Dual Pistols
-  DUAL_PISTOL_COOLDOWN: 100,
-  DUAL_PISTOL_DAMAGE: 1,
-  DUAL_PISTOL_SPREAD: 0.12,
   // Shield powerup
   SHIELD_DURATION: 6000,
   SHIELD_ABSORB: 2, // absorbs 2 HP worth of damage
@@ -84,7 +80,7 @@ export const GAME_CONFIG = {
   USERNAME_PATTERN: /^[a-zA-Z0-9_]+$/,
 };
 
-export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"] as const;
+export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"] as const;
 
 export const OBSTACLE_CONFIG = {
   WALL_COUNT_MIN: 14,
