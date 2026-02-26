@@ -75,7 +75,11 @@ let damageIndicators = [];
 let previousBulletPositions = new Map();
 let activeBombs = [];
 let activeLightnings = [];
-let flashbangOverlay = { alpha: 0 }; // White screen flash for lightning
+let flashbangOverlay = { alpha: 0, flicker: 0 }; // White screen flash for lightning
+
+// Celebration system (match end explosions + audio)
+let celebrationInterval = null;
+let celebrationIsWinner = false;
 
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
@@ -772,8 +776,8 @@ function initAudio() {
   loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
   loadAudioBuffer("readyalarm", `${assetBase}/assets/readyalarm.wav`);
   loadAudioBuffer("lightning", `${assetBase}/assets/lightning-strike.mp3`);
-  loadAudioBuffer("matchwin", `${assetBase}/assets/match-win.mp3`);
-  loadAudioBuffer("matchlose", `${assetBase}/assets/match-lose.mp3`);
+  for (let i = 1; i <= 8; i++) loadAudioBuffer(`win-${i}`, `${assetBase}/assets/match-win/win-${i}.mp3`);
+  for (let i = 1; i <= 9; i++) loadAudioBuffer(`lose-${i}`, `${assetBase}/assets/match-lose/lose-${i}.mp3`);
   loadAudioBuffer("bomb-1", `${assetBase}/assets/bombs/bomb-1.mp3`);
   loadAudioBuffer("bomb-2", `${assetBase}/assets/bombs/bomb-2.mp3`);
   loadAudioBuffer("bomb-3", `${assetBase}/assets/bombs/bomb-3.mp3`);
@@ -1599,6 +1603,11 @@ function setupWsMessageHandler() {
       const dist = Math.sqrt(dx * dx + dy * dy);
       const shakeIntensity = Math.max(2, 15 - dist / 50);
       triggerScreenShake(shakeIntensity);
+      // Mild white flash for very close explosions
+      if (dist < 120) {
+        const bombFlash = 0.3 * (1 - dist / 120);
+        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, bombFlash);
+      }
       // Explosion sound
       playGrenadeExplosionSound(data.x, data.y);
     }
@@ -1627,21 +1636,24 @@ function setupWsMessageHandler() {
       const ldy = ly - predictedY;
       const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
 
-      // Only players INSIDE the lightning radius hear/feel it
+      // Players INSIDE the lightning radius — full effect
       if (ldist < lRadius) {
-        // Proximity: 1.0 at center, 0.0 at edge
         const proximity = 1.0 - ldist / lRadius;
-
-        // Sound: 100% at center, 50% at edge
         const volume = 0.5 + proximity * 0.5;
         playSound("lightning", volume, 0.9 + Math.random() * 0.2);
 
         // Screen shake: stronger at center
-        const lShake = 3 + proximity * 10;
+        const lShake = 5 + proximity * 13;
         triggerScreenShake(lShake);
 
-        // Flashbang: 100% white at center, 80% at edge
-        flashbangOverlay.alpha = 0.8 + proximity * 0.2;
+        // Full white screen at center, fades over 2s (chaotic mode)
+        flashbangOverlay.alpha = 0.85 + proximity * 0.15;
+        flashbangOverlay.flicker = 1; // enable chaotic flicker
+      } else if (ldist < lRadius * 2.5) {
+        // Nearby but outside — rumble + distant thunder
+        const nearFactor = 1.0 - (ldist - lRadius) / (lRadius * 1.5);
+        triggerScreenShake(2 + nearFactor * 5);
+        playSound("lightning", nearFactor * 0.3, 0.7 + Math.random() * 0.2);
       }
 
       // Always create the visual bolt on the map (visible if on screen)
@@ -1878,8 +1890,32 @@ function setupWsMessageHandler() {
       const localPlayer = data.scoreboard.find((p) => p.username === loggedInUsername);
       const isLocalWinner = localPlayer && localPlayer.isWinner;
 
-      // Play win/lose sound
-      playSound(isLocalWinner ? "matchwin" : "matchlose", 0.8);
+      // Play server-assigned win/lose sound with initial bomb explosion
+      const audioIdx = data.audioIndex || 1;
+      const firstSound = isLocalWinner ? `win-${audioIdx}` : `lose-${audioIdx}`;
+      playSound(firstSound, 0.7);
+
+      // Start celebration: periodic bomb explosions + random win/lose audio
+      celebrationIsWinner = isLocalWinner;
+      let celebrationCount = 0;
+      celebrationInterval = setInterval(() => {
+        celebrationCount++;
+        if (celebrationCount > 4) {
+          clearInterval(celebrationInterval);
+          celebrationInterval = null;
+          return;
+        }
+        // Random position near the player view
+        const cx = predictedX + (Math.random() - 0.5) * canvas.width * 0.7;
+        const cy = predictedY + (Math.random() - 0.5) * canvas.height * 0.7;
+        createBombExplosion(cx, cy, 50 + Math.random() * 40);
+        triggerScreenShake(3 + Math.random() * 4);
+        // Play a random win/lose audio each explosion
+        const count = celebrationIsWinner ? 8 : 9;
+        const idx = Math.floor(Math.random() * count) + 1;
+        const snd = celebrationIsWinner ? `win-${idx}` : `lose-${idx}`;
+        playSound(snd, 0.5, 0.9 + Math.random() * 0.2);
+      }, 1100);
 
       // Show victory screen with scoreboard
       const scoreboardHTML = data.scoreboard
@@ -1962,7 +1998,8 @@ function setupWsMessageHandler() {
           bombExplosions = [];
           activeLightnings = [];
           lightningBolts = [];
-          flashbangOverlay = { alpha: 0 };
+          flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+          if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
           previousBulletPositions.clear();
           screenShake = { intensity: 0, decay: 0.92 };
           currentRoomData = null;
@@ -3330,18 +3367,33 @@ function renderLightningBolts() {
 
 function updateFlashbang() {
   if (flashbangOverlay.alpha > 0) {
-    // Decay over ~1 second (from current alpha to 0)
-    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.017);
+    // Decay over ~2 seconds
+    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.008);
+    // Chaotic flicker when intensity is high
+    if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.2) {
+      flashbangOverlay.flickerVal = (Math.random() - 0.5) * 0.2;
+    } else {
+      flashbangOverlay.flickerVal = 0;
+      flashbangOverlay.flicker = 0;
+    }
   }
 }
 
 function renderFlashbang() {
   if (flashbangOverlay.alpha <= 0) return;
   ctx.save();
-  // Reset any transforms (screen shake) to cover the full canvas
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = flashbangOverlay.alpha;
-  ctx.fillStyle = "#ffffff";
+  const displayAlpha = Math.min(1, Math.max(0, flashbangOverlay.alpha + (flashbangOverlay.flickerVal || 0)));
+  ctx.globalAlpha = displayAlpha;
+  // Chaotic color shift when flickering
+  if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.4) {
+    const r = 255;
+    const g = 240 + Math.floor(Math.random() * 15);
+    const b = 220 + Math.floor(Math.random() * 35);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+  } else {
+    ctx.fillStyle = "#ffffff";
+  }
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.globalAlpha = 1.0;
   ctx.restore();
