@@ -39,24 +39,33 @@ const SKINS = [
 ];
 
 // Weapon definitions
-const WEAPON_CYCLE = ["machinegun", "shotgun", "knife"];
+const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"];
 const WEAPON_NAMES = {
   machinegun: "🔫 Metralhadora",
   shotgun: "🔫 Shotgun",
   knife: "🔪 Faca",
   minigun: "🔥 Minigun",
+  sniper: "🎯 Sniper",
+  grenade_launcher: "💣 Lança-Granada",
+  dual_pistols: "🔫 Pistolas Duplas",
 };
 const WEAPON_COOLDOWNS = {
   machinegun: 60,
   shotgun: 500,
   knife: 200,
   minigun: 18,
+  sniper: 1200,
+  grenade_launcher: 1500,
+  dual_pistols: 100,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
   shotgun: "🔫",
   knife: "🔪",
   minigun: "🔥",
+  sniper: "🎯",
+  grenade_launcher: "💣",
+  dual_pistols: "🔫",
 };
 
 let ws;
@@ -65,6 +74,7 @@ let players = [];
 let bullets = [];
 let obstacles = [];
 let pickups = [];
+let grenades = [];
 let mouseX = 700;
 let mouseY = 450;
 let previousBulletCount = 0;
@@ -96,6 +106,12 @@ let floatingNumbers = [];
 let lastKilledByUsername = "";
 // Last kill weapon per victim (from "kill" messages) for weapon-specific death effects
 let pendingDeathWeapon = new Map(); // victimUsername -> weapon
+
+// Kill effect particles (fire, ice, lightning)
+let killEffects = [];
+
+// Death animation particles (replaces instant despawn)
+let deathAnimations = [];
 
 // Celebration system (match end explosions + audio)
 let celebrationInterval = null;
@@ -299,6 +315,148 @@ function createBloodStain(x, y) {
   if (bloodStains.length > GAME_CONFIG.MAX_BLOOD_STAINS) {
     bloodStains = bloodStains.slice(-GAME_CONFIG.MAX_BLOOD_STAINS);
   }
+}
+
+// Kill effect particle system (fire, ice, lightning)
+function createKillEffect(x, y, effectType) {
+  const particles = [];
+  const count = 16;
+
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 3;
+    let color, size;
+
+    if (effectType === "fire") {
+      color = `hsl(${Math.random() * 40 + 10}, 100%, ${40 + Math.random() * 40}%)`;
+      size = 3 + Math.random() * 5;
+    } else if (effectType === "ice") {
+      color = `hsl(${190 + Math.random() * 30}, 80%, ${60 + Math.random() * 30}%)`;
+      size = 2 + Math.random() * 4;
+    } else {
+      // lightning
+      color = `hsl(${50 + Math.random() * 20}, 100%, ${70 + Math.random() * 30}%)`;
+      size = 2 + Math.random() * 3;
+    }
+
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - (effectType === "fire" ? 2 : 0),
+      life: 1.0,
+      size,
+      color,
+      effectType,
+    });
+  }
+
+  killEffects.push({ particles, frame: 0, effectType });
+  if (killEffects.length > 15) killEffects = killEffects.slice(-15);
+}
+
+function updateKillEffects() {
+  killEffects.forEach((effect) => {
+    effect.frame++;
+    effect.particles.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (effect.effectType === "fire") {
+        p.vy -= 0.05; // Fire rises
+        p.vx *= 0.97;
+      } else if (effect.effectType === "ice") {
+        p.vy += 0.1; // Ice falls
+        p.vx *= 0.96;
+      } else {
+        // Lightning jitters
+        p.vx += (Math.random() - 0.5) * 0.5;
+        p.vy += (Math.random() - 0.5) * 0.5;
+        p.vx *= 0.94;
+        p.vy *= 0.94;
+      }
+      p.life -= 0.02;
+    });
+  });
+  killEffects = killEffects.filter((e) => e.particles.some((p) => p.life > 0));
+}
+
+function renderKillEffects() {
+  killEffects.forEach((effect) => {
+    effect.particles.forEach((p) => {
+      if (p.life <= 0) return;
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Glow effect
+      if (effect.effectType === "lightning") {
+        ctx.globalAlpha = Math.max(0, p.life * 0.3);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+  });
+  ctx.globalAlpha = 1.0;
+}
+
+// Death animation system (ragdoll explosion particles)
+function createDeathAnimation(x, y, skinIndex) {
+  const skin = SKINS[skinIndex] || SKINS[0];
+  const particles = [];
+  const count = 10;
+
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 4;
+    const isBody = i < 4; // First few are body-colored
+
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1.5,
+      life: 1.0,
+      size: isBody ? (4 + Math.random() * 4) : (2 + Math.random() * 3),
+      color: isBody ? skin.primary : `rgb(${139 + Math.floor(Math.random() * 80)}, 0, 0)`,
+      rotation: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.3,
+    });
+  }
+
+  deathAnimations.push({ particles, frame: 0 });
+  if (deathAnimations.length > 10) deathAnimations = deathAnimations.slice(-10);
+}
+
+function updateDeathAnimations() {
+  deathAnimations.forEach((anim) => {
+    anim.frame++;
+    anim.particles.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.15; // Gravity
+      p.vx *= 0.97;
+      p.rotation += p.rotSpeed;
+      p.life -= 0.015;
+    });
+  });
+  deathAnimations = deathAnimations.filter((a) => a.particles.some((p) => p.life > 0));
+}
+
+function renderDeathAnimations() {
+  deathAnimations.forEach((anim) => {
+    anim.particles.forEach((p) => {
+      if (p.life <= 0) return;
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size * p.life, p.size * p.life);
+      ctx.restore();
+    });
+  });
+  ctx.globalAlpha = 1.0;
 }
 
 function updateExplosions() {
@@ -1084,6 +1242,7 @@ function returnToLobby() {
   players = [];
   bullets = [];
   pickups = [];
+  grenades = [];
   explosions = [];
   bloodParticles = [];
   bloodStains = [];
@@ -1098,6 +1257,8 @@ function returnToLobby() {
   bombExplosions = [];
   activeLightnings = [];
   lightningBolts = [];
+  killEffects = [];
+  deathAnimations = [];
   flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
   pageFlashIntensity = 0;
   document.body.style.filter = "";
@@ -1337,6 +1498,9 @@ function tryShoot() {
       const aimAngle = Math.atan2(dirY, dirX);
       createKnifeSlash(playerX, playerY, aimAngle);
       playKnifeSound(playerX, playerY);
+    } else if (player.weapon === "grenade_launcher") {
+      createMuzzleFlash(playerX, playerY, dirX, dirY);
+      triggerScreenShake(4);
     } else {
       createMuzzleFlash(playerX, playerY, dirX, dirY);
       if (player.weapon !== "knife") {
@@ -1345,13 +1509,16 @@ function tryShoot() {
       // Screen shake on shotgun shot (recoil feel)
       if (player.weapon === "shotgun") triggerScreenShake(6);
       if (player.weapon === "minigun") triggerScreenShake(2);
+      if (player.weapon === "sniper") triggerScreenShake(8);
     }
 
     // Client-side bullet prediction (instant visual feedback)
-    if (player.weapon !== "knife") {
+    if (player.weapon !== "knife" && player.weapon !== "grenade_launcher") {
       const bulletSpeed =
         player.weapon === "machinegun" ? 9 :
-        player.weapon === "shotgun" ? 8 : 9;
+        player.weapon === "shotgun" ? 8 :
+        player.weapon === "sniper" ? 16 :
+        player.weapon === "dual_pistols" ? 9 : 9;
 
       if (player.weapon === "shotgun") {
         // Predict 6 pellets
@@ -1367,6 +1534,21 @@ function tryShoot() {
           };
           bullets.push(pb);
           setTimeout(() => { bullets = bullets.filter((b) => b.id !== pb.id); }, 80);
+        }
+      } else if (player.weapon === "dual_pistols") {
+        // Predict 2 bullets with slight spread
+        const baseAngle = Math.atan2(dirY, dirX);
+        for (let i = 0; i < 2; i++) {
+          const spread = (i === 0 ? -1 : 1) * 0.12;
+          const angle = baseAngle + spread;
+          const pb = {
+            id: "predicted_" + Date.now() + "_dp" + i,
+            x: playerX, y: playerY,
+            dx: Math.cos(angle) * bulletSpeed, dy: Math.sin(angle) * bulletSpeed,
+            weapon: "dual_pistols", predicted: true,
+          };
+          bullets.push(pb);
+          setTimeout(() => { bullets = bullets.filter((b) => b.id !== pb.id); }, 100);
         }
       } else {
         const predictedBullet = {
@@ -1852,6 +2034,18 @@ function setupWsMessageHandler() {
       playGrenadeExplosionSound(data.x, data.y);
     }
 
+    if (data.type === "grenadeExploded") {
+      createBombExplosion(data.x, data.y, data.radius || 90);
+      const dx = data.x - predictedX;
+      const dy = data.y - predictedY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      triggerScreenShake(Math.max(2, 12 - dist / 50));
+      if (dist < 100) {
+        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, 0.2 * (1 - dist / 100));
+      }
+      playGrenadeExplosionSound(data.x, data.y);
+    }
+
     // ===== LIGHTNING STRIKE SYSTEM =====
     if (data.type === "lightningWarning") {
       activeLightnings.push({
@@ -1917,7 +2111,7 @@ function setupWsMessageHandler() {
 
     if (data.type === "state") {
       // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted]
-      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun" };
+      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper", 5: "grenade_launcher", 6: "dual_pistols" };
       // Build username lookup map for O(1) access instead of O(n) per player
       const usernameMap = new Map();
       players.forEach((pl) => usernameMap.set(pl.id, pl.username));
@@ -1938,6 +2132,9 @@ function setupWsMessageHandler() {
             kills: p[9],
             skin: p[10] || 0,
             speedBoosted: p[11] === 1,
+            shielded: p[12] === 1,
+            invisible: p[13] === 1,
+            regen: p[14] === 1,
             // Preserve username from existing player data
             username: usernameMap.get(p[0]) || "Jogador",
           };
@@ -1959,7 +2156,7 @@ function setupWsMessageHandler() {
       });
 
       // Parse compact pickups: [id, x, y, typeCode]
-      const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun" };
+      const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen" };
       const parsedPickups = (data.pk || []).map((pk) => {
         if (Array.isArray(pk)) {
           return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
@@ -1968,27 +2165,36 @@ function setupWsMessageHandler() {
       });
       pickups = parsedPickups;
 
+      // Parse compact grenades: [id, x, y]
+      grenades = (data.g || []).map((g) => {
+        if (Array.isArray(g)) {
+          return { id: g[0], x: g[1], y: g[2] };
+        }
+        return g;
+      });
+
       // Check for deaths before updating players
       parsedPlayers.forEach((p) => {
         const prevState = previousPlayerStates.get(p.id);
         if (prevState && prevState.hp > 0 && p.hp <= 0) {
-          // Player just died - create explosion
-          createExplosion(p.x, p.y);
+          // Player just died - create death animation (ragdoll particles)
+          createDeathAnimation(p.x, p.y, p.skin || 0);
 
           // Weapon-specific death effects
           const deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
           pendingDeathWeapon.delete(p.username);
 
           if (deathWeapon === "knife") {
-            // Knife kills: extra blood splatter
+            // Knife kills: extra blood splatter + ice effect
             createBlood(p.x, p.y);
             createBlood(p.x, p.y);
             createBlood(p.x, p.y);
             createBloodStain(p.x, p.y);
             createBloodStain(p.x, p.y);
             createBloodStain(p.x, p.y);
+            createKillEffect(p.x, p.y, "ice");
           } else if (deathWeapon === "shotgun") {
-            // Shotgun kills: body flying effect — large directional explosion
+            // Shotgun kills: body flying effect + fire effect
             for (let i = 0; i < 12; i++) {
               const angle = Math.random() * Math.PI * 2;
               const speed = 3 + Math.random() * 4;
@@ -2006,10 +2212,29 @@ function setupWsMessageHandler() {
             }
             createBloodStain(p.x, p.y);
             createBloodStain(p.x, p.y);
+            createKillEffect(p.x, p.y, "fire");
+          } else if (deathWeapon === "sniper") {
+            // Sniper kills: lightning effect (disintegration)
+            createKillEffect(p.x, p.y, "lightning");
+            createBlood(p.x, p.y);
+          } else if (deathWeapon === "grenade_launcher") {
+            // Grenade kills: massive fire explosion
+            createKillEffect(p.x, p.y, "fire");
+            createKillEffect(p.x, p.y, "fire");
+            createExplosion(p.x, p.y);
+          } else if (deathWeapon === "dual_pistols") {
+            // Dual pistol kills: ice shatter
+            createKillEffect(p.x, p.y, "ice");
+            createBlood(p.x, p.y);
+          } else if (deathWeapon === "minigun") {
+            // Minigun kills: fire + lightning
+            createKillEffect(p.x, p.y, "fire");
+            createKillEffect(p.x, p.y, "lightning");
           } else {
-            // Default death: normal blood
+            // Default death (machinegun): lightning sparks
             createBlood(p.x, p.y);
             createBloodStain(p.x, p.y);
+            createKillEffect(p.x, p.y, "lightning");
           }
 
           // Floating damage number for kill
@@ -2217,37 +2442,52 @@ function setupWsMessageHandler() {
         playSound(`bomb-${bIdx}`, 0.4, 0.9 + Math.random() * 0.2);
       }, 1100);
 
-      // Show victory screen with scoreboard
-      const scoreboardHTML = data.scoreboard
-        .map(
-          (player, index) => `
-        <div style="padding: 12px; margin: 8px 0; background: ${player.isWinner ? "linear-gradient(90deg, rgba(255,107,53,0.3), rgba(255,68,34,0.2))" : "rgba(255,255,255,0.05)"}; border-radius: 4px; border: 1px solid ${player.isWinner ? "#ff6b35" : "#2a3a2a"}; display: flex; justify-content: space-between; align-items: center; animation: screenFadeIn 0.3s ease-out ${index * 0.1}s both;">
-          <span style="font-size: 22px; font-weight: ${player.isWinner ? "bold" : "normal"}; color: white; font-family: 'Rajdhani', sans-serif;">
-            ${index + 1}. ${player.username} ${player.isWinner ? "👑" : ""}
-          </span>
-          <span style="font-size: 18px; color: #bbddbb; font-family: 'Share Tech Mono', monospace;">
-            ${player.kills} abates / ${player.deaths} mortes
-          </span>
-        </div>
-      `,
-        )
-        .join("");
+      // Sort scoreboard by kills descending
+      const sorted = [...data.scoreboard].sort((a, b) => b.kills - a.kills);
+      const endMedals = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"];
+
+      // Winner showcase (top 3)
+      const top3 = sorted.slice(0, 3);
+      const showcaseHTML = top3.map((p, i) => {
+        const initial = p.username.charAt(0).toUpperCase();
+        const rank = i + 1;
+        return `<div class="showcase-player rank-${rank}">
+          <div class="showcase-avatar">
+            ${initial}
+            <span class="showcase-medal">${endMedals[i] || ""}</span>
+          </div>
+          <div class="showcase-name">${p.username}</div>
+          <div class="showcase-kills">${p.kills}K / ${p.deaths}D</div>
+        </div>`;
+      }).join("");
+
+      // Full scoreboard
+      const scoreboardHTML = sorted.map((p, i) => {
+        const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(1) : p.kills.toFixed(1);
+        const isW = p.isWinner;
+        return `<div class="vs-row ${isW ? "winner" : ""}">
+          <span class="vs-rank">${isW ? "\uD83D\uDC51" : (i + 1) + "."}</span>
+          <span class="vs-name">${p.username}</span>
+          <span class="vs-stats">${p.kills}K / ${p.deaths}D (${kd})</span>
+        </div>`;
+      }).join("");
 
       // Pick a random viral phrase
       const viralPhrase = isLocalWinner
         ? WINNER_PHRASES[Math.floor(Math.random() * WINNER_PHRASES.length)].replace("{winner}", "Você")
         : LOSER_PHRASES[Math.floor(Math.random() * LOSER_PHRASES.length)].replace("{winner}", data.winnerName);
 
+      // Banner
+      document.getElementById("victoryBanner").innerHTML =
+        isLocalWinner ? "\uD83C\uDF89 \uD83C\uDF86 \uD83C\uDF89" : "\u2694\uFE0F \uD83D\uDC80 \u2694\uFE0F";
       document.getElementById("victoryMessage").innerHTML =
-        isLocalWinner ? "🏆 VITÓRIA! 🏆" : data.winnerName + " VENCEU!";
+        isLocalWinner ? "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6" : data.winnerName + " VENCEU!";
       document.getElementById("victorySubtext").innerHTML = viralPhrase;
-      document.getElementById("countdownMessage").innerHTML = `
-        <div style="margin: 20px 0;">
-          <h3 style="color: #aaccaa; margin-bottom: 15px; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 2px;">Placar Final</h3>
-          ${scoreboardHTML}
-        </div>
-        <button id="voltarBtn" onclick="skipVictoryScreen()" style="margin-top: 18px; padding: 14px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif;">↩ Voltar</button>
-        <p style="margin-top: 12px; font-size: 16px; color: #8aaa8a;">Voltando em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">10</span>s...</p>
+      document.getElementById("victoryShowcase").innerHTML = showcaseHTML;
+      document.getElementById("victoryScoreboard").innerHTML = scoreboardHTML;
+      document.getElementById("victoryFooter").innerHTML = `
+        <button id="voltarBtn" onclick="skipVictoryScreen()" style="padding: 14px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif;">\u21A9 Voltar</button>
+        <p style="margin-top: 10px; font-size: 15px; color: #8aaa8a;">Voltando em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">10</span>s...</p>
       `;
       document.getElementById("victoryScreen").style.display = "block";
 
@@ -2535,6 +2775,8 @@ function updateShotUI() {
     shotsDisplay.textContent = `${weaponName} | Corpo a corpo`;
   } else if (player.weapon === "minigun") {
     shotsDisplay.textContent = `${weaponName} | ∞`;
+  } else if (player.weapon === "grenade_launcher") {
+    shotsDisplay.textContent = `${weaponName} | ${player.shots}/30`;
   } else {
     shotsDisplay.textContent = `${weaponName} | ${player.shots}/30`;
   }
@@ -2628,9 +2870,9 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Number keys 1-3 to select weapon directly
-  if (e.key >= "1" && e.key <= "3") {
-    const weapons = ["machinegun", "shotgun", "knife"];
+  // Number keys 1-6 to select weapon directly
+  if (e.key >= "1" && e.key <= "6") {
+    const weapons = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"];
     const weaponIndex = parseInt(e.key) - 1;
     ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
     return;
@@ -2790,7 +3032,38 @@ let joystickActive = false;
 let joystickTouchId = null;
 let joystickCenterX = 0;
 let joystickCenterY = 0;
-const JOYSTICK_MAX_RADIUS = 45;
+const JOYSTICK_MAX_RADIUS = 55;
+const AIM_ASSIST_ANGLE = 0.35; // ~20 degrees snap cone
+
+// Find nearest enemy within an angle threshold of the aim direction
+function getAimAssistAngle(aimAngle) {
+  if (!players || !playerId) return aimAngle;
+  const localP = players.find((p) => p.id === playerId);
+  if (!localP) return aimAngle;
+
+  let bestAngle = aimAngle;
+  let bestDist = Infinity;
+
+  for (const p of players) {
+    if (p.id === playerId || p.hp <= 0) continue;
+    const dx = p.x - predictedX;
+    const dy = p.y - predictedY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 10 || dist > 500) continue; // ignore very close or very far
+
+    const enemyAngle = Math.atan2(dy, dx);
+    let diff = enemyAngle - aimAngle;
+    // Normalize to [-PI, PI]
+    while (diff > Math.PI) diff -= 2 * Math.PI;
+    while (diff < -Math.PI) diff += 2 * Math.PI;
+
+    if (Math.abs(diff) < AIM_ASSIST_ANGLE && dist < bestDist) {
+      bestDist = dist;
+      bestAngle = enemyAngle;
+    }
+  }
+  return bestAngle;
+}
 
 function initMobileControls() {
   const mobileControls = document.getElementById("mobileControls");
@@ -2803,16 +3076,26 @@ function initMobileControls() {
   const joystickThumb = document.getElementById("joystickThumb");
   const joystickBase = document.getElementById("joystickBase");
   const weaponBtn = document.getElementById("touchWeaponBtn");
+  const reloadBtn = document.getElementById("touchReloadBtn");
 
-  // Joystick touch handling
+  // Joystick touch handling — dynamic center on touch start
   joystickArea.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (joystickTouchId !== null) return;
     const touch = e.changedTouches[0];
     joystickTouchId = touch.identifier;
-    const rect = joystickBase.getBoundingClientRect();
-    joystickCenterX = rect.left + rect.width / 2;
-    joystickCenterY = rect.top + rect.height / 2;
+    // Center the joystick at the touch point for ergonomic reach
+    const rect = joystickArea.getBoundingClientRect();
+    joystickCenterX = touch.clientX;
+    joystickCenterY = touch.clientY;
+    // Clamp center so the base stays within the area
+    const baseR = 70; // half of base size
+    joystickCenterX = Math.max(rect.left + baseR, Math.min(rect.right - baseR, joystickCenterX));
+    joystickCenterY = Math.max(rect.top + baseR, Math.min(rect.bottom - baseR, joystickCenterY));
+    // Move the visual base to the touch point
+    joystickBase.style.left = (joystickCenterX - rect.left - baseR) + "px";
+    joystickBase.style.top = (joystickCenterY - rect.top - baseR) + "px";
+    joystickBase.style.bottom = "auto";
     joystickActive = true;
     joystickThumb.classList.add("active");
     updateJoystick(touch.clientX, touch.clientY);
@@ -2834,8 +3117,10 @@ function initMobileControls() {
         joystickTouchId = null;
         joystickActive = false;
         joystickThumb.classList.remove("active");
-        joystickThumb.style.left = "60px";
-        joystickThumb.style.top = "60px";
+        // Reset thumb to center
+        joystickThumb.style.left = "50%";
+        joystickThumb.style.top = "50%";
+        joystickThumb.style.transform = "translate(-50%, -50%)";
         // Release all movement keys
         releaseAllMoveKeys();
         break;
@@ -2854,9 +3139,10 @@ function initMobileControls() {
       dx = (dx / dist) * JOYSTICK_MAX_RADIUS;
       dy = (dy / dist) * JOYSTICK_MAX_RADIUS;
     }
-    // Update thumb visual position
-    joystickThumb.style.left = (60 + dx) + "px";
-    joystickThumb.style.top = (60 + dy) + "px";
+    // Update thumb visual position (offset from center)
+    joystickThumb.style.left = "calc(50% + " + dx + "px)";
+    joystickThumb.style.top = "calc(50% + " + dy + "px)";
+    joystickThumb.style.transform = "translate(-50%, -50%)";
 
     // Map to WASD with deadzone
     const deadzone = 15;
@@ -2870,14 +3156,14 @@ function initMobileControls() {
     applyMobileKeys(newKeys);
   }
 
-  // Right-side aim joystick — aims + auto-fires while touched
+  // Right-side aim joystick — aims + auto-fires while touched (with aim assist)
   const aimArea = document.getElementById("aimJoystickArea");
   const aimBase = document.getElementById("aimJoystickBase");
   const aimThumb = document.getElementById("aimJoystickThumb");
   let aimTouchId = null;
   let aimCenterX = 0;
   let aimCenterY = 0;
-  const AIM_JOYSTICK_MAX = 45;
+  const AIM_JOYSTICK_MAX = 55;
 
   aimArea.addEventListener("touchstart", (e) => {
     e.preventDefault();
@@ -2885,9 +3171,17 @@ function initMobileControls() {
     if (aimTouchId !== null) return;
     const touch = e.changedTouches[0];
     aimTouchId = touch.identifier;
-    const rect = aimBase.getBoundingClientRect();
-    aimCenterX = rect.left + rect.width / 2;
-    aimCenterY = rect.top + rect.height / 2;
+    // Dynamic center for aim joystick
+    const rect = aimArea.getBoundingClientRect();
+    aimCenterX = touch.clientX;
+    aimCenterY = touch.clientY;
+    const baseR = 70;
+    aimCenterX = Math.max(rect.left + baseR, Math.min(rect.right - baseR, aimCenterX));
+    aimCenterY = Math.max(rect.top + baseR, Math.min(rect.bottom - baseR, aimCenterY));
+    aimBase.style.right = "auto";
+    aimBase.style.bottom = "auto";
+    aimBase.style.left = (aimCenterX - rect.left - baseR) + "px";
+    aimBase.style.top = (aimCenterY - rect.top - baseR) + "px";
     aimThumb.classList.add("active");
     isMouseDown = true; // Start firing
     updateAimJoystick(touch.clientX, touch.clientY);
@@ -2908,8 +3202,10 @@ function initMobileControls() {
       if (touch.identifier === aimTouchId) {
         aimTouchId = null;
         aimThumb.classList.remove("active");
-        aimThumb.style.left = "60px";
-        aimThumb.style.top = "60px";
+        aimThumb.classList.remove("aim-assisted");
+        aimThumb.style.left = "50%";
+        aimThumb.style.top = "50%";
+        aimThumb.style.transform = "translate(-50%, -50%)";
         isMouseDown = false; // Stop firing
         break;
       }
@@ -2927,13 +3223,27 @@ function initMobileControls() {
       dy = (dy / dist) * AIM_JOYSTICK_MAX;
     }
     // Update thumb visual
-    aimThumb.style.left = (60 + dx) + "px";
-    aimThumb.style.top = (60 + dy) + "px";
+    aimThumb.style.left = "calc(50% + " + dx + "px)";
+    aimThumb.style.top = "calc(50% + " + dy + "px)";
+    aimThumb.style.transform = "translate(-50%, -50%)";
 
     // Convert joystick direction to aim angle (only if moved past deadzone)
     const deadzone = 8;
     if (dist > deadzone) {
-      const aimAngle = Math.atan2(dy, dx);
+      let aimAngle = Math.atan2(dy, dx);
+
+      // Apply aim assist — snap to nearest enemy if close to aim direction
+      const assistedAngle = getAimAssistAngle(aimAngle);
+      const wasAssisted = assistedAngle !== aimAngle;
+      aimAngle = assistedAngle;
+
+      // Visual feedback for aim assist
+      if (wasAssisted) {
+        aimThumb.classList.add("aim-assisted");
+      } else {
+        aimThumb.classList.remove("aim-assisted");
+      }
+
       // Project aim far from player so the crosshair is in the right direction
       const aimDist = 300;
       mouseX = predictedX + Math.cos(aimAngle) * aimDist;
@@ -2954,6 +3264,16 @@ function initMobileControls() {
       ws.send(serialize({ type: "switchWeapon" }));
     }
     setTimeout(() => weaponBtn.classList.remove("pressed"), 150);
+  }, { passive: false });
+
+  // Reload button
+  reloadBtn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    reloadBtn.classList.add("pressed");
+    if (ws && gameReady) {
+      ws.send(serialize({ type: "reload" }));
+    }
+    setTimeout(() => reloadBtn.classList.remove("pressed"), 150);
   }, { passive: false });
 }
 
@@ -3248,8 +3568,14 @@ function renderPickupEffects() {
 }
 
 function renderPickups() {
-  const pickupColors = { health: "#ff4444", ammo: "#44bb44", speed: "#4488ff", minigun: "#ff8800" };
-  const pickupIcons = { health: "+", ammo: "A", speed: "S", minigun: "M" };
+  const pickupColors = {
+    health: "#ff4444", ammo: "#44bb44", speed: "#4488ff", minigun: "#ff8800",
+    shield: "#44ddff", invisibility: "#aa66ff", regen: "#44ff88",
+  };
+  const pickupIcons = {
+    health: "+", ammo: "A", speed: "S", minigun: "M",
+    shield: "🛡", invisibility: "👻", regen: "♥",
+  };
   const now = Date.now();
 
   pickups.forEach((pk) => {
@@ -3760,6 +4086,8 @@ function render() {
   updateBombExplosions();
   updateFlashbang();
   updateFloatingNumbers();
+  updateKillEffects();
+  updateDeathAnimations();
 
   // Dust clouds when local player moves
   if (
@@ -3803,6 +4131,22 @@ function render() {
 
   // Render bombs
   renderBombs();
+
+  // Render grenades in flight
+  grenades.forEach((g) => {
+    const now = Date.now();
+    const pulse = Math.sin(now / 100) * 0.3 + 0.7;
+    // Grenade body
+    ctx.fillStyle = "#556b2f";
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Blinking red light
+    ctx.fillStyle = `rgba(255, 50, 0, ${pulse})`;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y - 3, 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
   // Render lightning warnings
   renderLightningWarnings();
@@ -3855,6 +4199,41 @@ function render() {
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(renderX, renderY, 18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Shield bubble visual
+    if (p.shielded) {
+      const shieldPulse = 0.3 + Math.sin(Date.now() / 200) * 0.15;
+      ctx.strokeStyle = `rgba(100, 200, 255, ${shieldPulse + 0.3})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(100, 200, 255, ${shieldPulse * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Invisibility visual (ghostly fade for others, slight outline for self)
+    if (p.invisible && p.id !== playerId) {
+      ctx.globalAlpha = 0.15; // Nearly invisible to others
+    } else if (p.invisible && p.id === playerId) {
+      ctx.globalAlpha = 0.5; // Semi-transparent for self
+    }
+
+    // Health regen aura
+    if (p.regen) {
+      const regenPulse = 0.3 + Math.sin(Date.now() / 300) * 0.2;
+      ctx.fillStyle = `rgba(50, 255, 100, ${regenPulse * 0.2})`;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(50, 255, 100, ${regenPulse})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -3918,6 +4297,49 @@ function render() {
       // Handle
       ctx.fillStyle = "#333";
       ctx.fillRect(-2, -2, 6, 4);
+    } else if (p.weapon === "sniper") {
+      // Sniper rifle — long barrel
+      ctx.fillStyle = "#2a2a2a";
+      ctx.fillRect(4, -2, 30, 4);
+      // Scope
+      ctx.fillStyle = "#4488ff";
+      ctx.fillRect(14, -5, 4, 3);
+      // Muzzle
+      ctx.fillStyle = "#555";
+      ctx.fillRect(34, -1.5, 4, 3);
+      // Stock
+      ctx.fillStyle = "#3a2a1a";
+      ctx.fillRect(-4, -2, 8, 4);
+    } else if (p.weapon === "grenade_launcher") {
+      // Grenade launcher — thick barrel
+      ctx.fillStyle = "#3a3a2a";
+      ctx.fillRect(4, -3.5, 18, 7);
+      // Wide muzzle
+      ctx.fillStyle = "#555";
+      ctx.beginPath();
+      ctx.arc(22, 0, 5, -Math.PI / 2, Math.PI / 2);
+      ctx.fill();
+      // Grip
+      ctx.fillStyle = "#2a2a2a";
+      ctx.fillRect(-2, -2, 6, 4);
+      // Ammo drum hint
+      ctx.fillStyle = "#444";
+      ctx.beginPath();
+      ctx.arc(10, 4, 4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (p.weapon === "dual_pistols") {
+      // Dual pistols — two small guns
+      ctx.fillStyle = "#333";
+      ctx.fillRect(6, -5, 14, 3);
+      ctx.fillRect(6, 2, 14, 3);
+      // Muzzles
+      ctx.fillStyle = "#555";
+      ctx.fillRect(20, -5, 3, 3);
+      ctx.fillRect(20, 2, 3, 3);
+      // Grips
+      ctx.fillStyle = "#2a2a2a";
+      ctx.fillRect(8, -3, 3, 2);
+      ctx.fillRect(8, 5, 3, 2);
     }
 
     ctx.restore();
@@ -3971,7 +4393,7 @@ function render() {
     ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
 
     // Username
-    ctx.font = "bold 16px 'Rajdhani', sans-serif";
+    ctx.font = "bold 20px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
     // Shadow for readability
     ctx.fillStyle = "rgba(0,0,0,0.6)";
@@ -3984,8 +4406,13 @@ function render() {
     if (bountyLeaderId === p.id) {
       ctx.font = "16px serif";
       ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, renderY - 44);
+      ctx.fillText("💀", renderX, renderY - 48);
       ctx.textAlign = "start";
+    }
+
+    // Restore alpha after invisibility
+    if (p.invisible) {
+      ctx.globalAlpha = 1.0;
     }
   });
 
@@ -4011,6 +4438,36 @@ function render() {
       ctx.fillStyle = "rgba(255,136,68,0.3)";
       ctx.beginPath();
       ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (b.weapon === "sniper") {
+      // Sniper tracer - bright blue laser line
+      ctx.strokeStyle = "#44aaff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      const trailLen = 18;
+      const angle = b.dx !== undefined ? Math.atan2(b.dy, b.dx) : 0;
+      ctx.lineTo(b.x - Math.cos(angle) * trailLen, b.y - Math.sin(angle) * trailLen);
+      ctx.stroke();
+      // Core dot
+      ctx.fillStyle = "#88ccff";
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      // Glow
+      ctx.fillStyle = "rgba(68,170,255,0.25)";
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (b.weapon === "dual_pistols") {
+      // Dual pistol bullets - cyan-white
+      ctx.fillStyle = "#66ffee";
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(102,255,238,0.2)";
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
       ctx.fill();
     } else {
       // Machine gun tracer - yellow
@@ -4053,6 +4510,12 @@ function render() {
 
   // Render floating damage numbers
   renderFloatingNumbers();
+
+  // Render kill effects (fire, ice, lightning)
+  renderKillEffects();
+
+  // Render death animations (ragdoll particles)
+  renderDeathAnimations();
 
   // Render crosshair
   if (framePlayer) {

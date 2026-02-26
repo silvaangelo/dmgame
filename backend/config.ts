@@ -41,6 +41,28 @@ export const GAME_CONFIG = {
   MINIGUN_DAMAGE: 1,
   MINIGUN_RECOIL: 0.08,
   MINIGUN_DURATION: 8000,
+  // Sniper Rifle
+  SNIPER_COOLDOWN: 1200,
+  SNIPER_DAMAGE: 4,
+  SNIPER_BULLET_SPEED: 30,
+  // Grenade Launcher
+  GRENADE_COOLDOWN: 1500,
+  GRENADE_DAMAGE: 2,
+  GRENADE_RADIUS: 90,
+  GRENADE_SPEED: 8,
+  GRENADE_FUSE_TIME: 800,
+  // Dual Pistols
+  DUAL_PISTOL_COOLDOWN: 100,
+  DUAL_PISTOL_DAMAGE: 1,
+  DUAL_PISTOL_SPREAD: 0.12,
+  // Shield powerup
+  SHIELD_DURATION: 6000,
+  SHIELD_ABSORB: 2, // absorbs 2 HP worth of damage
+  // Invisibility powerup
+  INVISIBILITY_DURATION: 5000,
+  // Health Regen powerup
+  REGEN_DURATION: 8000,
+  REGEN_TICK_INTERVAL: 2000, // heal 1 HP every 2 seconds
   // Bombs
   BOMB_SPAWN_INTERVAL: 3000,
   BOMB_FUSE_TIME: 1000,
@@ -62,7 +84,7 @@ export const GAME_CONFIG = {
   USERNAME_PATTERN: /^[a-zA-Z0-9_]+$/,
 };
 
-export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife"] as const;
+export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher", "dual_pistols"] as const;
 
 export const OBSTACLE_CONFIG = {
   WALL_COUNT_MIN: 14,

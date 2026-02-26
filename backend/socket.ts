@@ -23,8 +23,31 @@ import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
 import { serialize, deserialize } from "./protocol.js";
 
 export function setupSocket() {
+  // Ping/pong heartbeat to detect dead connections
+  const HEARTBEAT_INTERVAL = 15_000; // 15 seconds
+
+  const heartbeat = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      const ext = ws as WebSocket & { isAlive?: boolean };
+      if (ext.isAlive === false) {
+        // Did not respond to last ping — terminate
+        ext.terminate();
+        return;
+      }
+      ext.isAlive = false;
+      ext.ping();
+    });
+  }, HEARTBEAT_INTERVAL);
+
+  wss.on("close", () => clearInterval(heartbeat));
+
   wss.on("connection", (ws) => {
     let player: Player | null = null;
+
+    // Mark alive on connect and on every pong
+    const ext = ws as WebSocket & { isAlive?: boolean };
+    ext.isAlive = true;
+    ws.on("pong", () => { ext.isAlive = true; });
 
     // Reject if too many concurrent connections
     if (wss.clients.size > 200) {
@@ -49,6 +72,26 @@ export function setupSocket() {
         return; // Ignore malformed messages
       }
       if (!data || typeof data.type !== "string") return;
+
+      /* ================= ANTI-CHEAT: RATE LIMITING ================= */
+      if (player) {
+        const now = Date.now();
+        if (now - player.msgWindowStart > 1000) {
+          player.msgCount = 0;
+          player.msgWindowStart = now;
+        }
+        player.msgCount++;
+        // Allow max 120 messages/second (generous for rapid-fire + movement)
+        if (player.msgCount > 120) {
+          player.violations++;
+          if (player.violations >= 5) {
+            console.log(`🚫 Kicked ${player.username} for message flooding (${player.violations} violations)`);
+            ws.close(4001, "Rate limit exceeded");
+            return;
+          }
+          return; // Silently drop excess messages
+        }
+      }
 
       /* ================= LOGIN ================= */
 
@@ -126,6 +169,16 @@ export function setupSocket() {
           minigunUntil: 0,
           killStreak: 0,
           lastKilledBy: "",
+          // Powerup states
+          shieldUntil: 0,
+          invisibleUntil: 0,
+          regenUntil: 0,
+          lastRegenTick: 0,
+          // Anti-cheat
+          msgCount: 0,
+          msgWindowStart: Date.now(),
+          violations: 0,
+          lastWeaponSwitch: 0,
         };
 
         allPlayers.set(player.id, {
@@ -295,16 +348,34 @@ export function setupSocket() {
       }
 
       if (type === "shoot") {
-        shoot(player, game, data.dirX || 0, data.dirY || -1);
+        let dirX = Number(data.dirX) || 0;
+        let dirY = Number(data.dirY) || -1;
+        // Normalize direction vector to prevent speed-hacked bullets
+        const mag = Math.sqrt(dirX * dirX + dirY * dirY);
+        if (mag > 0.001) {
+          dirX /= mag;
+          dirY /= mag;
+        } else {
+          dirX = 0;
+          dirY = -1;
+        }
+        shoot(player, game, dirX, dirY);
       }
 
       if (type === "aim") {
-        player.aimAngle = data.aimAngle || 0;
+        const angle = Number(data.aimAngle);
+        if (Number.isFinite(angle)) {
+          player.aimAngle = angle;
+        }
       }
 
       if (type === "switchWeapon") {
         // Can't switch weapons while minigun powerup is active
         if (player.weapon === "minigun") return;
+        // Cooldown: 250ms between switches
+        const now = Date.now();
+        if (now - player.lastWeaponSwitch < 250) return;
+        player.lastWeaponSwitch = now;
         if (data.weapon && WEAPON_CYCLE.includes(data.weapon)) {
           player.weapon = data.weapon;
         } else {
@@ -327,6 +398,11 @@ export function setupSocket() {
 
         checkAllReady(game);
       }
+    });
+
+    ws.on("error", (err) => {
+      console.error(`⚠️ WebSocket error for ${player?.username || "unknown"}:`, err.message);
+      // The close event will fire after this, which handles cleanup
     });
 
     ws.on("close", () => {

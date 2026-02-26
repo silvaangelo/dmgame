@@ -6,7 +6,7 @@ Real-time multiplayer top-down shooter — play directly in your browser.
 
 ## About
 
-Deathmatch Arena is a fast-paced browser game where players fight in a top-down arena. First to 5 kills wins. The server is authoritative — all game logic runs server-side to prevent cheating.
+Deathmatch Arena is a fast-paced browser game where players fight in a top-down arena. First to 5 kills wins. The server is authoritative — all game logic runs server-side to prevent cheating, its really neat.
 
 ### Features
 

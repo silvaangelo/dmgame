@@ -241,12 +241,17 @@ export function startGameFromRoom(room: Room) {
     p.aimAngle = 0;
     p.weapon = "machinegun";
     p.lastKilledBy = "";
+    p.shieldUntil = 0;
+    p.invisibleUntil = 0;
+    p.regenUntil = 0;
+    p.lastRegenTick = 0;
   });
 
   const game: Game = {
     id: uuid(),
     players,
     bullets: [],
+    grenades: [],
     obstacles,
     pickups: [],
     bombs: [],

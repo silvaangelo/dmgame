@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup, Bomb, Lightning } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb, Lightning, Grenade } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
@@ -12,7 +12,7 @@ import {
 import { updatePlayerStats, addMatchHistory } from "./database.js";
 import { serialize } from "./protocol.js";
 
-const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
+const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3, sniper: 4, grenade_launcher: 5, dual_pistols: 6 };
 
 /* ================= KILL STREAKS ================= */
 
@@ -220,7 +220,15 @@ export function updateGame(game: Game) {
     if (enemy) {
       bulletsToRemove.add(bullet.id);
 
-      enemy.hp -= bullet.damage;
+      // Shield absorption
+      const shieldActive = Date.now() < enemy.shieldUntil;
+      if (shieldActive) {
+        // Shield absorbs damage — reduce shield time instead
+        enemy.shieldUntil -= 1500; // each hit drains 1.5s of shield
+        // Knockback still applies
+      } else {
+        enemy.hp -= bullet.damage;
+      }
 
       // Knockback — small push away from bullet direction
       const knockbackForce = 3;
@@ -292,10 +300,14 @@ export function updateGame(game: Game) {
       const dx = player.x - bomb.x;
       const dy = player.y - bomb.y;
       if (dx * dx + dy * dy < bombRadiusSq) {
-        player.hp -= GAME_CONFIG.BOMB_DAMAGE;
-        if (player.hp <= 0) {
-          player.hp = 0;
-          handleKill(undefined, player, "bomb", game);
+        if (Date.now() < player.shieldUntil) {
+          player.shieldUntil -= 1500;
+        } else {
+          player.hp -= GAME_CONFIG.BOMB_DAMAGE;
+          if (player.hp <= 0) {
+            player.hp = 0;
+            handleKill(undefined, player, "bomb", game);
+          }
         }
       }
     });
@@ -332,10 +344,14 @@ export function updateGame(game: Game) {
       const dx = player.x - lightning.x;
       const dy = player.y - lightning.y;
       if (dx * dx + dy * dy < lightningRadiusSq) {
-        player.hp -= GAME_CONFIG.LIGHTNING_DAMAGE;
-        if (player.hp <= 0) {
-          player.hp = 0;
-          handleKill(undefined, player, "lightning", game);
+        if (Date.now() < player.shieldUntil) {
+          player.shieldUntil -= 1500;
+        } else {
+          player.hp -= GAME_CONFIG.LIGHTNING_DAMAGE;
+          if (player.hp <= 0) {
+            player.hp = 0;
+            handleKill(undefined, player, "lightning", game);
+          }
         }
       }
     });
@@ -356,6 +372,84 @@ export function updateGame(game: Game) {
     );
   }
 
+  // Grenade physics
+  const grenadesToExplode: Grenade[] = [];
+  game.grenades.forEach((grenade) => {
+    grenade.x += grenade.dx;
+    grenade.y += grenade.dy;
+    // Slow down (friction)
+    grenade.dx *= 0.96;
+    grenade.dy *= 0.96;
+
+    // Bounce off walls
+    if (grenade.x < 0 || grenade.x > GAME_CONFIG.ARENA_WIDTH) grenade.dx *= -0.5;
+    if (grenade.y < 0 || grenade.y > GAME_CONFIG.ARENA_HEIGHT) grenade.dy *= -0.5;
+    grenade.x = Math.max(0, Math.min(GAME_CONFIG.ARENA_WIDTH, grenade.x));
+    grenade.y = Math.max(0, Math.min(GAME_CONFIG.ARENA_HEIGHT, grenade.y));
+
+    if (now - grenade.createdAt >= GAME_CONFIG.GRENADE_FUSE_TIME) {
+      grenadesToExplode.push(grenade);
+    }
+  });
+
+  const grenadeRadiusSq = GAME_CONFIG.GRENADE_RADIUS * GAME_CONFIG.GRENADE_RADIUS;
+  grenadesToExplode.forEach((grenade) => {
+    const shooter = game.players.find((p) => p.id === grenade.playerId);
+    game.players.forEach((player) => {
+      if (player.hp <= 0) return;
+      const dx = player.x - grenade.x;
+      const dy = player.y - grenade.y;
+      if (dx * dx + dy * dy < grenadeRadiusSq) {
+        // Shield absorption
+        if (Date.now() < player.shieldUntil) {
+          player.shieldUntil -= 1500;
+        } else {
+          player.hp -= GAME_CONFIG.GRENADE_DAMAGE;
+          if (player.hp <= 0) {
+            player.hp = 0;
+            handleKill(shooter, player, "grenade_launcher", game);
+          }
+        }
+      }
+    });
+
+    // Destroy nearby obstacles
+    game.obstacles.forEach((obs) => {
+      if (obs.destroyed) return;
+      const cx = obs.x + obs.size / 2;
+      const cy = obs.y + obs.size / 2;
+      const dx = cx - grenade.x;
+      const dy = cy - grenade.y;
+      if (dx * dx + dy * dy < grenadeRadiusSq) {
+        obs.destroyed = true;
+        broadcast(game, { type: "obstacleDestroyed", obstacleId: obs.id });
+      }
+    });
+
+    broadcast(game, {
+      type: "grenadeExploded",
+      id: grenade.id,
+      x: Math.round(grenade.x),
+      y: Math.round(grenade.y),
+      radius: GAME_CONFIG.GRENADE_RADIUS,
+    });
+  });
+
+  if (grenadesToExplode.length > 0) {
+    game.grenades = game.grenades.filter(
+      (g) => !grenadesToExplode.some((e) => e.id === g.id)
+    );
+  }
+
+  // Health regen tick
+  game.players.forEach((player) => {
+    if (player.hp <= 0) return;
+    if (now < player.regenUntil && now - player.lastRegenTick >= GAME_CONFIG.REGEN_TICK_INTERVAL) {
+      player.hp = Math.min(GAME_CONFIG.PLAYER_HP, player.hp + 1);
+      player.lastRegenTick = now;
+    }
+  });
+
   // Weapon code mapping (hoisted constant)
   const weaponCodeMap = WEAPON_CODE_MAP;
 
@@ -367,20 +461,23 @@ export function updateGame(game: Game) {
     Math.round(b.y),
     weaponCodeMap[b.weapon] ?? 0,
   ]);
-  const compactPickups = game.pickups.map((pk) => [
-    pk.id,
-    Math.round(pk.x),
-    Math.round(pk.y),
-    pk.type === "health" ? 0 : pk.type === "ammo" ? 1 : pk.type === "speed" ? 2 : 3,
+  const compactPickups = game.pickups.map((pk) => {
+    const PICKUP_TYPE_CODES: Record<string, number> = {
+      health: 0, ammo: 1, speed: 2, minigun: 3, shield: 4, invisibility: 5, regen: 6,
+    };
+    return [pk.id, Math.round(pk.x), Math.round(pk.y), PICKUP_TYPE_CODES[pk.type] ?? 0];
+  });
+  const compactGrenades = game.grenades.map((g) => [
+    g.id, Math.round(g.x), Math.round(g.y),
   ]);
   // Lightweight hash — avoid full JSON.stringify every tick
-  let stateHash = game.bullets.length + ":" + game.pickups.length;
+  let stateHash = game.bullets.length + ":" + game.pickups.length + ":" + game.grenades.length;
   for (const p of compactPlayers) {
     stateHash += ":" + (p as number[])[1] + "," + (p as number[])[2] + "," + (p as number[])[3] + "," + (p as number[])[9];
   }
 
   const lastHash = game.lastBroadcastState?.get("hash");
-  if (stateHash === lastHash && compactBullets.length === 0) {
+  if (stateHash === lastHash && compactBullets.length === 0 && compactGrenades.length === 0) {
     return;
   }
   game.lastBroadcastState?.set("hash", stateHash);
@@ -392,6 +489,7 @@ export function updateGame(game: Game) {
     p: compactPlayers,
     b: compactBullets,
     pk: compactPickups,
+    g: compactGrenades,
   });
 }
 
@@ -425,7 +523,12 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
         if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
 
         if (angleDiff < Math.PI / 2) {
-          target.hp -= GAME_CONFIG.KNIFE_DAMAGE;
+          // Shield absorption for knife
+          if (Date.now() < target.shieldUntil) {
+            target.shieldUntil -= 1500;
+          } else {
+            target.hp -= GAME_CONFIG.KNIFE_DAMAGE;
+          }
 
           // Knockback — push target away from attacker
           const knifeKnockback = 5;
@@ -469,6 +572,79 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
       createdAt: Date.now(),
     };
     game.bullets.push(bullet);
+    return;
+  }
+
+  // Sniper — high damage, slow fire, fast bullet
+  if (player.weapon === "sniper") {
+    const cooldown = GAME_CONFIG.SNIPER_COOLDOWN;
+    if (now - player.lastShotTime < cooldown) return;
+    if (player.shots <= 0) return;
+    player.lastShotTime = now;
+    player.shots--;
+    if (player.shots === 0) {
+      player.reloading = true;
+      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.RELOAD_TIME);
+    }
+    const bullet: Bullet = {
+      id: uuid(), x: player.x, y: player.y,
+      dx: dirX * GAME_CONFIG.SNIPER_BULLET_SPEED,
+      dy: dirY * GAME_CONFIG.SNIPER_BULLET_SPEED,
+      team: 0, playerId: player.id,
+      damage: GAME_CONFIG.SNIPER_DAMAGE, weapon: "sniper",
+      createdAt: Date.now(),
+    };
+    game.bullets.push(bullet);
+    return;
+  }
+
+  // Grenade Launcher — lobs a grenade projectile
+  if (player.weapon === "grenade_launcher") {
+    const cooldown = GAME_CONFIG.GRENADE_COOLDOWN;
+    if (now - player.lastShotTime < cooldown) return;
+    if (player.shots <= 0) return;
+    player.lastShotTime = now;
+    player.shots--;
+    if (player.shots === 0) {
+      player.reloading = true;
+      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.RELOAD_TIME);
+    }
+    const grenade: Grenade = {
+      id: uuid(), x: player.x, y: player.y,
+      dx: dirX * GAME_CONFIG.GRENADE_SPEED,
+      dy: dirY * GAME_CONFIG.GRENADE_SPEED,
+      playerId: player.id, createdAt: Date.now(),
+    };
+    game.grenades.push(grenade);
+    return;
+  }
+
+  // Dual Pistols — rapid fire with slight spread
+  if (player.weapon === "dual_pistols") {
+    const cooldown = GAME_CONFIG.DUAL_PISTOL_COOLDOWN;
+    if (now - player.lastShotTime < cooldown) return;
+    if (player.shots <= 0) return;
+    player.lastShotTime = now;
+    player.shots--;
+    if (player.shots === 0) {
+      player.reloading = true;
+      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.RELOAD_TIME);
+    }
+    // Fire two bullets with slight offset
+    const baseAngle = Math.atan2(dirY, dirX);
+    for (let i = 0; i < 2; i++) {
+      const spread = (i === 0 ? -1 : 1) * GAME_CONFIG.DUAL_PISTOL_SPREAD;
+      const angle = baseAngle + spread;
+      const bullet: Bullet = {
+        id: uuid(), x: player.x, y: player.y,
+        dx: Math.cos(angle) * GAME_CONFIG.BULLET_SPEED,
+        dy: Math.sin(angle) * GAME_CONFIG.BULLET_SPEED,
+        team: 0, playerId: player.id,
+        damage: GAME_CONFIG.DUAL_PISTOL_DAMAGE, weapon: "dual_pistols",
+        createdAt: Date.now(),
+      };
+      game.bullets.push(bullet);
+    }
     return;
   }
 
@@ -579,6 +755,16 @@ function applyPickup(player: Player, pickup: Pickup, game: Game) {
       player.minigunUntil = Date.now() + GAME_CONFIG.MINIGUN_DURATION;
       player.reloading = false;
       break;
+    case "shield":
+      player.shieldUntil = Date.now() + GAME_CONFIG.SHIELD_DURATION;
+      break;
+    case "invisibility":
+      player.invisibleUntil = Date.now() + GAME_CONFIG.INVISIBILITY_DURATION;
+      break;
+    case "regen":
+      player.regenUntil = Date.now() + GAME_CONFIG.REGEN_DURATION;
+      player.lastRegenTick = Date.now();
+      break;
   }
 
   broadcast(game, {
@@ -594,7 +780,7 @@ function applyPickup(player: Player, pickup: Pickup, game: Game) {
 export function spawnPickup(game: Game) {
   if (game.pickups.length >= GAME_CONFIG.MAX_PICKUPS) return;
 
-  const types: Array<"health" | "ammo" | "speed" | "minigun"> = ["health", "ammo", "speed", "minigun"];
+  const types: Array<"health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen"> = ["health", "ammo", "speed", "minigun", "shield", "invisibility", "regen"];
   const type = types[Math.floor(Math.random() * types.length)];
 
   let validPosition = false;
@@ -843,6 +1029,10 @@ export function respawnPlayer(player: Player, game: Game) {
   player.weapon = "machinegun";
   player.speedBoostUntil = 0;
   player.minigunUntil = 0;
+  player.shieldUntil = 0;
+  player.invisibleUntil = 0;
+  player.regenUntil = 0;
+  player.lastRegenTick = 0;
 
   // Safety: push player out of any overlapping obstacles
   const pr = GAME_CONFIG.PLAYER_RADIUS;

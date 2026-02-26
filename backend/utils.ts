@@ -43,6 +43,10 @@ export function serializePlayers(game: Game) {
 
 export function serializePlayersCompact(game: Game) {
   const now = Date.now();
+  const WEAPON_CODES: Record<string, number> = {
+    machinegun: 0, shotgun: 1, knife: 2, minigun: 3,
+    sniper: 4, grenade_launcher: 5, dual_pistols: 6,
+  };
   return game.players.map((p) => [
     p.id,
     Math.round(p.x * 10) / 10,
@@ -52,10 +56,13 @@ export function serializePlayersCompact(game: Game) {
     p.reloading ? 1 : 0,
     p.lastProcessedInput,
     Math.round(p.aimAngle * 100) / 100,
-    p.weapon === "machinegun" ? 0 : p.weapon === "shotgun" ? 1 : p.weapon === "knife" ? 2 : p.weapon === "minigun" ? 3 : 0,
+    WEAPON_CODES[p.weapon] ?? 0,
     p.kills,
     p.skin,
     now < p.speedBoostUntil ? 1 : 0,
+    now < p.shieldUntil ? 1 : 0,
+    now < p.invisibleUntil ? 1 : 0,
+    now < p.regenUntil ? 1 : 0,
   ]);
 }
 
