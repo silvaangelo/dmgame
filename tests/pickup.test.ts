@@ -161,7 +161,7 @@ describe("Pickup Collision Detection", () => {
 
   test("pickup collision uses combined radii", () => {
     const combinedRadius = GAME_CONFIG.PLAYER_RADIUS + GAME_CONFIG.PICKUP_RADIUS;
-    expect(combinedRadius).toBe(16 + 30); // 46 pixels
+    expect(combinedRadius).toBe(20 + 30); // 50 pixels
   });
 });
 

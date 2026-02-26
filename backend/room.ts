@@ -171,6 +171,9 @@ export function createRoom(player: Player): Room | null {
     timeRemaining: GAME_CONFIG.ROOM_READY_TIMEOUT,
   };
 
+  // First player in a fresh room — assign skin 0 (guaranteed unique)
+  player.skin = 0;
+
   rooms.set(room.id, room);
 
   const tracked = allPlayers.get(player.id);
@@ -209,6 +212,15 @@ export function joinRoom(player: Player, roomId: string): boolean {
 
   room.players.push(player);
   player.ready = false;
+
+  // Auto-assign a unique skin so no two players share the same color
+  const takenSkins = new Set(room.players.filter(p => p.id !== player.id).map(p => p.skin));
+  for (let s = 0; s < 8; s++) {
+    if (!takenSkins.has(s)) {
+      player.skin = s;
+      break;
+    }
+  }
 
   const tracked = allPlayers.get(player.id);
   if (tracked) tracked.status = "in-room";

@@ -16,7 +16,7 @@ function esc(str) {
 const GAME_CONFIG = {
   ARENA_WIDTH: 1400,
   ARENA_HEIGHT: 900,
-  PLAYER_RADIUS: 16,
+  PLAYER_RADIUS: 20,
   PLAYER_SPEED: 8,
   SHOTS_PER_MAGAZINE: 30,
   MAX_BLOOD_STAINS: 150,
@@ -1934,11 +1934,17 @@ function setupWsMessageHandler() {
 
     if (data.type === "roomJoined") {
       currentRoomData = data.room;
+      // Sync selectedSkin with the server-assigned skin
+      const localInRoom = data.room.players.find((p) => p.id === playerId);
+      if (localInRoom && localInRoom.skin !== undefined) selectedSkin = localInRoom.skin;
       showRoomScreen(data.room);
     }
 
     if (data.type === "roomUpdate") {
       currentRoomData = data.room;
+      // Keep selectedSkin in sync with server
+      const localInUpdate = data.room.players.find((p) => p.id === playerId);
+      if (localInUpdate && localInUpdate.skin !== undefined) selectedSkin = localInUpdate.skin;
       updateRoomScreen(data.room);
       initSkinSelector();
     }
@@ -4402,7 +4408,7 @@ function render() {
       ctx.strokeStyle = "rgba(68, 136, 255, 0.4)";
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 18, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 24, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -4412,11 +4418,11 @@ function render() {
       ctx.strokeStyle = `rgba(100, 200, 255, ${shieldPulse + 0.3})`;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 26, 0, Math.PI * 2);
       ctx.stroke();
       ctx.fillStyle = `rgba(100, 200, 255, ${shieldPulse * 0.3})`;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 26, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -4432,12 +4438,12 @@ function render() {
       const regenPulse = 0.3 + Math.sin(Date.now() / 300) * 0.2;
       ctx.fillStyle = `rgba(50, 255, 100, ${regenPulse * 0.2})`;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 28, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = `rgba(50, 255, 100, ${regenPulse})`;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 28, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -4521,18 +4527,18 @@ function render() {
     // Player body - outer ring
     ctx.fillStyle = darkColor;
     ctx.beginPath();
-    ctx.arc(renderX, renderY, 13, 0, Math.PI * 2);
+    ctx.arc(renderX, renderY, 16, 0, Math.PI * 2);
     ctx.fill();
 
     // Player body - inner
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(renderX, renderY, 10, 0, Math.PI * 2);
+    ctx.arc(renderX, renderY, 13, 0, Math.PI * 2);
     ctx.fill();
 
     // First character initial on the ball
     if (p.username) {
-      ctx.font = "bold 12px 'Rajdhani', sans-serif";
+      ctx.font = "bold 14px 'Rajdhani', sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(255,255,255,0.9)";
@@ -4540,20 +4546,38 @@ function render() {
       ctx.textBaseline = "alphabetic";
     }
 
-    // Highlight for local player
+    // Prominent highlight for local player — pulsing glow ring + arrow
     if (p.id === playerId) {
-      ctx.strokeStyle = "#ffaa44";
+      const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300);
+      // Outer glow
+      ctx.strokeStyle = `rgba(255, 170, 68, ${pulse * 0.4})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner ring
+      ctx.strokeStyle = `rgba(255, 200, 80, ${0.5 + pulse * 0.5})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 16, 0, Math.PI * 2);
+      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
       ctx.stroke();
+      // Bouncing arrow pointing down at the player
+      const bounce = Math.sin(Date.now() / 250) * 3;
+      const arrowY = renderY - 42 + bounce;
+      ctx.fillStyle = `rgba(255, 200, 80, ${0.7 + pulse * 0.3})`;
+      ctx.beginPath();
+      ctx.moveTo(renderX, arrowY + 8);
+      ctx.lineTo(renderX - 6, arrowY);
+      ctx.lineTo(renderX + 6, arrowY);
+      ctx.closePath();
+      ctx.fill();
     }
 
     // Health bar above player
-    const barWidth = 30;
-    const barHeight = 4;
+    const barWidth = 36;
+    const barHeight = 5;
     const barX = renderX - barWidth / 2;
-    const barY = renderY - 24;
+    const barY = renderY - 28;
     const hpPercent = p.hp / 4;
 
     // Background
@@ -4571,16 +4595,16 @@ function render() {
     ctx.textAlign = "center";
     // Shadow for readability
     ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillText(p.username, renderX + 1, renderY - 30);
+    ctx.fillText(p.username, renderX + 1, renderY - 34);
     ctx.fillStyle = p.id === playerId ? "#ffcc66" : "#e0ece0";
-    ctx.fillText(p.username, renderX, renderY - 31);
+    ctx.fillText(p.username, renderX, renderY - 35);
     ctx.textAlign = "start";
 
     // Bounty skull on the leading player
     if (bountyLeaderId === p.id) {
       ctx.font = "16px serif";
       ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, renderY - 48);
+      ctx.fillText("💀", renderX, renderY - 54);
       ctx.textAlign = "start";
     }
 
