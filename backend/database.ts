@@ -67,16 +67,21 @@ export function initDatabase() {
   }
 }
 
+let statsSaveTimer: NodeJS.Timeout | null = null;
 function saveStats() {
-  const obj: Record<string, PlayerStats> = {};
-  stats.forEach((v, k) => {
-    obj[k] = v;
-  });
-  try {
-    fs.writeFileSync(STATS_FILE, JSON.stringify(obj, null, 2));
-  } catch (error) {
-    console.error("Failed to save stats:", error);
-  }
+  if (statsSaveTimer) return;
+  statsSaveTimer = setTimeout(() => {
+    statsSaveTimer = null;
+    const obj: Record<string, PlayerStats> = {};
+    stats.forEach((v, k) => {
+      obj[k] = v;
+    });
+    try {
+      fs.writeFileSync(STATS_FILE, JSON.stringify(obj));
+    } catch (error) {
+      console.error("Failed to save stats:", error);
+    }
+  }, 2000);
 }
 
 export function getPlayerStats(username: string): PlayerStats {
@@ -112,12 +117,17 @@ export function getLeaderboard(limit: number = 10): PlayerStats[] {
     .slice(0, limit);
 }
 
+let historySaveTimer: NodeJS.Timeout | null = null;
 function saveHistory() {
-  try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(matchHistory, null, 2));
-  } catch (error) {
-    console.error("Failed to save match history:", error);
-  }
+  if (historySaveTimer) return;
+  historySaveTimer = setTimeout(() => {
+    historySaveTimer = null;
+    try {
+      fs.writeFileSync(HISTORY_FILE, JSON.stringify(matchHistory));
+    } catch (error) {
+      console.error("Failed to save match history:", error);
+    }
+  }, 2000);
 }
 
 export function addMatchHistory(entry: MatchHistoryEntry) {
@@ -136,16 +146,21 @@ export function getMatchHistory(username: string, limit: number = 10): MatchHist
 
 /* ================= USER REGISTRATION ================= */
 
+let usersSaveTimer: NodeJS.Timeout | null = null;
 function saveUsers() {
-  const obj: Record<string, RegisteredUser> = {};
-  users.forEach((v, k) => {
-    obj[k] = v;
-  });
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(obj, null, 2));
-  } catch (error) {
-    console.error("Failed to save users:", error);
-  }
+  if (usersSaveTimer) return;
+  usersSaveTimer = setTimeout(() => {
+    usersSaveTimer = null;
+    const obj: Record<string, RegisteredUser> = {};
+    users.forEach((v, k) => {
+      obj[k] = v;
+    });
+    try {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(obj));
+    } catch (error) {
+      console.error("Failed to save users:", error);
+    }
+  }, 2000);
 }
 
 function generateToken(username: string): string {

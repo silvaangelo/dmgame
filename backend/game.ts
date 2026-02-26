@@ -1,4 +1,4 @@
-import { v4 as uuid } from "uuid";
+import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
 import type { Player, Bullet, Game, Pickup, Bomb, Lightning } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
@@ -10,6 +10,8 @@ import {
   debouncedBroadcastOnlineList,
 } from "./utils.js";
 import { updatePlayerStats, addMatchHistory, getMatchHistory } from "./database.js";
+
+const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
 
 /* ================= KILL STREAKS ================= */
 
@@ -211,12 +213,14 @@ export function updateGame(game: Game) {
     }
 
     // Use slightly generous hit detection for bullets
-    const hitRadius = GAME_CONFIG.PLAYER_RADIUS * 1.2;
+    const hitRadiusSq = (GAME_CONFIG.PLAYER_RADIUS * 1.2) ** 2;
     const enemy = game.players.find(
-      (p) =>
-        p.id !== bullet.playerId &&
-        p.hp > 0 &&
-        Math.hypot(p.x - bullet.x, p.y - bullet.y) < hitRadius
+      (p) => {
+        if (p.id === bullet.playerId || p.hp <= 0) return false;
+        const bdx = p.x - bullet.x;
+        const bdy = p.y - bullet.y;
+        return bdx * bdx + bdy * bdy < hitRadiusSq;
+      }
     );
 
     if (enemy) {
@@ -255,11 +259,12 @@ export function updateGame(game: Game) {
   game.players.forEach((player) => {
     if (player.hp <= 0) return;
     const pickupsToRemove: string[] = [];
+    const pickupCollisionDist = GAME_CONFIG.PLAYER_RADIUS + GAME_CONFIG.PICKUP_RADIUS;
+    const pickupCollisionDistSq = pickupCollisionDist * pickupCollisionDist;
     game.pickups.forEach((pickup) => {
       const dx = player.x - pickup.x;
       const dy = player.y - pickup.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < GAME_CONFIG.PLAYER_RADIUS + GAME_CONFIG.PICKUP_RADIUS) {
+      if (dx * dx + dy * dy < pickupCollisionDistSq) {
         pickupsToRemove.push(pickup.id);
         applyPickup(player, pickup, game);
       }
@@ -277,14 +282,14 @@ export function updateGame(game: Game) {
     }
   });
 
+  const bombRadiusSq = GAME_CONFIG.BOMB_RADIUS * GAME_CONFIG.BOMB_RADIUS;
   bombsToExplode.forEach((bomb) => {
     // Damage players in radius
     game.players.forEach((player) => {
       if (player.hp <= 0) return;
       const dx = player.x - bomb.x;
       const dy = player.y - bomb.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < GAME_CONFIG.BOMB_RADIUS) {
+      if (dx * dx + dy * dy < bombRadiusSq) {
         player.hp -= GAME_CONFIG.BOMB_DAMAGE;
         if (player.hp <= 0) {
           player.hp = 0;
@@ -317,14 +322,14 @@ export function updateGame(game: Game) {
     }
   });
 
+  const lightningRadiusSq = GAME_CONFIG.LIGHTNING_RADIUS * GAME_CONFIG.LIGHTNING_RADIUS;
   lightningsToStrike.forEach((lightning) => {
     // Damage players in radius
     game.players.forEach((player) => {
       if (player.hp <= 0) return;
       const dx = player.x - lightning.x;
       const dy = player.y - lightning.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < GAME_CONFIG.LIGHTNING_RADIUS) {
+      if (dx * dx + dy * dy < lightningRadiusSq) {
         player.hp -= GAME_CONFIG.LIGHTNING_DAMAGE;
         if (player.hp <= 0) {
           player.hp = 0;
@@ -349,8 +354,8 @@ export function updateGame(game: Game) {
     );
   }
 
-  // Weapon code mapping
-  const weaponCodeMap: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
+  // Weapon code mapping (hoisted constant)
+  const weaponCodeMap = WEAPON_CODE_MAP;
 
   // Delta detection
   const compactPlayers = serializePlayersCompact(game);
@@ -404,14 +409,14 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
     player.lastShotTime = now;
 
     const meleeRange = GAME_CONFIG.KNIFE_RANGE;
+    const meleeRangeSq = meleeRange * meleeRange;
     game.players.forEach((target) => {
       if (target.id === player.id || target.hp <= 0) return;
 
       const dx = target.x - player.x;
       const dy = target.y - player.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
 
-      if (distance <= meleeRange) {
+      if (dx * dx + dy * dy <= meleeRangeSq) {
         const targetAngle = Math.atan2(dy, dx);
         const playerAngle = Math.atan2(dirY, dirX);
         let angleDiff = Math.abs(targetAngle - playerAngle);
@@ -623,34 +628,37 @@ export function spawnPickup(game: Game) {
 /* ================= BOMBS ================= */
 
 export function spawnBomb(game: Game) {
-  let validPosition = false;
-  let attempts = 0;
-  let bombX = 0;
-  let bombY = 0;
+  const count = 2 + Math.floor(Math.random() * 3); // 2–4 bombs per spawn
+  for (let i = 0; i < count; i++) {
+    let validPosition = false;
+    let attempts = 0;
+    let bombX = 0;
+    let bombY = 0;
 
-  while (!validPosition && attempts < 20) {
-    bombX = 60 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 120);
-    bombY = 60 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 120);
+    while (!validPosition && attempts < 20) {
+      bombX = 60 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 120);
+      bombY = 60 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 120);
 
-    validPosition = isPositionClear(bombX, bombY, game.obstacles, 20);
-    attempts++;
-  }
+      validPosition = isPositionClear(bombX, bombY, game.obstacles, 20);
+      attempts++;
+    }
 
-  if (validPosition) {
-    const bomb: Bomb = {
-      id: uuid(),
-      x: bombX,
-      y: bombY,
-      createdAt: Date.now(),
-    };
-    game.bombs.push(bomb);
+    if (validPosition) {
+      const bomb: Bomb = {
+        id: uuid(),
+        x: bombX,
+        y: bombY,
+        createdAt: Date.now(),
+      };
+      game.bombs.push(bomb);
 
-    broadcast(game, {
-      type: "bombSpawned",
-      id: bomb.id,
-      x: Math.round(bomb.x),
-      y: Math.round(bomb.y),
-    });
+      broadcast(game, {
+        type: "bombSpawned",
+        id: bomb.id,
+        x: Math.round(bomb.x),
+        y: Math.round(bomb.y),
+      });
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { v4 as uuid } from "uuid";
+import { randomUUID as uuid } from "crypto";
 import type { Player } from "./types.js";
 import { GAME_CONFIG, WEAPON_CYCLE } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";

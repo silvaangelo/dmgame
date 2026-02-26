@@ -1,4 +1,4 @@
-import { v4 as uuid } from "uuid";
+import { randomUUID as uuid } from "crypto";
 import type { Obstacle, Game, Room } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { rooms, games, allPlayers } from "./state.js";

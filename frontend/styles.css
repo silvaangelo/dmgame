@@ -152,8 +152,8 @@ canvas {
 
 #menu h2 {
   color: #f0f0f0;
-  margin-bottom: 6px;
-  font-size: 40px;
+  margin-bottom: 12px;
+  font-size: 46px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 2px;
@@ -162,10 +162,10 @@ canvas {
 
 #menu input {
   width: 100%;
-  padding: 14px 18px;
+  padding: 16px 18px;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 20px;
+  font-size: 22px;
   font-family: 'Share Tech Mono', monospace;
   margin-bottom: 16px;
   background: rgba(0, 0, 0, 0.35);
@@ -185,12 +185,12 @@ canvas {
 
 #menu button {
   width: 100%;
-  padding: 16px 28px;
+  padding: 18px 28px;
   background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%);
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -241,12 +241,12 @@ canvas {
 
 #roomListScreen button {
   width: 100%;
-  padding: 14px 28px;
+  padding: 16px 28px;
   background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%);
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -323,12 +323,12 @@ canvas {
 }
 
 #roomScreen button {
-  padding: 14px 32px;
+  padding: 16px 32px;
   background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%);
   color: #f0f0f0;
   border: 1px solid #4a6a4a;
   border-radius: 2px;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   font-family: 'Rajdhani', sans-serif;
   cursor: pointer;
@@ -533,7 +533,7 @@ canvas {
 /* Kills section */
 .hud-kills #killsDisplay {
   color: #ffaa44;
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(255, 170, 68, 0.3);
@@ -589,7 +589,7 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
   text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
   z-index: 1;
@@ -603,7 +603,7 @@ canvas {
 
 .hud-weapon #shotsDisplay {
   color: #eef0ee;
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   letter-spacing: 1px;
   text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
@@ -616,13 +616,13 @@ canvas {
 
 .hud-status #cooldownDisplay {
   color: #ffbb55;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 600;
 }
 
 .hud-status #reloadDisplay {
   color: #ff6b35;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   animation: reloadBlink 0.6s ease-in-out infinite;
 }
@@ -634,7 +634,7 @@ canvas {
 
 .hud-status #speedBoostDisplay {
   color: #44bbff;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
   animation: speedGlow 0.5s ease-in-out infinite;
@@ -689,7 +689,7 @@ canvas {
 }
 
 #victoryMessage {
-  font-size: 52px;
+  font-size: 58px;
   margin: 0 0 8px 0;
   color: #ff6b35;
   font-weight: 800;
@@ -865,11 +865,11 @@ canvas {
 
 .kill-entry {
   background: rgba(12, 18, 12, 0.92);
-  padding: 6px 16px;
+  padding: 8px 18px;
   border-radius: 3px;
   border: 1px solid rgba(58, 90, 58, 0.6);
   font-family: 'Share Tech Mono', monospace;
-  font-size: 16px;
+  font-size: 18px;
   color: #c0d0c0;
   white-space: nowrap;
   backdrop-filter: blur(6px);

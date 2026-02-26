@@ -28,6 +28,7 @@ RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=512"
 
 # Install only production deps
 COPY package.json pnpm-lock.yaml* ./

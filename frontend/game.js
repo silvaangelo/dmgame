@@ -77,6 +77,32 @@ let activeBombs = [];
 let activeLightnings = [];
 let flashbangOverlay = { alpha: 0 }; // White screen flash for lightning
 
+// Cached DOM elements (avoid getElementById in hot paths)
+let _cachedDOM = null;
+function getCachedDOM() {
+  if (!_cachedDOM) {
+    _cachedDOM = {
+      killsDisplay: document.getElementById("killsDisplay"),
+      shotsDisplay: document.getElementById("shotsDisplay"),
+      healthDisplay: document.getElementById("healthDisplay"),
+      cooldownDisplay: document.getElementById("cooldownDisplay"),
+      reloadDisplay: document.getElementById("reloadDisplay"),
+      hpBarFill: document.getElementById("hpBarFill"),
+      speedBoostDisplay: document.getElementById("speedBoostDisplay"),
+      killFeed: document.getElementById("killFeed"),
+      playerListContent: document.getElementById("playerListContent"),
+    };
+  }
+  return _cachedDOM;
+}
+
+// Pre-rendered obstacle canvas (static, invalidated only on destroy)
+let obstacleCanvas = null;
+let obstacleCanvasDirty = true;
+
+// Kill feed dirty flag (avoid innerHTML comparison)
+let killFeedDirty = true;
+
 // Screen shake
 let screenShake = { intensity: 0, decay: 0.92 };
 let killFeedEntries = [];
@@ -735,6 +761,11 @@ function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   loadAudioBuffer("shot", `${assetBase}/assets/shot.wav`);
+  loadAudioBuffer("shot-1", `${assetBase}/assets/shot/shot-1.mp3`);
+  loadAudioBuffer("shot-2", `${assetBase}/assets/shot/shot-2.mp3`);
+  loadAudioBuffer("shot-3", `${assetBase}/assets/shot/shot-3.mp3`);
+  loadAudioBuffer("shot-4", `${assetBase}/assets/shot/shot-4.mp3`);
+  loadAudioBuffer("shot-5", `${assetBase}/assets/shot/shot-5.wav`);
   loadAudioBuffer("reload", `${assetBase}/assets/reload.ogg`);
   loadAudioBuffer("scream", `${assetBase}/assets/scream.wav`);
   loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
@@ -743,6 +774,11 @@ function initAudio() {
   loadAudioBuffer("lightning", `${assetBase}/assets/lightning-strike.mp3`);
   loadAudioBuffer("matchwin", `${assetBase}/assets/match-win.mp3`);
   loadAudioBuffer("matchlose", `${assetBase}/assets/match-lose.mp3`);
+  loadAudioBuffer("bomb-1", `${assetBase}/assets/bombs/bomb-1.mp3`);
+  loadAudioBuffer("bomb-2", `${assetBase}/assets/bombs/bomb-2.mp3`);
+  loadAudioBuffer("bomb-3", `${assetBase}/assets/bombs/bomb-3.mp3`);
+  loadAudioBuffer("bomb-4", `${assetBase}/assets/bombs/bomb-4.mp3`);
+  loadAudioBuffer("bomb-5", `${assetBase}/assets/bombs/bomb-5.mp3`);
 }
 
 async function loadAudioBuffer(name, url) {
@@ -948,7 +984,7 @@ function updatePlayerList() {
   if (now - lastPlayerListUpdate < 250) return;
   lastPlayerListUpdate = now;
 
-  const listContent = document.getElementById("playerListContent");
+  const listContent = getCachedDOM().playerListContent;
   if (!listContent) return;
 
   const playerHTML = players
@@ -1352,6 +1388,8 @@ function setupWsMessageHandler() {
       obstacles = data.obstacles || [];
       playerId = players.find((p) => p.username === loggedInUsername).id;
       gameReady = false;
+      obstacleCanvasDirty = true;
+      _cachedDOM = null; // Refresh cached DOM references
 
       // Update arena dimensions from server
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
@@ -1475,6 +1513,7 @@ function setupWsMessageHandler() {
       // Add new obstacle spawned during the game
       if (data.obstacle) {
         obstacles.push(data.obstacle);
+        obstacleCanvasDirty = true;
         console.log("🌳 New obstacle spawned!");
       }
     }
@@ -1488,6 +1527,7 @@ function setupWsMessageHandler() {
           obstacle.y + obstacle.size / 2,
         );
         obstacle.destroyed = true;
+        obstacleCanvasDirty = true;
       }
     }
 
@@ -1756,16 +1796,17 @@ function setupWsMessageHandler() {
       // Detect new bullets for weapon-specific positional audio
       parsedBullets.forEach((b) => {
         if (!previousBulletPositions.has(b.id)) {
+          const shotSound = "shot-" + (1 + Math.floor(Math.random() * 5));
           if (b.weapon === "shotgun") {
-            playPositionalSound("shot", b.x, b.y, 0.45, 0.8);
+            playPositionalSound(shotSound, b.x, b.y, 0.45, 0.8 + Math.random() * 0.15);
           } else {
-            playPositionalSound("shot", b.x, b.y, 0.25, 1.3);
+            playPositionalSound(shotSound, b.x, b.y, 0.25, 1.1 + Math.random() * 0.3);
           }
         }
       });
 
       // Update bullet position tracking
-      previousBulletPositions = new Map();
+      previousBulletPositions.clear();
       parsedBullets.forEach((b) =>
         previousBulletPositions.set(b.id, { x: b.x, y: b.y }),
       );
@@ -1922,10 +1963,13 @@ function setupWsMessageHandler() {
           activeLightnings = [];
           lightningBolts = [];
           flashbangOverlay = { alpha: 0 };
-          previousBulletPositions = new Map();
+          previousBulletPositions.clear();
           screenShake = { intensity: 0, decay: 0.92 };
           currentRoomData = null;
           killFeedEntries = [];
+          killFeedDirty = true;
+          obstacleCanvasDirty = true;
+          _cachedDOM = null;
           previousPlayerStates.clear();
           gameReady = false;
 
@@ -2213,12 +2257,13 @@ function updateShotUI() {
   const player = players.find((p) => p.id === playerId);
   if (!player) return;
 
-  const killsDisplay = document.getElementById("killsDisplay");
-  const shotsDisplay = document.getElementById("shotsDisplay");
-  const healthDisplay = document.getElementById("healthDisplay");
-  const cooldownDisplay = document.getElementById("cooldownDisplay");
-  const reloadDisplay = document.getElementById("reloadDisplay");
-  const hpBarFill = document.getElementById("hpBarFill");
+  const dom = getCachedDOM();
+  const killsDisplay = dom.killsDisplay;
+  const shotsDisplay = dom.shotsDisplay;
+  const healthDisplay = dom.healthDisplay;
+  const cooldownDisplay = dom.cooldownDisplay;
+  const reloadDisplay = dom.reloadDisplay;
+  const hpBarFill = dom.hpBarFill;
 
   // Update kills progress
   if (killsDisplay) {
@@ -2287,7 +2332,7 @@ function updateShotUI() {
   }
 
   // Show speed boost status
-  const speedBoostDisplay = document.getElementById("speedBoostDisplay");
+  const speedBoostDisplay = dom.speedBoostDisplay;
   if (speedBoostDisplay) {
     const parts = [];
     if (player.speedBoosted) parts.push("⚡ TURBO!");
@@ -2721,6 +2766,7 @@ function addKillFeedEntry(killer, victim, weapon) {
   const entry = { killer, victim, icon, timestamp: Date.now() };
   killFeedEntries.push(entry);
   if (killFeedEntries.length > KILL_FEED_MAX) killFeedEntries.shift();
+  killFeedDirty = true;
   renderKillFeed();
 }
 
@@ -2730,13 +2776,18 @@ function renderKillFeed() {
   if (now - lastKillFeedRender < 250) return;
   lastKillFeedRender = now;
 
-  const container = document.getElementById("killFeed");
+  const container = getCachedDOM().killFeed;
   if (!container) return;
+  const prevLen = killFeedEntries.length;
   killFeedEntries = killFeedEntries.filter(
     (e) => now - e.timestamp < KILL_FEED_DURATION,
   );
+  const entriesChanged = killFeedEntries.length !== prevLen;
 
-  // Only rebuild if count changed (avoids blinking from innerHTML replacement)
+  // Only rebuild if entries changed
+  if (!killFeedDirty && !entriesChanged) return;
+  killFeedDirty = false;
+
   const newHTML = killFeedEntries
     .map((e) => {
       const age = now - e.timestamp;
@@ -2760,9 +2811,7 @@ function renderKillFeed() {
     })
     .join("");
 
-  if (container.innerHTML !== newHTML) {
-    container.innerHTML = newHTML;
-  }
+  container.innerHTML = newHTML;
 }
 
 // ===== TOAST NOTIFICATIONS =====
@@ -2878,32 +2927,10 @@ function showLeaderboard(stats) {
 // ===== GRENADE & PICKUP EFFECTS =====
 
 function playGrenadeExplosionSound(x, y) {
-  if (!audioCtx) return;
-  if (audioCtx.state === "suspended") audioCtx.resume();
-
-  const dx = x - predictedX;
-  const dy = y - predictedY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  const maxHearingDist = 600;
-  const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
-  const attenuation = distanceFactor * distanceFactor;
-  const baseVolume = 0.05 + 0.95 * attenuation;
-
-  const osc = audioCtx.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.setValueAtTime(60, audioCtx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 0.3);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.4 * baseVolume, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-  const panVal = Math.max(-1, Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)));
-  const panner = audioCtx.createStereoPanner();
-  panner.pan.value = panVal;
-  osc.connect(gain);
-  gain.connect(panner);
-  panner.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + 0.4);
+  const bombIndex = 1 + Math.floor(Math.random() * 5); // 1–5
+  const soundName = "bomb-" + bombIndex;
+  const rate = 0.9 + Math.random() * 0.2; // slight pitch variation
+  playPositionalSound(soundName, x, y, 0.8, rate);
 }
 
 function playPickupSound() {
@@ -3124,6 +3151,7 @@ function createBombExplosion(x, y, radius) {
     frame: 0,
     shockwave: 0,
   });
+  if (bombExplosions.length > 12) bombExplosions = bombExplosions.slice(-12);
 }
 
 function updateBombExplosions() {
@@ -3197,6 +3225,7 @@ function createLightningStrike(x, y, radius) {
     timestamp: Date.now(),
     duration: 400,
   });
+  if (lightningBolts.length > 8) lightningBolts = lightningBolts.slice(-8);
 }
 
 function renderLightningWarnings() {
@@ -3346,6 +3375,47 @@ function ensureGridCanvas() {
   }
 }
 
+function ensureObstacleCanvas() {
+  if (obstacleCanvas && !obstacleCanvasDirty) return;
+  if (!obstacleCanvas) {
+    obstacleCanvas = document.createElement("canvas");
+    obstacleCanvas.width = GAME_CONFIG.ARENA_WIDTH;
+    obstacleCanvas.height = GAME_CONFIG.ARENA_HEIGHT;
+  }
+  const oc = obstacleCanvas.getContext("2d");
+  oc.clearRect(0, 0, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT);
+  obstacles.forEach((obstacle) => {
+    if (obstacle.destroyed) return;
+    if (obstacle.type === "tree") {
+      oc.fillStyle = "#5a4a2a";
+      oc.fillRect(obstacle.x + obstacle.size * 0.4, obstacle.y + obstacle.size * 0.5, obstacle.size * 0.2, obstacle.size * 0.5);
+      oc.fillStyle = "#2a5a2a";
+      oc.beginPath();
+      oc.arc(obstacle.x + obstacle.size * 0.5, obstacle.y + obstacle.size * 0.3, obstacle.size * 0.35, 0, Math.PI * 2);
+      oc.fill();
+      oc.fillStyle = "#2a6a2a";
+      oc.beginPath();
+      oc.arc(obstacle.x + obstacle.size * 0.3, obstacle.y + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
+      oc.fill();
+      oc.beginPath();
+      oc.arc(obstacle.x + obstacle.size * 0.7, obstacle.y + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
+      oc.fill();
+    } else {
+      oc.fillStyle = "#555545";
+      oc.fillRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
+      oc.strokeStyle = "#444434";
+      oc.lineWidth = 1;
+      oc.strokeRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
+      oc.strokeStyle = "#666656";
+      oc.beginPath();
+      oc.moveTo(obstacle.x + 2, obstacle.y + obstacle.size / 2);
+      oc.lineTo(obstacle.x + obstacle.size - 2, obstacle.y + obstacle.size / 2);
+      oc.stroke();
+    }
+  });
+  obstacleCanvasDirty = false;
+}
+
 // Update interpolated positions for smooth movement
 function updateInterpolation() {
   playerTargets.forEach((target) => {
@@ -3358,6 +3428,9 @@ function updateInterpolation() {
 }
 
 function render() {
+  const frameNow = Date.now();
+  const framePlayer = players.find((p) => p.id === playerId);
+
   // Draw cached grid background (no per-frame line drawing)
   ensureGridCanvas();
   ctx.drawImage(gridCanvas, 0, 0);
@@ -3387,16 +3460,14 @@ function render() {
   updateFlashbang();
 
   // Dust clouds when local player moves
-  const dustNow = Date.now();
-  const dustPlayer = players.find((p) => p.id === playerId);
   if (
-    dustPlayer &&
-    dustPlayer.hp > 0 &&
+    framePlayer &&
+    framePlayer.hp > 0 &&
     (currentKeys.w || currentKeys.a || currentKeys.s || currentKeys.d)
   ) {
-    if (dustNow - lastDustTime > 120) {
+    if (frameNow - lastDustTime > 120) {
       createDustCloud(predictedX, predictedY);
-      lastDustTime = dustNow;
+      lastDustTime = frameNow;
     }
   }
 
@@ -3420,73 +3491,9 @@ function render() {
   // Render dust clouds (ground level)
   renderDustClouds();
 
-  // Render obstacles
-  obstacles.forEach((obstacle) => {
-    if (!obstacle.destroyed) {
-      if (obstacle.type === "tree") {
-        // Tree trunk
-        ctx.fillStyle = "#5a4a2a";
-        ctx.fillRect(
-          obstacle.x + obstacle.size * 0.4,
-          obstacle.y + obstacle.size * 0.5,
-          obstacle.size * 0.2,
-          obstacle.size * 0.5,
-        );
-
-        // Foliage
-        ctx.fillStyle = "#2a5a2a";
-        ctx.beginPath();
-        ctx.arc(
-          obstacle.x + obstacle.size * 0.5,
-          obstacle.y + obstacle.size * 0.3,
-          obstacle.size * 0.35,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-
-        ctx.fillStyle = "#2a6a2a";
-        ctx.beginPath();
-        ctx.arc(
-          obstacle.x + obstacle.size * 0.3,
-          obstacle.y + obstacle.size * 0.4,
-          obstacle.size * 0.25,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(
-          obstacle.x + obstacle.size * 0.7,
-          obstacle.y + obstacle.size * 0.4,
-          obstacle.size * 0.25,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-      } else {
-        // Concrete block
-        ctx.fillStyle = "#555545";
-        ctx.fillRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
-
-        // Edges
-        ctx.strokeStyle = "#444434";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
-
-        // Crack texture
-        ctx.strokeStyle = "#666656";
-        ctx.beginPath();
-        ctx.moveTo(obstacle.x + 2, obstacle.y + obstacle.size / 2);
-        ctx.lineTo(
-          obstacle.x + obstacle.size - 2,
-          obstacle.y + obstacle.size / 2,
-        );
-        ctx.stroke();
-      }
-    }
-  });
+  // Render obstacles from cached offscreen canvas
+  ensureObstacleCanvas();
+  ctx.drawImage(obstacleCanvas, 0, 0);
 
   // Render pickups
   renderPickups();
@@ -3712,8 +3719,7 @@ function render() {
   renderDamageIndicators();
 
   // Render crosshair
-  const player = players.find((p) => p.id === playerId);
-  if (player) {
+  if (framePlayer) {
     // Tactical crosshair
     ctx.strokeStyle = "rgba(255,170,68,0.8)";
     ctx.lineWidth = 1.5;
