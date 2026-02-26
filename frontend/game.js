@@ -1195,9 +1195,9 @@ function loadSavedToken() {
 
 async function checkExistingSession() {
   const savedToken = loadSavedToken();
+  if (!savedToken) return null;
   try {
-    const url = savedToken ? `/api/session?token=${savedToken}` : "/api/session";
-    const res = await fetch(url);
+    const res = await fetch(`/api/session?token=${savedToken}`);
     const data = await res.json();
     if (data.username && data.token) {
       saveSession(data.token, data.username);

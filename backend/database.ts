@@ -9,7 +9,6 @@ const HISTORY_FILE = path.join(DATA_DIR, "history.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 const MAX_HISTORY_ENTRIES = 50;
-const MAX_IPS_PER_USER = 300;
 
 let stats: Map<string, PlayerStats> = new Map();
 let matchHistory: MatchHistoryEntry[] = [];
@@ -169,12 +168,11 @@ function generateToken(username: string): string {
   return hash.digest("hex");
 }
 
-export function registerUser(username: string, ip: string): RegisteredUser {
+export function registerUser(username: string): RegisteredUser {
   // Check if username already exists
   for (const user of users.values()) {
     if (user.username.toLowerCase() === username.toLowerCase()) {
-      // Update IP list and lastSeen
-      trackUserIp(user.token, ip);
+      user.lastSeen = Date.now();
       return user;
     }
   }
@@ -184,7 +182,6 @@ export function registerUser(username: string, ip: string): RegisteredUser {
   const user: RegisteredUser = {
     username,
     token,
-    ips: ip ? [ip] : [],
     createdAt: Date.now(),
     lastSeen: Date.now(),
   };
@@ -198,33 +195,4 @@ export function getUserByToken(token: string): RegisteredUser | undefined {
   return users.get(token);
 }
 
-export function getUserByIp(ip: string): RegisteredUser | undefined {
-  for (const user of users.values()) {
-    if (user.ips.includes(ip)) {
-      return user;
-    }
-  }
-  return undefined;
-}
 
-export function trackUserIp(token: string, ip: string): void {
-  const user = users.get(token);
-  if (!user || !ip) return;
-
-  // Remove the IP if it exists (to move it to front as most recent)
-  const idx = user.ips.indexOf(ip);
-  if (idx !== -1) {
-    user.ips.splice(idx, 1);
-  }
-
-  // Add to front (most recent first)
-  user.ips.unshift(ip);
-
-  // Keep only last MAX_IPS_PER_USER IPs
-  if (user.ips.length > MAX_IPS_PER_USER) {
-    user.ips = user.ips.slice(0, MAX_IPS_PER_USER);
-  }
-
-  user.lastSeen = Date.now();
-  saveUsers();
-}

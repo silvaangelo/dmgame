@@ -123,7 +123,6 @@ export type MatchHistoryEntry = {
 export type RegisteredUser = {
   username: string;
   token: string;
-  ips: string[];
   createdAt: number;
   lastSeen: number;
 };

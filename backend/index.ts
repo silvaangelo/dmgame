@@ -4,7 +4,7 @@ import compression from "compression";
 import { app, server } from "./server.js";
 import { setupSocket } from "./socket.js";
 import { startGameLoop } from "./game.js";
-import { initDatabase, registerUser, getUserByToken, getUserByIp, trackUserIp } from "./database.js";
+import { initDatabase, registerUser, getUserByToken } from "./database.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -29,13 +29,6 @@ app.use(express.static(frontendDir, {
 
 /* ================= API ROUTES ================= */
 
-function getClientIp(req: express.Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
-  if (Array.isArray(forwarded)) return forwarded[0].trim();
-  return req.ip || req.socket.remoteAddress || "";
-}
-
 // Register or re-register a username
 app.post("/api/register", (req, res) => {
   const { username } = req.body as { username?: string };
@@ -51,8 +44,7 @@ app.post("/api/register", (req, res) => {
     return;
   }
 
-  const ip = getClientIp(req);
-  const user = registerUser(trimmed, ip);
+  const user = registerUser(trimmed);
 
   res.json({
     username: user.username,
@@ -63,24 +55,14 @@ app.post("/api/register", (req, res) => {
 // Identify user by token
 app.get("/api/session", (req, res) => {
   const token = req.query.token as string | undefined;
-  const ip = getClientIp(req);
 
-  // Try token first
   if (token) {
     const user = getUserByToken(token);
     if (user) {
-      trackUserIp(token, ip);
+      user.lastSeen = Date.now();
       res.json({ username: user.username, token: user.token });
       return;
     }
-  }
-
-  // Try IP fingerprint
-  const userByIp = getUserByIp(ip);
-  if (userByIp) {
-    trackUserIp(userByIp.token, ip);
-    res.json({ username: userByIp.username, token: userByIp.token });
-    return;
   }
 
   res.json({ username: null, token: null });

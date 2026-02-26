@@ -19,10 +19,10 @@ import {
   findRoomByPlayer,
 } from "./room.js";
 import { WebSocket } from "ws";
-import { getLeaderboard, getPlayerStats, getMatchHistory, getUserByToken, trackUserIp } from "./database.js";
+import { getLeaderboard, getPlayerStats, getMatchHistory, getUserByToken } from "./database.js";
 
 export function setupSocket() {
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", (ws) => {
     let player: Player | null = null;
 
     // Reject if too many concurrent connections
@@ -60,12 +60,6 @@ export function setupSocket() {
           const user = getUserByToken(data.token);
           if (user) {
             trimmed = user.username;
-            // Track IP from WebSocket upgrade request
-            const forwarded = req.headers["x-forwarded-for"];
-            const ip = typeof forwarded === "string"
-              ? forwarded.split(",")[0].trim()
-              : req.socket.remoteAddress || "";
-            trackUserIp(user.token, ip);
           } else {
             ws.send(JSON.stringify({
               type: "error",
