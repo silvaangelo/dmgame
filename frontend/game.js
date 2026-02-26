@@ -2277,85 +2277,49 @@ function setupWsMessageHandler() {
       const usernameMap = new Map();
       players.forEach((pl) => usernameMap.set(pl.id, pl.username));
 
-      // Build previous full state lookup for delta reconstruction
-      const prevFullState = new Map();
-      players.forEach((pl) => prevFullState.set(pl.id, pl));
+      // Delta compression: server may send only changed players (df=1)
+      // Build lookup of previous player state for merging
+      const prevPlayerMap = new Map();
+      players.forEach((pl) => prevPlayerMap.set(pl.id, pl));
 
-      const parsedPlayers = (data.p || data.players || []).map((p) => {
-        if (Array.isArray(p)) {
-          // Full compact format (15 elements) or delta format
-          if (p.length >= 15) {
-            // Full player state
-            return {
-              id: p[0],
-              x: p[1],
-              y: p[2],
-              hp: p[3],
-              shots: p[4],
-              reloading: p[5] === 1,
-              lastProcessedInput: p[6],
-              aimAngle: p[7],
-              weapon: weaponCodeMap[p[8]] || "machinegun",
-              kills: p[9],
-              skin: p[10] || 0,
-              speedBoosted: p[11] === 1,
-              shielded: p[12] === 1,
-              invisible: p[13] === 1,
-              regen: p[14] === 1,
-              username: usernameMap.get(p[0]) || "Jogador",
-            };
-          }
-          // Delta format: [id] or [id, idx1, val1, idx2, val2, ...]
-          const pid = p[0];
-          const prev = prevFullState.get(pid);
-          if (!prev) {
-            // Unknown player — can't apply delta, skip
-            return { id: pid, x: 0, y: 0, hp: 0, shots: 0, reloading: false, lastProcessedInput: 0, aimAngle: 0, weapon: "machinegun", kills: 0, skin: 0, speedBoosted: false, shielded: false, invisible: false, regen: false, username: usernameMap.get(pid) || "Jogador" };
-          }
-          // Start with previous state, apply delta fields
-          const rebuilt = {
-            id: pid,
-            x: prev.x,
-            y: prev.y,
-            hp: prev.hp,
-            shots: prev.shots,
-            reloading: prev.reloading,
-            lastProcessedInput: prev.lastProcessedInput,
-            aimAngle: prev.aimAngle,
-            weapon: prev.weapon,
-            kills: prev.kills,
-            skin: prev.skin,
-            speedBoosted: prev.speedBoosted,
-            shielded: prev.shielded,
-            invisible: prev.invisible,
-            regen: prev.regen,
-            username: prev.username,
-          };
-          // Apply sparse updates: pairs of [index, value]
-          for (let di = 1; di < p.length; di += 2) {
-            const idx = p[di];
-            const val = p[di + 1];
-            switch (idx) {
-              case 1: rebuilt.x = val; break;
-              case 2: rebuilt.y = val; break;
-              case 3: rebuilt.hp = val; break;
-              case 4: rebuilt.shots = val; break;
-              case 5: rebuilt.reloading = val === 1; break;
-              case 6: rebuilt.lastProcessedInput = val; break;
-              case 7: rebuilt.aimAngle = val; break;
-              case 8: rebuilt.weapon = weaponCodeMap[val] || "machinegun"; break;
-              case 9: rebuilt.kills = val; break;
-              case 10: rebuilt.skin = val || 0; break;
-              case 11: rebuilt.speedBoosted = val === 1; break;
-              case 12: rebuilt.shielded = val === 1; break;
-              case 13: rebuilt.invisible = val === 1; break;
-              case 14: rebuilt.regen = val === 1; break;
-            }
-          }
-          return rebuilt;
-        }
-        return p; // Already object format
+      function parseCompactPlayer(p) {
+        return {
+          id: p[0],
+          x: p[1],
+          y: p[2],
+          hp: p[3],
+          shots: p[4],
+          reloading: p[5] === 1,
+          lastProcessedInput: p[6],
+          aimAngle: p[7],
+          weapon: weaponCodeMap[p[8]] || "machinegun",
+          kills: p[9],
+          skin: p[10] || 0,
+          speedBoosted: p[11] === 1,
+          shielded: p[12] === 1,
+          invisible: p[13] === 1,
+          regen: p[14] === 1,
+          username: usernameMap.get(p[0]) || "Jogador",
+        };
+      }
+
+      const incoming = (data.p || data.players || []).map((p) => {
+        if (Array.isArray(p)) return parseCompactPlayer(p);
+        return p;
       });
+
+      let parsedPlayers;
+      if (data.df) {
+        // Delta frame: merge changed players into previous state
+        const updatedMap = new Map(prevPlayerMap);
+        for (const pl of incoming) {
+          updatedMap.set(pl.id, pl);
+        }
+        parsedPlayers = Array.from(updatedMap.values());
+      } else {
+        // Full frame: use incoming as-is
+        parsedPlayers = incoming;
+      }
 
       // Parse compact bullets: [id, x, y, weapon]
       const parsedBullets = (data.b || data.bullets || []).map((b) => {

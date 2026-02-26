@@ -399,58 +399,48 @@ export function updateGame(game: Game) {
     return [pk.id, Math.round(pk.x), Math.round(pk.y), PICKUP_TYPE_CODES[pk.type] ?? 0];
   });
 
-  // Build per-player delta arrays
+  // Delta compression: only send players whose state actually changed
   if (!game.lastBroadcastState) {
     game.lastBroadcastState = new Map();
   }
   const lastPlayerStates = game.lastBroadcastState.get("players") as Map<string, unknown[]> | undefined;
-  const playerDeltas: unknown[][] = [];
+  const changedPlayers: unknown[][] = [];
   const newPlayerStates = new Map<string, unknown[]>();
-  let hasPlayerChanges = false;
 
   for (const compact of compactPlayers) {
     const arr = compact as unknown[];
     const pid = arr[0] as string;
     const prev = lastPlayerStates?.get(pid);
+    newPlayerStates.set(pid, arr);
 
-    if (!prev) {
-      // New player or first tick — send full
-      playerDeltas.push(arr);
-      hasPlayerChanges = true;
-    } else {
-      // Build delta: [id, ...only changed fields as [index, value] pairs]
-      const delta: unknown[] = [pid];
-      let changed = false;
-      for (let i = 1; i < arr.length; i++) {
-        if (arr[i] !== prev[i]) {
-          delta.push(i, arr[i]);
-          changed = true;
-        }
-      }
-      if (changed) {
-        playerDeltas.push(delta);
-        hasPlayerChanges = true;
-      }
-      // Even if unchanged, we include an empty entry so the client knows the player exists
-      else {
-        playerDeltas.push([pid]);
+    if (!prev || prev.length !== arr.length) {
+      changedPlayers.push(arr);
+      continue;
+    }
+    for (let i = 1; i < arr.length; i++) {
+      if (arr[i] !== prev[i]) {
+        changedPlayers.push(arr);
+        break;
       }
     }
-    newPlayerStates.set(pid, arr);
   }
-  game.lastBroadcastState.set("players", newPlayerStates);
 
+  const lastPickupCount = game.lastBroadcastState.get("pickupCount") as number || 0;
   // Skip broadcast if truly nothing changed
-  if (!hasPlayerChanges && compactBullets.length === 0 && compactPickups.length === (game.lastBroadcastState.get("pickupCount") as number || 0)) {
+  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount) {
     return;
   }
+
+  // Commit new state only when we actually broadcast
+  game.lastBroadcastState.set("players", newPlayerStates);
   game.lastBroadcastState.set("pickupCount", compactPickups.length);
 
   game.stateSequence++;
   broadcast(game, {
     type: "state",
     seq: game.stateSequence,
-    p: playerDeltas,
+    p: changedPlayers,
+    df: changedPlayers.length < compactPlayers.length ? 1 : 0,
     b: compactBullets,
     pk: compactPickups,
     z: game.zoneShrinking ? [
