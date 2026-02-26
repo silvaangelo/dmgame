@@ -20,8 +20,8 @@ COPY tsconfig.json ./
 COPY frontend/ ./frontend/
 
 # Create non-root user and data directory
-RUN addgroup --system --gid 1001 appgroup && \
-    adduser --system --uid 1001 --ingroup appgroup appuser && \
+RUN groupadd --system --gid 1001 appgroup && \
+    useradd --system --uid 1001 --gid appgroup --no-create-home appuser && \
     mkdir -p /app/data && \
     chown -R appuser:appgroup /app/data
 
