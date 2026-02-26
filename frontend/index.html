@@ -1,231 +1,289 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Deathmatch Arena — Jogo Multiplayer de Combate em Tempo Real</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deathmatch Arena — Jogo Multiplayer de Combate em Tempo Real</title>
 
-<!-- SEO Meta Tags -->
-<meta name="description" content="Deathmatch Arena é um jogo multiplayer top-down de combate em tempo real. Entre na arena, escolha suas armas e seja o primeiro a 5 abates!" />
-<meta name="keywords" content="deathmatch, arena, multiplayer, jogo online, top-down shooter, combate, tempo real, browser game" />
-<meta name="author" content="Deathmatch Arena" />
-<meta name="theme-color" content="#1a1a2e" />
-<meta name="color-scheme" content="dark" />
+  <!-- SEO Meta Tags -->
+  <meta name="description"
+    content="Deathmatch Arena é um jogo multiplayer top-down de combate em tempo real. Entre na arena, escolha suas armas e seja o primeiro a 5 abates!" />
+  <meta name="keywords"
+    content="deathmatch, arena, multiplayer, jogo online, top-down shooter, combate, tempo real, browser game" />
+  <meta name="author" content="Deathmatch Arena" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="color-scheme" content="dark" />
 
-<!-- Canonical URL -->
-<link rel="canonical" href="https://biru-shooting-game.com" />
+  <!-- Canonical URL -->
+  <link rel="canonical" href="https://biru-shooting-game.com" />
 
-<!-- Open Graph / Social Sharing -->
-<meta property="og:type" content="website" />
-<meta property="og:url" content="https://biru-shooting-game.com" />
-<meta property="og:title" content="Deathmatch Arena — Combate Multiplayer em Tempo Real" />
-<meta property="og:description" content="Entre na arena e enfrente outros jogadores em combate frenético. Primeiro a 5 abates vence! Jogue direto no navegador." />
-<meta property="og:site_name" content="Deathmatch Arena" />
-<meta property="og:locale" content="pt_BR" />
+  <!-- Open Graph / Social Sharing -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://biru-shooting-game.com" />
+  <meta property="og:title" content="Deathmatch Arena — Combate Multiplayer em Tempo Real" />
+  <meta property="og:description"
+    content="Entre na arena e enfrente outros jogadores em combate frenético. Primeiro a 5 abates vence! Jogue direto no navegador." />
+  <meta property="og:site_name" content="Deathmatch Arena" />
+  <meta property="og:locale" content="pt_BR" />
 
-<!-- Twitter Card -->
-<meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Deathmatch Arena — Combate Multiplayer" />
-<meta name="twitter:description" content="Jogo multiplayer top-down de combate em tempo real. Jogue direto no navegador!" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Deathmatch Arena — Combate Multiplayer" />
+  <meta name="twitter:description"
+    content="Jogo multiplayer top-down de combate em tempo real. Jogue direto no navegador!" />
 
-<!-- Mobile / PWA Hints -->
-<meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-title" content="Deathmatch Arena" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="application-name" content="Deathmatch Arena" />
+  <!-- Mobile / PWA Hints -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Deathmatch Arena" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="application-name" content="Deathmatch Arena" />
 
-<!-- Favicon (emoji fallback) -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔</text></svg>" />
+  <!-- Favicon (emoji fallback) -->
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔</text></svg>" />
 
-<link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 
 <body>
 
-<!-- Lobby Layout: [Online] [Main] [Controls] -->
-<div id="lobbyLayout">
+  <!-- Lobby Layout: [Online] [Main] [Controls] -->
+  <div id="lobbyLayout">
 
-<!-- Left: Online Panel -->
-<div id="globalOnlinePanel">
-  <h3>🟢 Online (<span id="globalOnlineCount">0</span>)</h3>
-  <div id="globalOnlineContent">
-    <p style="color: #8aaa8a; font-style: italic; font-size: 16px;">Conecte para ver jogadores</p>
-  </div>
-</div>
-
-<!-- Center: Main content screens -->
-<div id="lobbyCenter">
-
-<div id="menu">
-  <div class="menu-glow"></div>
-  <h2>⚔ DEATHMATCH ⚔</h2>
-  <input id="username" placeholder="✏️ Seu codinome..." maxlength="16" autocomplete="off" />
-  <div id="usernameError" style="color: #ff4444; font-size: 19px; margin: 8px 0; display: none; font-weight: 600; font-family: 'Share Tech Mono', monospace;"></div>
-  <button onclick="login()">🚀 ENTRAR</button>
-  <button onclick="requestLeaderboard(true)" style="margin-top: 10px; background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
-</div>
-
-<!-- Room List Screen -->
-<div id="roomListScreen" style="display:none;">
-  <h2 style="color: #f0f0f0; margin-bottom: 14px; font-size: 36px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">🎮 SALAS</h2>
-  <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; align-items: stretch;">
-    <button id="createRoomBtn" onclick="doCreateRoom()" style="background: linear-gradient(180deg, #ff6b35 0%, #cc4422 100%); border-color: #ff8855; font-size: 30px; padding: 22px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">⚔ JOGAR</button>
-    <button onclick="requestLeaderboard(true)" style="background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
-  </div>
-  <div id="roomListContent">
-    <p style="color: #8aaa8a; font-style: italic; font-size: 16px;">Nenhuma sala disponível. Crie uma!</p>
-  </div>
-  <div id="top3Section" style="margin-top: 22px;">
-    <h3 style="color: #ff6b35; font-size: 20px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'Rajdhani', sans-serif;">🏅 Top 3 Jogadores</h3>
-    <div id="top3Content"></div>
-  </div>
-</div>
-
-<!-- Leaderboard Modal -->
-<div id="leaderboardModal" style="display:none;">
-  <h2 style="color: #ff6b35; margin: 0 0 20px 0; font-size: 36px; text-transform: uppercase; letter-spacing: 3px;">🏆 Ranking Global 🌍</h2>
-  <div id="leaderboardContent"></div>
-  <button onclick="document.getElementById('leaderboardModal').style.display='none'" style="margin-top: 18px; padding: 12px 34px; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; font-size: 20px; cursor: pointer; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 2px;">✖ Fechar</button>
-</div>
-
-<!-- Room Screen -->
-<div id="roomScreen" style="display:none;">
-  <h2 id="roomName" style="color: #ff6b35; margin-bottom: 6px; font-size: 34px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">Nome da Sala</h2>
-  <p id="roomCountdown" style="color: #8aaa8a; font-size: 19px; margin-bottom: 16px; font-family: 'Share Tech Mono', monospace;"></p>
-  <div id="roomPlayerList" style="margin-bottom: 14px;"></div>
-  <div id="skinSelector" style="margin-bottom: 14px;">
-    <p style="color: #8aaa8a; font-size: 17px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace;">🎨 Escolha sua skin:</p>
-    <div id="skinOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
-  </div>
-  <div style="display: flex; gap: 12px; justify-content: center; flex-direction: column; align-items: center;">
-    <button id="roomReadyBtn" onclick="doRoomReady()">⚔ BORA! ⚔</button>
-    <button id="roomLeaveBtn" onclick="doLeaveRoom()" style="background: linear-gradient(180deg, #5a3a3a 0%, #4a2a2a 100%); border-color: #6a4a4a; padding: 12px 24px; font-size: 18px;">🚪 Sair</button>
-  </div>
-</div>
-
-</div><!-- end lobbyCenter -->
-
-<!-- Right: Controls & How to Play -->
-<div id="globalControlsPanel">
-  <h4>🎮 Controles</h4>
-  <div style="margin-bottom: 8px;">
-    <div>🏆 Primeiro a 5 abates!</div>
-  </div>
-  <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
-    <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔫 Armas</div>
-    <div><kbd>1</kbd> 💥 Metralhadora</div>
-    <div><kbd>2</kbd> 🔥 Shotgun</div>
-    <div><kbd>3</kbd> 🔪 Faca</div>
-    <div><kbd>4</kbd> 🎯 Sniper</div>
-  </div>
-  <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px;">
-    <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🕹️ Teclas</div>
-    <div><kbd>WASD / Setas</kbd> — Mover</div>
-    <div><kbd>Click / Espaço</kbd> — Atirar</div>
-    <div><kbd>Q</kbd> — Trocar Arma</div>
-    <div><kbd>Tab</kbd> — Placar</div>
-  </div>
-</div>
-
-</div><!-- end lobbyLayout -->
-
-<canvas id="game" width="1400" height="900" style="display:none"></canvas>
-
-<div id="playerList" style="display:none;">
-  <h3>⚔ Placar ⚔</h3>
-  <div id="playerListContent"></div>
-  <div class="tab-hint">Segure TAB para ver</div>
-</div>
-
-<div id="readyScreen" style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(12,18,12,0.95); color: #f0f0f0; padding: 44px 64px; border-radius: 4px; text-align: center; z-index: 999; box-shadow: 0 0 60px rgba(0,0,0,0.7); border: 1px solid #4a7a4a;">
-  <h2 style="font-size: 46px; margin: 0 0 14px 0; color: #ff6b35; font-weight: 800; text-transform: uppercase; letter-spacing: 3px; text-shadow: 0 0 20px rgba(255,107,53,0.3);">PREPARAR!</h2>
-  <p id="preGameTimer" style="font-size: 22px; margin: 0 0 18px 0; color: #d9a04a; font-family: 'Share Tech Mono', monospace;"></p>
-  <button id="readyButton" onclick="confirmReady()" style="padding: 18px 50px; font-size: 28px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif; transition: all 0.2s;">
-    🔥 BORA! 💪
-  </button>
-  <p id="waitingForPlayers" style="font-size: 20px; margin-top: 20px; color: #7a9a7a; font-family: 'Share Tech Mono', monospace;"></p>
-  <div class="ready-screen-controls" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 14px; color: #8aaa8a; line-height: 1.8;">
-    <div style="color: #88ccff; font-weight: 600; margin-bottom: 4px;">🎮 Controles</div>
-    <div>🏆 Primeiro a 5 abates!</div>
-    <div style="margin-top: 4px;"><kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">WASD / Setas</kbd> Mover · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Click / Espaço</kbd> Atirar · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Q</kbd> Trocar Arma · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Tab</kbd> Placar</div>
-    <div style="margin-top: 2px;"><kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">1</kbd> Metralhadora · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">2</kbd> Shotgun · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">3</kbd> Faca · <kbd style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">4</kbd> Sniper</div>
-  </div>
-</div>
-
-<div id="victoryScreen" style="display:none;">
-  <div id="victoryBanner"></div>
-  <h1 id="victoryMessage"></h1>
-  <p id="victorySubtext" style="font-size: 34px; font-weight: 700; margin: 8px 0 18px 0; color: #ffcc44; font-family: 'Rajdhani', sans-serif; text-shadow: 0 0 20px rgba(255,204,68,0.5), 0 2px 8px rgba(0,0,0,0.6); letter-spacing: 1px; line-height: 1.3;"></p>
-  <div id="victoryShowcase"></div>
-  <div id="victoryScoreboard"></div>
-  <div id="victoryFooter"></div>
-</div>
-
-<div id="gameUI" style="display:none;">
-  <div class="hud-bar">
-    <div class="hud-section hud-kills">
-      <span id="killsDisplay">🏆 0/5</span>
-    </div>
-    <div class="hud-section hud-health">
-      <div class="hud-hp-bar-container">
-        <div id="hpBarFill" class="hud-hp-bar-fill"></div>
-        <span id="healthDisplay">❤️ 4/4</span>
+    <!-- Left: Online Panel -->
+    <div id="globalOnlinePanel">
+      <h3>🟢 Online (<span id="globalOnlineCount">0</span>)</h3>
+      <div id="globalOnlineContent">
+        <p style="color: #8aaa8a; font-style: italic; font-size: 16px;">Conecte para ver jogadores</p>
       </div>
     </div>
-    <div class="hud-section hud-weapon">
-      <span id="shotsDisplay">🔫 Pistola | 10/30</span>
-    </div>
-    <div class="hud-section hud-status">
-      <span id="cooldownDisplay"></span>
-      <span id="reloadDisplay"></span>
-      <span id="speedBoostDisplay"></span>
-    </div>
-  </div>
-</div>
 
-<div id="inGameControls" style="display:none;">
-  <div><b>WASD</b> Mover</div>
-  <div><b>🖱️</b> Atirar</div>
-  <div><b>R</b> Recarregar</div>
-  <div><b>Q</b> Trocar Arma</div>
-  <div><b>Tab</b> Placar</div>
-  <div style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.1); padding-top:4px;">
-    <b>1</b> Metralhadora<br>
-    <b>2</b> Shotgun<br>
-    <b>3</b> Faca<br>
-    <b>4</b> Sniper
-  </div>
-</div>
+    <!-- Center: Main content screens -->
+    <div id="lobbyCenter">
 
-<div id="killFeed" style="display:none;"></div>
-
-<!-- Mobile Touch Controls -->
-<div id="mobileControls">
-  <div class="touch-joystick-area" id="joystickArea">
-    <div class="touch-joystick-base" id="joystickBase">
-      <div class="touch-joystick-thumb" id="joystickThumb"></div>
-    </div>
-  </div>
-  <div class="touch-right-side">
-    <div class="touch-btn-row">
-      <div class="touch-btn touch-btn-weapon" id="touchWeaponBtn">Q</div>
-      <div class="touch-btn touch-btn-reload" id="touchReloadBtn">R</div>
-    </div>
-    <div class="touch-joystick-area touch-aim-area" id="aimJoystickArea">
-      <div class="touch-joystick-base touch-aim-base" id="aimJoystickBase">
-        <div class="touch-joystick-thumb touch-aim-thumb" id="aimJoystickThumb"></div>
+      <div id="menu">
+        <div class="menu-glow"></div>
+        <h2>⚔ DEATHMATCH ⚔</h2>
+        <input id="username" placeholder="✏️ Seu codinome..." maxlength="16" autocomplete="off" />
+        <div id="usernameError"
+          style="color: #ff4444; font-size: 19px; margin: 8px 0; display: none; font-weight: 600; font-family: 'Share Tech Mono', monospace;">
+        </div>
+        <button onclick="login()">🚀 ENTRAR</button>
+        <button onclick="requestLeaderboard(true)"
+          style="margin-top: 10px; background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆
+          Ranking</button>
       </div>
-      <div class="touch-aim-label">🎯</div>
+
+      <!-- Room List Screen -->
+      <div id="roomListScreen" style="display:none;">
+        <h2
+          style="color: #f0f0f0; margin-bottom: 14px; font-size: 36px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">
+          🎮 SALAS</h2>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; align-items: stretch;">
+          <button id="createRoomBtn" onclick="doCreateRoom()"
+            style="background: linear-gradient(180deg, #ff6b35 0%, #cc4422 100%); border-color: #ff8855; font-size: 30px; padding: 22px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">⚔
+            JOGAR</button>
+          <button onclick="requestLeaderboard(true)"
+            style="background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆
+            Ranking</button>
+        </div>
+        <div id="roomListContent">
+          <p style="color: #8aaa8a; font-style: italic; font-size: 16px;">Nenhuma sala disponível. Crie uma!</p>
+        </div>
+        <div id="top3Section" style="margin-top: 22px;">
+          <h3
+            style="color: #ff6b35; font-size: 20px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'Rajdhani', sans-serif;">
+            🏅 Top 3 Jogadores</h3>
+          <div id="top3Content"></div>
+        </div>
+      </div>
+
+      <!-- Leaderboard Modal -->
+      <div id="leaderboardModal" style="display:none;">
+        <h2
+          style="color: #ff6b35; margin: 0 0 20px 0; font-size: 36px; text-transform: uppercase; letter-spacing: 3px;">
+          🏆 Ranking Global 🌍</h2>
+        <div id="leaderboardContent"></div>
+        <button onclick="document.getElementById('leaderboardModal').style.display='none'"
+          style="margin-top: 18px; padding: 12px 34px; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; font-size: 20px; cursor: pointer; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 2px;">✖
+          Fechar</button>
+      </div>
+
+      <!-- Room Screen -->
+      <div id="roomScreen" style="display:none;">
+        <h2 id="roomName"
+          style="color: #ff6b35; margin-bottom: 6px; font-size: 34px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">
+          Nome da Sala</h2>
+        <p id="roomCountdown"
+          style="color: #8aaa8a; font-size: 19px; margin-bottom: 16px; font-family: 'Share Tech Mono', monospace;"></p>
+        <div id="roomPlayerList" style="margin-bottom: 14px;"></div>
+        <div id="skinSelector" style="margin-bottom: 14px;">
+          <p style="color: #8aaa8a; font-size: 17px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace;">🎨
+            Escolha sua skin:</p>
+          <div id="skinOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: center; flex-direction: column; align-items: center;">
+          <button id="roomReadyBtn" onclick="doRoomReady()">⚔ BORA! ⚔</button>
+          <button id="roomLeaveBtn" onclick="doLeaveRoom()"
+            style="background: linear-gradient(180deg, #5a3a3a 0%, #4a2a2a 100%); border-color: #6a4a4a; padding: 12px 24px; font-size: 18px;">🚪
+            Sair</button>
+        </div>
+      </div>
+
+    </div><!-- end lobbyCenter -->
+
+    <!-- Right: Controls & How to Play -->
+    <div id="globalControlsPanel">
+      <h4>🎮 Controles</h4>
+      <div style="margin-bottom: 8px;">
+        <div>🏆 Primeiro a 5 abates!</div>
+      </div>
+      <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
+        <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔫 Armas</div>
+        <div><kbd>1</kbd> 💥 Metralhadora</div>
+        <div><kbd>2</kbd> 🔥 Shotgun</div>
+        <div><kbd>3</kbd> 🔪 Faca</div>
+        <div><kbd>4</kbd> 🎯 Sniper</div>
+      </div>
+      <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px;">
+        <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🕹️ Teclas</div>
+        <div><kbd>WASD / Setas</kbd> — Mover</div>
+        <div><kbd>Click / Espaço</kbd> — Atirar</div>
+        <div><kbd>Q</kbd> — Trocar Arma</div>
+        <div><kbd>Tab</kbd> — Placar</div>
+      </div>
+    </div>
+
+  </div><!-- end lobbyLayout -->
+
+  <div id="gameArea" style="display:none;">
+    <div id="gameUI" style="display:none;">
+      <div class="hud-bar">
+        <div class="hud-section hud-kills">
+          <span id="killsDisplay">🏆 0/5</span>
+        </div>
+        <div class="hud-section hud-health">
+          <div class="hud-hp-bar-container">
+            <div id="hpBarFill" class="hud-hp-bar-fill"></div>
+            <span id="healthDisplay">❤️ 4/4</span>
+          </div>
+        </div>
+        <div class="hud-section hud-weapon">
+          <span id="shotsDisplay">🔫 Pistola | 10/30</span>
+        </div>
+        <div class="hud-section hud-status">
+          <span id="cooldownDisplay"></span>
+          <span id="reloadDisplay"></span>
+          <span id="speedBoostDisplay"></span>
+        </div>
+      </div>
+    </div>
+    <canvas id="game" width="1400" height="900"></canvas>
+  </div>
+
+  <div id="playerList" style="display:none;">
+    <h3>⚔ Placar ⚔</h3>
+    <div id="playerListContent"></div>
+    <div class="tab-hint">Segure TAB para ver</div>
+  </div>
+
+  <div id="readyScreen"
+    style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(12,18,12,0.95); color: #f0f0f0; padding: 44px 64px; border-radius: 4px; text-align: center; z-index: 999; box-shadow: 0 0 60px rgba(0,0,0,0.7); border: 1px solid #4a7a4a;">
+    <h2
+      style="font-size: 46px; margin: 0 0 14px 0; color: #ff6b35; font-weight: 800; text-transform: uppercase; letter-spacing: 3px; text-shadow: 0 0 20px rgba(255,107,53,0.3);">
+      PREPARAR!</h2>
+    <p id="preGameTimer"
+      style="font-size: 22px; margin: 0 0 18px 0; color: #d9a04a; font-family: 'Share Tech Mono', monospace;"></p>
+    <button id="readyButton" onclick="confirmReady()"
+      style="padding: 18px 50px; font-size: 28px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif; transition: all 0.2s;">
+      🔥 BORA! 💪
+    </button>
+    <p id="waitingForPlayers"
+      style="font-size: 20px; margin-top: 20px; color: #7a9a7a; font-family: 'Share Tech Mono', monospace;"></p>
+    <div class="ready-screen-controls"
+      style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 14px; color: #8aaa8a; line-height: 1.8;">
+      <div style="color: #88ccff; font-weight: 600; margin-bottom: 4px;">🎮 Controles</div>
+      <div>🏆 Primeiro a 5 abates!</div>
+      <div style="margin-top: 4px;"><kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">WASD
+          / Setas</kbd> Mover · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Click
+          / Espaço</kbd> Atirar · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Q</kbd>
+        Trocar Arma · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">Tab</kbd>
+        Placar</div>
+      <div style="margin-top: 2px;"><kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">1</kbd>
+        Metralhadora · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">2</kbd>
+        Shotgun · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">3</kbd>
+        Faca · <kbd
+          style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">4</kbd>
+        Sniper</div>
     </div>
   </div>
-</div>
 
-<!-- GitHub footer link -->
-<a href="https://github.com/silvaangelo/dmgame" target="_blank" rel="noopener noreferrer" class="github-footer-link">GitHub ⭐ silvaangelo/dmgame</a>
+  <div id="victoryScreen" style="display:none;">
+    <div id="victoryBanner"></div>
+    <h1 id="victoryMessage"></h1>
+    <p id="victorySubtext"
+      style="font-size: 34px; font-weight: 700; margin: 8px 0 18px 0; color: #ffcc44; font-family: 'Rajdhani', sans-serif; text-shadow: 0 0 20px rgba(255,204,68,0.5), 0 2px 8px rgba(0,0,0,0.6); letter-spacing: 1px; line-height: 1.3;">
+    </p>
+    <div id="victoryShowcase"></div>
+    <div id="victoryScoreboard"></div>
+    <div id="victoryFooter"></div>
+  </div>
 
-<script src="lib/msgpack.min.js"></script>
-<script src="game.js"></script>
+
+
+  <div id="inGameControls" style="display:none;">
+    <div><b>WASD</b> Mover</div>
+    <div><b>🖱️</b> Atirar</div>
+    <div><b>R</b> Recarregar</div>
+    <div><b>Q</b> Trocar Arma</div>
+    <div><b>Tab</b> Placar</div>
+    <div style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.1); padding-top:4px;">
+      <b>1</b> Metralhadora<br>
+      <b>2</b> Shotgun<br>
+      <b>3</b> Faca<br>
+      <b>4</b> Sniper
+    </div>
+  </div>
+
+  <div id="killFeed" style="display:none;"></div>
+
+  <!-- Mobile Touch Controls -->
+  <div id="mobileControls">
+    <div class="touch-joystick-area" id="joystickArea">
+      <div class="touch-joystick-base" id="joystickBase">
+        <div class="touch-joystick-thumb" id="joystickThumb"></div>
+      </div>
+    </div>
+    <div class="touch-right-side">
+      <div class="touch-btn-row">
+        <div class="touch-btn touch-btn-weapon" id="touchWeaponBtn">Q</div>
+        <div class="touch-btn touch-btn-reload" id="touchReloadBtn">R</div>
+      </div>
+      <div class="touch-joystick-area touch-aim-area" id="aimJoystickArea">
+        <div class="touch-joystick-base touch-aim-base" id="aimJoystickBase">
+          <div class="touch-joystick-thumb touch-aim-thumb" id="aimJoystickThumb"></div>
+        </div>
+        <div class="touch-aim-label">🎯</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GitHub footer link -->
+  <a href="https://github.com/silvaangelo/dmgame" target="_blank" rel="noopener noreferrer"
+    class="github-footer-link">GitHub ⭐ silvaangelo/dmgame</a>
+
+  <script src="lib/msgpack.min.js"></script>
+  <script src="game.js"></script>
 
 </body>
+
 </html>

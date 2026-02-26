@@ -278,8 +278,10 @@ const ctx = canvas.getContext("2d");
 
 // Responsive canvas sizing
 function resizeCanvas() {
+  const hudEl = document.getElementById("gameUI");
+  const hudH = hudEl && hudEl.offsetHeight ? hudEl.offsetHeight : 0;
   const maxW = window.innerWidth * 0.92;
-  const maxH = window.innerHeight * 0.85;
+  const maxH = (window.innerHeight * 0.92) - hudH;
   const arenaAspect = GAME_CONFIG.ARENA_WIDTH / GAME_CONFIG.ARENA_HEIGHT;
   let displayW, displayH;
   if (maxW / maxH > arenaAspect) {
@@ -1404,7 +1406,7 @@ function returnToLobby() {
 
   // Hide victory screen and game UI
   document.getElementById("victoryScreen").style.display = "none";
-  document.getElementById("game").style.display = "none";
+  document.getElementById("gameArea").style.display = "none";
   document.getElementById("gameUI").style.display = "none";
   document.getElementById("playerList").style.display = "none";
   document.getElementById("readyScreen").style.display = "none";
@@ -1421,7 +1423,8 @@ function returnToLobby() {
   // Show room list (player stays logged in)
   document.getElementById("lobbyLayout").style.display = "";
   document.getElementById("roomListScreen").style.display = "block";
-  if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
+  const igcLobby = document.getElementById("inGameControls");
+  if (igcLobby) { igcLobby.style.display = "none"; igcLobby.classList.remove("faded"); clearTimeout(igcLobby._fadeTimer); }
 
   // Reset game state
   players = [];
@@ -1963,7 +1966,7 @@ function setupWsMessageHandler() {
       document.getElementById("roomListScreen").style.display = "none";
       document.getElementById("menu").style.display = "none";
       document.getElementById("lobbyLayout").style.display = "none";
-      canvas.style.display = "block";
+      document.getElementById("gameArea").style.display = "flex";
       document.getElementById("gameUI").style.display = "block";
       document.getElementById("killFeed").style.display = "flex";
       document.getElementById("readyScreen").style.display = "block";
@@ -2056,6 +2059,15 @@ function setupWsMessageHandler() {
 
       // Show dramatic game start toast
       showToast("🔥 VAI! 🔥", "#ff6b35");
+
+      // Show in-game controls hint (fades after a few seconds)
+      const igc = document.getElementById("inGameControls");
+      if (igc) {
+        igc.style.display = "block";
+        igc.classList.remove("faded");
+        clearTimeout(igc._fadeTimer);
+        igc._fadeTimer = setTimeout(() => igc.classList.add("faded"), 8000);
+      }
 
       // Update kills to win if provided
       if (data.killsToWin) {
@@ -2725,7 +2737,7 @@ function setupWsMessageHandler() {
     // Go back to login screen
     document.getElementById("roomListScreen").style.display = "none";
     document.getElementById("roomScreen").style.display = "none";
-    document.getElementById("game").style.display = "none";
+    document.getElementById("gameArea").style.display = "none";
     document.getElementById("gameUI").style.display = "none";
     document.getElementById("playerList").style.display = "none";
     document.getElementById("readyScreen").style.display = "none";
@@ -2733,7 +2745,8 @@ function setupWsMessageHandler() {
     document.getElementById("victoryScreen").style.display = "none";
     document.getElementById("lobbyLayout").style.display = "";
     document.getElementById("menu").style.display = "block";
-    if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
+    const igcClose = document.getElementById("inGameControls");
+    if (igcClose) { igcClose.style.display = "none"; igcClose.classList.remove("faded"); clearTimeout(igcClose._fadeTimer); }
     // Restore lobby-only elements
     const ghLinkClose = document.querySelector(".github-footer-link");
     if (ghLinkClose) ghLinkClose.style.display = "";
