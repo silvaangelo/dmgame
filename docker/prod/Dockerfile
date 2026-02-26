@@ -1,7 +1,24 @@
 # ─── Production Dockerfile ────────────────────────────────
-# Bun runs TypeScript directly — no build step needed
+# Bun runs TypeScript directly — no build step needed for backend
+# Frontend is minified during build stage
 # ──────────────────────────────────────────────────────────
 
+FROM oven/bun:1 AS builder
+
+WORKDIR /app
+
+# Install all deps (including devDependencies for esbuild)
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile 2>/dev/null || bun install
+
+# Copy frontend source + build script
+COPY frontend/ ./frontend/
+COPY scripts/ ./scripts/
+
+# Minify frontend assets
+RUN node scripts/build-frontend.js
+
+# ── Runtime stage ─────────────────────────────────────────
 FROM oven/bun:1 AS runtime
 
 WORKDIR /app
@@ -16,8 +33,8 @@ RUN bun install --frozen-lockfile --production 2>/dev/null || bun install --prod
 COPY backend/ ./backend/
 COPY tsconfig.json ./
 
-# Copy frontend (static files, no build needed)
-COPY frontend/ ./frontend/
+# Copy minified frontend from builder stage
+COPY --from=builder /app/dist/frontend/ ./frontend/
 
 # Create non-root user and data directory
 RUN groupadd --system --gid 1001 appgroup && \

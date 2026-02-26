@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "dev": "bun run --watch backend/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/build-frontend.js",
+    "build:frontend": "node scripts/build-frontend.js",
     "start": "bun backend/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -26,6 +27,7 @@
     "@types/node": "^25.2.1",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.27.3",
     "eslint": "^10.0.1",
     "globals": "^17.3.0",
     "typescript": "^5.9.3",

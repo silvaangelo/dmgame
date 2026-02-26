@@ -6,6 +6,12 @@ function deserialize(raw) {
   return MessagePack.decode(new Uint8Array(raw));
 }
 
+// ===== HTML ESCAPING (XSS prevention) =====
+function esc(str) {
+  if (!str) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 // Game configuration constants
 const GAME_CONFIG = {
   ARENA_WIDTH: 1400,
@@ -1350,7 +1356,7 @@ function updateGlobalOnlineList(onlinePlayers) {
       const isMe = p.id === playerId;
       return `
       <div style="padding: 4px 7px; margin: 2px 0; border-radius: 2px; display: flex; justify-content: space-between; align-items: center; background: ${isMe ? "rgba(74,138,74,0.1)" : "rgba(255,255,255,0.02)"};">
-        <span style="font-weight: ${isMe ? "600" : "400"}; color: ${isMe ? "#bbddbb" : "#a0b8a0"}; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; font-family: 'Rajdhani', sans-serif;">${p.username}${isMe ? "" : ""}</span>
+        <span style="font-weight: ${isMe ? "600" : "400"}; color: ${isMe ? "#bbddbb" : "#a0b8a0"}; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; font-family: 'Rajdhani', sans-serif;">${esc(p.username)}${isMe ? "" : ""}</span>
         <span style="font-size: 11px; color: ${color}; display: flex; align-items: center; gap: 3px; white-space: nowrap; font-family: 'Share Tech Mono', monospace;">
           <span style="width: 6px; height: 6px; border-radius: 50%; background: ${color}; display: inline-block;"></span>
           ${label}
@@ -1386,7 +1392,7 @@ function updatePlayerList() {
       return `
         <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px;">
           <div style="font-weight: ${isMe ? "bold" : "normal"}; color: ${isDead ? "#666" : "#f0f0f0"}; margin-bottom: 5px; font-size: 18px; font-family: 'Rajdhani', sans-serif;">
-            ${isLeading ? "👑 " : ""}${p.username} ${isMe ? "(Você)" : ""} ${isDead ? "💀" : ""}
+            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(Você)" : ""} ${isDead ? "💀" : ""}
           </div>
           <div style="font-size: 15px; display: flex; gap: 10px; font-family: 'Share Tech Mono', monospace;">
             <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= 2 ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/4</span>
@@ -1558,12 +1564,12 @@ function saveSession(token, username) {
     localStorage.setItem("dm_username", username);
   } catch { /* private browsing */ }
 
-  // Save to cookie (30 days)
-  document.cookie = `dm_token=${token}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Lax`;
+  // Save to cookie (30 days, HttpOnly not possible from JS but use Secure + SameSite)
+  document.cookie = `dm_token=${token}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Strict; Secure`;
 
-  // Set URL hash
-  if (window.location.hash !== `#u=${token.slice(0, 16)}`) {
-    history.replaceState(null, "", `#u=${token.slice(0, 16)}`);
+  // Clear any legacy URL hash
+  if (window.location.hash) {
+    history.replaceState(null, "", window.location.pathname);
   }
 }
 
@@ -1585,7 +1591,11 @@ async function checkExistingSession() {
   const savedToken = loadSavedToken();
   if (!savedToken) return null;
   try {
-    const res = await fetch(`/api/session?token=${savedToken}`);
+    const res = await fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: savedToken }),
+    });
     const data = await res.json();
     if (data.username && data.token) {
       saveSession(data.token, data.username);
@@ -1773,7 +1783,8 @@ function setupWsMessageHandler() {
 
       players = data.players;
       obstacles = data.obstacles || [];
-      playerId = players.find((p) => p.username === loggedInUsername).id;
+      const localP = players.find((p) => p.username === loggedInUsername);
+      if (localP) playerId = localP.id;
       gameReady = false;
       obstacleCanvasDirty = true;
       _cachedDOM = null; // Refresh cached DOM references
@@ -2353,6 +2364,10 @@ function setupWsMessageHandler() {
     if (data.type === "end") {
       console.log("Game over! Winner:", data.winnerName);
 
+      // Clear any previous celebration (e.g. from a race condition)
+      if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
+      if (victoryCountdownInterval) { clearInterval(victoryCountdownInterval); victoryCountdownInterval = null; }
+
       // Stop all in-game sounds (shots, bombs, etc.)
       stopAllGameSounds();
       stopHeartbeat();
@@ -2403,7 +2418,7 @@ function setupWsMessageHandler() {
             ${initial}
             <span class="showcase-medal">${endMedals[i] || ""}</span>
           </div>
-          <div class="showcase-name">${p.username}</div>
+          <div class="showcase-name">${esc(p.username)}</div>
           <div class="showcase-kills">${p.kills}K / ${p.deaths}D</div>
         </div>`;
       }).join("");
@@ -2414,7 +2429,7 @@ function setupWsMessageHandler() {
         const isW = p.isWinner;
         return `<div class="vs-row ${isW ? "winner" : ""}">
           <span class="vs-rank">${isW ? "\uD83D\uDC51" : (i + 1) + "."}</span>
-          <span class="vs-name">${p.username}</span>
+          <span class="vs-name">${esc(p.username)}</span>
           <span class="vs-stats">${p.kills}K / ${p.deaths}D (${kd})</span>
         </div>`;
       }).join("");
@@ -2422,13 +2437,13 @@ function setupWsMessageHandler() {
       // Pick a random viral phrase
       const viralPhrase = isLocalWinner
         ? WINNER_PHRASES[Math.floor(Math.random() * WINNER_PHRASES.length)].replace("{winner}", "Você")
-        : LOSER_PHRASES[Math.floor(Math.random() * LOSER_PHRASES.length)].replace("{winner}", data.winnerName);
+        : LOSER_PHRASES[Math.floor(Math.random() * LOSER_PHRASES.length)].replace("{winner}", esc(data.winnerName));
 
       // Banner
       document.getElementById("victoryBanner").innerHTML =
         isLocalWinner ? "\uD83C\uDF89 \uD83C\uDF86 \uD83C\uDF89" : "\u2694\uFE0F \uD83D\uDC80 \u2694\uFE0F";
       document.getElementById("victoryMessage").innerHTML =
-        isLocalWinner ? "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6" : data.winnerName + " VENCEU!";
+        isLocalWinner ? "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6" : esc(data.winnerName) + " VENCEU!";
       document.getElementById("victorySubtext").innerHTML = viralPhrase;
       document.getElementById("victoryShowcase").innerHTML = showcaseHTML;
       document.getElementById("victoryScoreboard").innerHTML = scoreboardHTML;
@@ -2565,7 +2580,7 @@ function renderTop3(stats) {
     const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
     return `<div class="top3-entry">
       <span class="top3-medal">${medals[i]}</span>
-      <span class="top3-name">${s.username}</span>
+      <span class="top3-name">${esc(s.username)}</span>
       <span class="top3-stats">${s.kills}K · ${s.wins}V · K/D ${kd}</span>
     </div>`;
   }).join("");
@@ -2583,15 +2598,18 @@ function updateRoomList(rooms) {
 
   content.innerHTML = rooms
     .map(
-      (r) => `
+      (r) => {
+        const safeId = String(r.id).replace(/[^a-f0-9-]/gi, "");
+        return `
     <div class="room-item">
       <div class="room-info">
-        <div class="room-name">⚔ ${r.name}</div>
+        <div class="room-name">⚔ ${esc(r.name)}</div>
         <div class="room-count">${r.playerCount}/${r.maxPlayers} jogadores</div>
       </div>
-      <button onclick="doJoinRoom('${r.id}')">Entrar</button>
+      <button onclick="doJoinRoom('${safeId}')">Entrar</button>
     </div>
-  `,
+  `;
+      }
     )
     .join("");
 }
@@ -2627,7 +2645,7 @@ function updateRoomScreen(room) {
           const skinColor = SKINS[p.skin || 0] ? SKINS[p.skin || 0].primary : SKINS[0].primary;
           return `
       <div class="room-player">
-        <span class="player-name"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${skinColor};margin-right:8px;vertical-align:middle;border:1px solid rgba(255,255,255,0.2);"></span>${p.username}${p.id === playerId ? " (Você)" : ""}</span>
+        <span class="player-name"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${skinColor};margin-right:8px;vertical-align:middle;border:1px solid rgba(255,255,255,0.2);"></span>${esc(p.username)}${p.id === playerId ? " (Você)" : ""}</span>
         <span class="player-status ${p.ready ? "ready" : "waiting"}">${p.ready ? "✓ Pronto" : "⏳ Esperando"}</span>
       </div>
     `;
@@ -3332,14 +3350,14 @@ function renderKillFeed() {
       if (isStreak) {
         return (
           `<div class="kill-entry streak-entry" style="opacity:${opacity}">` +
-          `<span class="streak-text">🔥 ${e.killer}: ${e.victim}</span></div>`
+          `<span class="streak-text">🔥 ${esc(e.killer)}: ${esc(e.victim)}</span></div>`
         );
       }
       return (
         `<div class="kill-entry" style="opacity:${opacity}">` +
-        `<span class="killer">${e.killer}</span>` +
+        `<span class="killer">${esc(e.killer)}</span>` +
         `<span class="weapon-icon">${e.icon}</span>` +
-        `<span class="victim">${e.victim}</span></div>`
+        `<span class="victim">${esc(e.victim)}</span></div>`
       );
     })
     .join("");
@@ -3451,7 +3469,7 @@ function showLeaderboard(stats) {
       const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2);
       return `<div class="lb-row ${i === 0 ? "top" : ""}">
         <span class="lb-rank">${i + 1}.</span>
-        <span class="lb-name">${i === 0 ? "👑 " : ""}${s.username}</span>
+        <span class="lb-name">${i === 0 ? "👑 " : ""}${esc(s.username)}</span>
         <span class="lb-stats">${s.kills}K / ${s.deaths}M (${kd}) | ${s.wins}V / ${s.gamesPlayed}J</span>
       </div>`;
     }).join("");

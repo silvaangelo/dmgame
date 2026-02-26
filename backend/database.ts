@@ -177,12 +177,11 @@ function generateToken(username: string): string {
   return hash.digest("hex");
 }
 
-export function registerUser(username: string): RegisteredUser {
-  // Check if username already exists
+export function registerUser(username: string): RegisteredUser | null {
+  // Check if username already exists — reject, don't hand out existing tokens
   for (const user of users.values()) {
     if (user.username.toLowerCase() === username.toLowerCase()) {
-      user.lastSeen = Date.now();
-      return user;
+      return null; // Username taken — caller must use token-based login
     }
   }
 
