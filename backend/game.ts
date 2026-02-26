@@ -9,7 +9,7 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { updatePlayerStats, addMatchHistory, getMatchHistory } from "./database.js";
+import { updatePlayerStats, addMatchHistory } from "./database.js";
 import { serialize } from "./protocol.js";
 
 const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
@@ -788,11 +788,6 @@ export function checkVictory(game: Game) {
       try {
         if (p.ws.readyState === WebSocket.OPEN) {
           p.ws.send(roomListMsg);
-          // Send updated match history
-          const history = getMatchHistory(p.username, 10);
-          if (history.length > 0) {
-            p.ws.send(serialize({ type: "matchHistory", history }));
-          }
         }
       } catch { /* ignore */ }
     });

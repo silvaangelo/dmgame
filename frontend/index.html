@@ -63,7 +63,7 @@
   <input id="username" placeholder="✏️ Seu codinome..." maxlength="16" autocomplete="off" />
   <div id="usernameError" style="color: #ff4444; font-size: 19px; margin: 8px 0; display: none; font-weight: 600; font-family: 'Share Tech Mono', monospace;"></div>
   <button onclick="login()">🚀 ENTRAR</button>
-  <button onclick="requestLeaderboard()" style="margin-top: 10px; background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
+  <button onclick="requestLeaderboard(true)" style="margin-top: 10px; background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
 </div>
 
 <!-- Room List Screen -->
@@ -71,14 +71,14 @@
   <h2 style="color: #f0f0f0; margin-bottom: 14px; font-size: 36px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">🎮 SALAS</h2>
   <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; align-items: stretch;">
     <button id="createRoomBtn" onclick="doCreateRoom()" style="background: linear-gradient(180deg, #ff6b35 0%, #cc4422 100%); border-color: #ff8855; font-size: 30px; padding: 22px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">⚔ JOGAR</button>
-    <button onclick="requestLeaderboard()" style="background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
+    <button onclick="requestLeaderboard(true)" style="background: linear-gradient(180deg, #4a4a3a 0%, #3a3a2a 100%); border-color: #6a6a4a; padding: 12px 20px; font-size: 19px;">🏆 Ranking</button>
   </div>
   <div id="roomListContent">
     <p style="color: #8aaa8a; font-style: italic; font-size: 16px;">Nenhuma sala disponível. Crie uma!</p>
   </div>
-  <div id="matchHistorySection" style="display:none; margin-top: 22px;">
-    <h3 style="color: #ff6b35; font-size: 20px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'Rajdhani', sans-serif;">📜 Partidas Recentes</h3>
-    <div id="matchHistoryContent"></div>
+  <div id="top3Section" style="margin-top: 22px;">
+    <h3 style="color: #ff6b35; font-size: 20px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'Rajdhani', sans-serif;">🏅 Top 3 Jogadores</h3>
+    <div id="top3Content"></div>
   </div>
 </div>
 

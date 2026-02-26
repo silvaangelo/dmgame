@@ -19,7 +19,7 @@ import {
   findRoomByPlayer,
 } from "./room.js";
 import { WebSocket } from "ws";
-import { getLeaderboard, getPlayerStats, getMatchHistory, getUserByToken } from "./database.js";
+import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
 import { serialize, deserialize } from "./protocol.js";
 
 export function setupSocket() {
@@ -153,12 +153,6 @@ export function setupSocket() {
         }));
         ws.send(serialize({ type: "roomList", rooms: roomList }));
 
-        // Send match history for this player
-        const history = getMatchHistory(username, 10);
-        if (history.length > 0) {
-          ws.send(serialize({ type: "matchHistory", history }));
-        }
-
         return;
       }
 
@@ -248,12 +242,6 @@ export function setupSocket() {
       if (data.type === "getMyStats") {
         const stats = getPlayerStats(player.username);
         ws.send(serialize({ type: "myStats", stats }));
-        return;
-      }
-
-      if (data.type === "getMatchHistory") {
-        const history = getMatchHistory(player.username, 10);
-        ws.send(serialize({ type: "matchHistory", history }));
         return;
       }
 

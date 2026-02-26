@@ -1568,14 +1568,12 @@ function setupWsMessageHandler() {
       // Show room list screen
       document.getElementById("menu").style.display = "none";
       document.getElementById("roomListScreen").style.display = "block";
+      // Fetch leaderboard to populate top 3
+      requestLeaderboard();
     }
 
     if (data.type === "roomList") {
       updateRoomList(data.rooms);
-    }
-
-    if (data.type === "matchHistory") {
-      renderMatchHistory(data.history);
     }
 
     if (data.type === "roomJoined") {
@@ -2361,57 +2359,24 @@ function setupWsMessageHandler() {
 
 // ===== ROOM UI FUNCTIONS =====
 
-function formatTimeAgo(timestamp) {
-  const diff = Date.now() - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "agora";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}min atrás`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h atrás`;
-  const days = Math.floor(hours / 24);
-  return `${days}d atrás`;
-}
+function renderTop3(stats) {
+  const container = document.getElementById("top3Content");
+  if (!container) return;
 
-function renderMatchHistory(history) {
-  const section = document.getElementById("matchHistorySection");
-  const content = document.getElementById("matchHistoryContent");
-  if (!section || !content) return;
-
-  if (!history || history.length === 0) {
-    section.style.display = "none";
+  if (!stats || stats.length === 0) {
+    container.innerHTML = '<p style="color: #6a8a6a; font-style: italic; font-size: 14px;">Nenhum jogador ainda. Seja o primeiro!</p>';
     return;
   }
 
-  section.style.display = "block";
-  content.innerHTML = history
-    .map((match) => {
-      const me = match.players.find((p) => p.username === loggedInUsername);
-      const isWin = me && me.isWinner;
-      const kills = me ? me.kills : 0;
-      const deaths = me ? me.deaths : 0;
-      const kd = deaths === 0 ? kills.toFixed(1) : (kills / deaths).toFixed(1);
-      const otherPlayers = match.players
-        .filter((p) => p.username !== loggedInUsername)
-        .map((p) => p.username)
-        .join(", ");
-
-      return `
-        <div class="match-entry ${isWin ? "match-win" : "match-loss"}">
-          <div class="match-header">
-            <span class="match-result">${isWin ? "✓ Vitória" : "✗ Derrota"}</span>
-            <span class="match-time">${formatTimeAgo(match.timestamp)}</span>
-          </div>
-          <div class="match-stats">
-            <span>🎯 ${kills} abates</span>
-            <span>💀 ${deaths} mortes</span>
-            <span>📊 K/D ${kd}</span>
-          </div>
-          <div class="match-players">vs ${otherPlayers || "—"} · Vencedor: ${match.winnerName}</div>
-        </div>
-      `;
-    })
-    .join("");
+  const medals = ["🥇", "🥈", "🥉"];
+  container.innerHTML = stats.slice(0, 3).map((s, i) => {
+    const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
+    return `<div class="top3-entry">
+      <span class="top3-medal">${medals[i]}</span>
+      <span class="top3-name">${s.username}</span>
+      <span class="top3-stats">${s.kills}K · ${s.wins}V · K/D ${kd}</span>
+    </div>`;
+  }).join("");
 }
 
 function updateRoomList(rooms) {
@@ -3187,8 +3152,11 @@ function selectSkin(index) {
 
 // ===== LEADERBOARD =====
 
-function requestLeaderboard() {
+let leaderboardModalRequested = false;
+
+function requestLeaderboard(openModal) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  leaderboardModalRequested = !!openModal;
   ws.send(serialize({ type: "getLeaderboard" }));
 }
 
@@ -3209,7 +3177,14 @@ function showLeaderboard(stats) {
     }).join("");
   }
 
-  document.getElementById("leaderboardModal").style.display = "block";
+  // Always update the inline top 3 section
+  renderTop3(stats);
+
+  // Only open the modal if the user explicitly clicked the ranking button
+  if (leaderboardModalRequested) {
+    leaderboardModalRequested = false;
+    document.getElementById("leaderboardModal").style.display = "block";
+  }
 }
 
 // ===== GRENADE & PICKUP EFFECTS =====
