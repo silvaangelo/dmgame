@@ -492,24 +492,7 @@ canvas {
 }
 
 #inGameControls {
-  position: fixed;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
-  background: rgba(0, 0, 0, 0.55);
-  color: rgba(255, 255, 255, 0.75);
-  padding: 10px 14px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: 'Share Tech Mono', monospace;
-  z-index: 790;
-  pointer-events: none;
-  text-align: left;
-  line-height: 2;
-  letter-spacing: 0.3px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  max-width: 180px;
-  writing-mode: horizontal-tb;
+  display: none !important;
 }
 
 .hud-bar {
@@ -997,19 +980,28 @@ canvas {
   letter-spacing: 1px;
 }
 
-/* Large screens: scoreboard pinned to top-right, always visible */
+/* Large screens: scoreboard pinned to top-right, always visible but subtle */
 @media (min-width: 1201px) {
   #playerList {
     top: 12px;
     right: 12px;
     left: auto;
     transform: none;
-    min-width: 260px;
-    max-width: 300px;
-    padding: 14px 18px;
-    background: rgba(12, 18, 12, 0.75);
+    min-width: 200px;
+    max-width: 240px;
+    padding: 10px 14px;
+    background: rgba(12, 18, 12, 0.45);
     pointer-events: none;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
+    border-color: rgba(74, 106, 74, 0.3);
+    backdrop-filter: blur(6px);
+    opacity: 0.7;
+    transition: opacity 0.3s;
+  }
+
+  #playerList:hover {
+    opacity: 1;
+    background: rgba(12, 18, 12, 0.85);
   }
 
   #playerList .tab-hint {

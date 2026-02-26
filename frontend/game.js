@@ -1414,6 +1414,10 @@ function returnToLobby() {
   const mobileCtrl = document.getElementById("mobileControls");
   if (mobileCtrl) mobileCtrl.classList.remove("active");
 
+  // Show lobby-only elements again
+  const ghLink = document.querySelector(".github-footer-link");
+  if (ghLink) ghLink.style.display = "";
+
   // Show room list (player stays logged in)
   document.getElementById("lobbyLayout").style.display = "";
   document.getElementById("roomListScreen").style.display = "block";
@@ -1963,7 +1967,9 @@ function setupWsMessageHandler() {
       document.getElementById("gameUI").style.display = "block";
       document.getElementById("killFeed").style.display = "flex";
       document.getElementById("readyScreen").style.display = "block";
-      if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "block";
+      // Hide lobby-only elements
+      const ghLink = document.querySelector(".github-footer-link");
+      if (ghLink) ghLink.style.display = "none";
 
       players = data.players;
       obstacles = data.obstacles || [];
@@ -2729,6 +2735,9 @@ function setupWsMessageHandler() {
     document.getElementById("lobbyLayout").style.display = "";
     document.getElementById("menu").style.display = "block";
     if (document.getElementById("inGameControls")) document.getElementById("inGameControls").style.display = "none";
+    // Restore lobby-only elements
+    const ghLinkClose = document.querySelector(".github-footer-link");
+    if (ghLinkClose) ghLinkClose.style.display = "";
     const mobileCtrlClose = document.getElementById("mobileControls");
     if (mobileCtrlClose) mobileCtrlClose.classList.remove("active");
 
