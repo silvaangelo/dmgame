@@ -45,12 +45,6 @@ export const GAME_CONFIG = {
   SNIPER_COOLDOWN: 1200,
   SNIPER_DAMAGE: 4,
   SNIPER_BULLET_SPEED: 30,
-  // Grenade Launcher
-  GRENADE_COOLDOWN: 1500,
-  GRENADE_DAMAGE: 2,
-  GRENADE_RADIUS: 90,
-  GRENADE_SPEED: 8,
-  GRENADE_FUSE_TIME: 800,
   // Shield powerup
   SHIELD_DURATION: 6000,
   SHIELD_ABSORB: 2, // absorbs 2 HP worth of damage
@@ -80,7 +74,7 @@ export const GAME_CONFIG = {
   USERNAME_PATTERN: /^[a-zA-Z0-9_]+$/,
 };
 
-export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"] as const;
+export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper"] as const;
 
 export const OBSTACLE_CONFIG = {
   WALL_COUNT_MIN: 14,

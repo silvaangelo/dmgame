@@ -251,7 +251,6 @@ export function startGameFromRoom(room: Room) {
     id: uuid(),
     players,
     bullets: [],
-    grenades: [],
     obstacles,
     pickups: [],
     bombs: [],

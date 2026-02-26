@@ -45,7 +45,7 @@ export function serializePlayersCompact(game: Game) {
   const now = Date.now();
   const WEAPON_CODES: Record<string, number> = {
     machinegun: 0, shotgun: 1, knife: 2, minigun: 3,
-    sniper: 4, grenade_launcher: 5,
+    sniper: 4,
   };
   return game.players.map((p) => [
     p.id,

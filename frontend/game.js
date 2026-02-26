@@ -39,14 +39,13 @@ const SKINS = [
 ];
 
 // Weapon definitions
-const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"];
+const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper"];
 const WEAPON_NAMES = {
   machinegun: "🔫 Metralhadora",
   shotgun: "🔫 Shotgun",
   knife: "🔪 Faca",
   minigun: "🔥 Minigun",
   sniper: "🎯 Sniper",
-  grenade_launcher: "💣 Lança-Granada",
 };
 const WEAPON_COOLDOWNS = {
   machinegun: 60,
@@ -54,15 +53,13 @@ const WEAPON_COOLDOWNS = {
   knife: 200,
   minigun: 18,
   sniper: 1200,
-  grenade_launcher: 1500,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
   shotgun: "🔫",
   knife: "🔪",
   minigun: "🔥",
-  sniper: "🎯",
-  grenade_launcher: "💣"
+  sniper: "🎯"
 };
 
 let ws;
@@ -71,7 +68,6 @@ let players = [];
 let bullets = [];
 let obstacles = [];
 let pickups = [];
-let grenades = [];
 let mouseX = 700;
 let mouseY = 450;
 let previousBulletCount = 0;
@@ -1239,7 +1235,6 @@ function returnToLobby() {
   players = [];
   bullets = [];
   pickups = [];
-  grenades = [];
   explosions = [];
   bloodParticles = [];
   bloodStains = [];
@@ -1495,9 +1490,6 @@ function tryShoot() {
       const aimAngle = Math.atan2(dirY, dirX);
       createKnifeSlash(playerX, playerY, aimAngle);
       playKnifeSound(playerX, playerY);
-    } else if (player.weapon === "grenade_launcher") {
-      createMuzzleFlash(playerX, playerY, dirX, dirY);
-      triggerScreenShake(4);
     } else {
       createMuzzleFlash(playerX, playerY, dirX, dirY);
       if (player.weapon !== "knife") {
@@ -1510,7 +1502,7 @@ function tryShoot() {
     }
 
     // Client-side bullet prediction (instant visual feedback)
-    if (player.weapon !== "knife" && player.weapon !== "grenade_launcher") {
+    if (player.weapon !== "knife") {
       const bulletSpeed =
         player.weapon === "machinegun" ? 9 :
         player.weapon === "shotgun" ? 8 :
@@ -2012,19 +2004,7 @@ function setupWsMessageHandler() {
         flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, bombFlash);
       }
       // Explosion sound
-      playGrenadeExplosionSound(data.x, data.y);
-    }
-
-    if (data.type === "grenadeExploded") {
-      createBombExplosion(data.x, data.y, data.radius || 90);
-      const dx = data.x - predictedX;
-      const dy = data.y - predictedY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      triggerScreenShake(Math.max(2, 12 - dist / 50));
-      if (dist < 100) {
-        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, 0.2 * (1 - dist / 100));
-      }
-      playGrenadeExplosionSound(data.x, data.y);
+      playExplosionSound(data.x, data.y);
     }
 
     // ===== LIGHTNING STRIKE SYSTEM =====
@@ -2092,7 +2072,7 @@ function setupWsMessageHandler() {
 
     if (data.type === "state") {
       // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted]
-      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper", 5: "grenade_launcher" };
+      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
       // Build username lookup map for O(1) access instead of O(n) per player
       const usernameMap = new Map();
       players.forEach((pl) => usernameMap.set(pl.id, pl.username));
@@ -2146,14 +2126,6 @@ function setupWsMessageHandler() {
       });
       pickups = parsedPickups;
 
-      // Parse compact grenades: [id, x, y]
-      grenades = (data.g || []).map((g) => {
-        if (Array.isArray(g)) {
-          return { id: g[0], x: g[1], y: g[2] };
-        }
-        return g;
-      });
-
       // Check for deaths before updating players
       parsedPlayers.forEach((p) => {
         const prevState = previousPlayerStates.get(p.id);
@@ -2198,11 +2170,6 @@ function setupWsMessageHandler() {
             // Sniper kills: lightning effect (disintegration)
             createKillEffect(p.x, p.y, "lightning");
             createBlood(p.x, p.y);
-          } else if (deathWeapon === "grenade_launcher") {
-            // Grenade kills: massive fire explosion
-            createKillEffect(p.x, p.y, "fire");
-            createKillEffect(p.x, p.y, "fire");
-            createExplosion(p.x, p.y);
           } else if (deathWeapon === "minigun") {
             // Minigun kills: fire + lightning
             createKillEffect(p.x, p.y, "fire");
@@ -2465,6 +2432,11 @@ function setupWsMessageHandler() {
       document.getElementById("victoryFooter").innerHTML = `
         <button id="voltarBtn" onclick="skipVictoryScreen()" style="padding: 14px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif;">\u21A9 Voltar</button>
         <p style="margin-top: 10px; font-size: 15px; color: #8aaa8a;">Voltando em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">10</span>s...</p>
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 13px; color: #8aaa8a; line-height: 1.8;">
+          <div style="color: #88ccff; font-weight: 600; margin-bottom: 4px;">\uD83C\uDFAE Controles</div>
+          <div><kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">WASD</kbd> Mover \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">Click / Espaço</kbd> Atirar \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">Q</kbd> Trocar Arma \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">Tab</kbd> Placar</div>
+          <div><kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">1</kbd> Metralhadora \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">2</kbd> Shotgun \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">3</kbd> Faca \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">4</kbd> Sniper</div>
+        </div>
       `;
       document.getElementById("victoryScreen").style.display = "block";
 
@@ -2748,7 +2720,7 @@ function updateShotUI() {
   }
 
   const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
-  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4", grenade_launcher: "5" };
+  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4" };
   const shortcut = WEAPON_SHORTCUTS[player.weapon] || "";
   const shortcutTag = shortcut ? `[${shortcut}] ` : "";
   if (player.weapon === "knife") {
@@ -2855,9 +2827,9 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Number keys 1-6 to select weapon directly
-  if (e.key >= "1" && e.key <= "6") {
-    const weapons = ["machinegun", "shotgun", "knife", "sniper", "grenade_launcher"];
+  // Number keys 1-4 to select weapon directly
+  if (e.key >= "1" && e.key <= "4") {
+    const weapons = ["machinegun", "shotgun", "knife", "sniper"];
     const weaponIndex = parseInt(e.key) - 1;
     ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
     return;
@@ -3492,9 +3464,9 @@ function showLeaderboard(stats) {
   }
 }
 
-// ===== GRENADE & PICKUP EFFECTS =====
+// ===== EXPLOSION & PICKUP EFFECTS =====
 
-function playGrenadeExplosionSound(x, y) {
+function playExplosionSound(x, y) {
   const bombIndex = 1 + Math.floor(Math.random() * 5); // 1–5
   const soundName = "bomb-" + bombIndex;
   const rate = 0.9 + Math.random() * 0.2; // slight pitch variation
@@ -4117,22 +4089,6 @@ function render() {
   // Render bombs
   renderBombs();
 
-  // Render grenades in flight
-  grenades.forEach((g) => {
-    const now = Date.now();
-    const pulse = Math.sin(now / 100) * 0.3 + 0.7;
-    // Grenade body
-    ctx.fillStyle = "#556b2f";
-    ctx.beginPath();
-    ctx.arc(g.x, g.y, 5, 0, Math.PI * 2);
-    ctx.fill();
-    // Blinking red light
-    ctx.fillStyle = `rgba(255, 50, 0, ${pulse})`;
-    ctx.beginPath();
-    ctx.arc(g.x, g.y - 3, 2, 0, Math.PI * 2);
-    ctx.fill();
-  });
-
   // Render lightning warnings
   renderLightningWarnings();
 
@@ -4295,23 +4251,6 @@ function render() {
       // Stock
       ctx.fillStyle = "#3a2a1a";
       ctx.fillRect(-4, -2, 8, 4);
-    } else if (p.weapon === "grenade_launcher") {
-      // Grenade launcher — thick barrel
-      ctx.fillStyle = "#3a3a2a";
-      ctx.fillRect(4, -3.5, 18, 7);
-      // Wide muzzle
-      ctx.fillStyle = "#555";
-      ctx.beginPath();
-      ctx.arc(22, 0, 5, -Math.PI / 2, Math.PI / 2);
-      ctx.fill();
-      // Grip
-      ctx.fillStyle = "#2a2a2a";
-      ctx.fillRect(-2, -2, 6, 4);
-      // Ammo drum hint
-      ctx.fillStyle = "#444";
-      ctx.beginPath();
-      ctx.arc(10, 4, 4, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     ctx.restore();

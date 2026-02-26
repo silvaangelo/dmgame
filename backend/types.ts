@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 
-export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper" | "grenade_launcher";
+export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper";
 
 export type Player = {
   id: string;
@@ -73,16 +73,6 @@ export type Lightning = {
   createdAt: number;
 };
 
-export type Grenade = {
-  id: string;
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  playerId: string;
-  createdAt: number;
-};
-
 export type Pickup = {
   id: string;
   x: number;
@@ -95,7 +85,6 @@ export type Game = {
   id: string;
   players: Player[];
   bullets: Bullet[];
-  grenades: Grenade[];
   obstacles: Obstacle[];
   pickups: Pickup[];
   bombs: Bomb[];
