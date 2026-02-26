@@ -3,11 +3,12 @@ import type { Game, Obstacle } from "./types.js";
 import { GAME_CONFIG } from "./config.js";
 import { games, allPlayers } from "./state.js";
 import { wss } from "./server.js";
+import { serialize } from "./protocol.js";
 
 /* ================= BROADCAST ================= */
 
 export function broadcast(game: Game, data: unknown) {
-  const msg = JSON.stringify(data);
+  const msg = serialize(data);
   game.players.forEach((p) => {
     try {
       if (p.ws.readyState === WebSocket.OPEN) {
@@ -97,7 +98,7 @@ export function broadcastOnlineList() {
     username: p.username,
     status: p.status,
   }));
-  const msg = JSON.stringify({ type: "onlineList", players: onlineList });
+  const msg = serialize({ type: "onlineList", players: onlineList });
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(msg);

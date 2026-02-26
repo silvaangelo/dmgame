@@ -31,8 +31,8 @@ export default tseslint.config(
     },
   },
 
-  // Ignore build output and dependencies
+  // Ignore build output, dependencies, and vendored libraries
   {
-    ignores: ["dist/**", "node_modules/**", "*.config.*"],
+    ignores: ["dist/**", "node_modules/**", "*.config.*", "frontend/lib/**"],
   },
 );

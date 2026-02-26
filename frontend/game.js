@@ -1,3 +1,11 @@
+// ===== MSGPACK PROTOCOL WRAPPERS =====
+function serialize(data) {
+  return MessagePack.encode(data);
+}
+function deserialize(raw) {
+  return MessagePack.decode(new Uint8Array(raw));
+}
+
 // Game configuration constants
 const GAME_CONFIG = {
   ARENA_WIDTH: 1400,
@@ -894,6 +902,7 @@ let audioCtx = null;
 const audioBuffers = {};
 let readyAlarmSource = null;
 let readyAlarmGain = null;
+const activeGameSources = [];
 
 function initAudio() {
   if (audioCtx) return;
@@ -942,6 +951,11 @@ function playSound(bufferName, volume = 1.0, playbackRate = 1.0) {
   source.connect(gain);
   gain.connect(audioCtx.destination);
   source.start(0);
+  activeGameSources.push(source);
+  source.onended = () => {
+    const idx = activeGameSources.indexOf(source);
+    if (idx !== -1) activeGameSources.splice(idx, 1);
+  };
 }
 
 function playPositionalSound(
@@ -978,6 +992,18 @@ function playPositionalSound(
   gainNode.connect(panner);
   panner.connect(audioCtx.destination);
   source.start(0);
+  activeGameSources.push(source);
+  source.onended = () => {
+    const idx = activeGameSources.indexOf(source);
+    if (idx !== -1) activeGameSources.splice(idx, 1);
+  };
+}
+
+function stopAllGameSounds() {
+  for (const src of activeGameSources) {
+    try { src.stop(); } catch (_) { /* already stopped */ }
+  }
+  activeGameSources.length = 0;
 }
 
 function playKnifeSound(x, y) {
@@ -1117,7 +1143,7 @@ function confirmReady() {
   readyButton.textContent = "PRONTO ✓";
 
   // Send ready to server
-  ws.send(JSON.stringify({ type: "ready" }));
+  ws.send(serialize({ type: "ready" }));
 }
 
 // Update ready status display
@@ -1240,7 +1266,7 @@ canvas.addEventListener("mousemove", (e) => {
     const player = players.find((p) => p.id === playerId);
     if (player) {
       const aimAngle = Math.atan2(mouseY - predictedY, mouseX - predictedX);
-      ws.send(JSON.stringify({ type: "aim", aimAngle }));
+      ws.send(serialize({ type: "aim", aimAngle }));
       lastAimSendTime = now;
     }
   }
@@ -1354,7 +1380,7 @@ function tryShoot() {
       }
     }
 
-    ws.send(JSON.stringify({ type: "shoot", dirX, dirY }));
+    ws.send(serialize({ type: "shoot", dirX, dirY }));
     lastShootTime = now;
   }
 }
@@ -1432,14 +1458,15 @@ function connectSpectator() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   ws = new WebSocket(wsUrl);
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
     // If we have a pending login, send it now
     if (loggedInUsername && !loggedIn) {
       if (sessionToken) {
-        ws.send(JSON.stringify({ type: "login", token: sessionToken }));
+        ws.send(serialize({ type: "login", token: sessionToken }));
       } else {
-        ws.send(JSON.stringify({ type: "login", username: loggedInUsername }));
+        ws.send(serialize({ type: "login", username: loggedInUsername }));
       }
     }
   };
@@ -1507,7 +1534,7 @@ async function login() {
 
   // Send WS login with token
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "login", token: sessionToken }));
+    ws.send(serialize({ type: "login", token: sessionToken }));
   } else {
     connectSpectator();
   }
@@ -1515,7 +1542,7 @@ async function login() {
 
 function setupWsMessageHandler() {
   ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+    const data = deserialize(e.data);
 
     if (data.type === "error") {
       const errorEl = document.getElementById("usernameError");
@@ -2156,6 +2183,10 @@ function setupWsMessageHandler() {
     if (data.type === "end") {
       console.log("Game over! Winner:", data.winnerName);
 
+      // Stop all in-game sounds (shots, bombs, etc.)
+      stopAllGameSounds();
+      stopHeartbeat();
+
       // Hide ready screen if showing
       document.getElementById("readyScreen").style.display = "none";
 
@@ -2322,7 +2353,7 @@ function setupWsMessageHandler() {
 
     // Auto-login via WebSocket
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "login", token: session.token }));
+      ws.send(serialize({ type: "login", token: session.token }));
     }
     // If WS isn't open yet, the onopen handler will send the login
   }
@@ -2464,12 +2495,12 @@ function updateRoomScreen(room) {
 
 function doCreateRoom() {
   if (!ws) return;
-  ws.send(JSON.stringify({ type: "createRoom" }));
+  ws.send(serialize({ type: "createRoom" }));
 }
 
 function doJoinRoom(roomId) {
   if (!ws) return;
-  ws.send(JSON.stringify({ type: "joinRoom", roomId }));
+  ws.send(serialize({ type: "joinRoom", roomId }));
 }
 
 function doLeaveRoom() {
@@ -2482,7 +2513,7 @@ function doLeaveRoom() {
     readyBtn.textContent = "⚔ ESTOU PRONTO! ⚔";
   }
 
-  ws.send(JSON.stringify({ type: "leaveRoom" }));
+  ws.send(serialize({ type: "leaveRoom" }));
   currentRoomData = null;
   document.getElementById("roomScreen").style.display = "none";
   document.getElementById("roomListScreen").style.display = "block";
@@ -2500,7 +2531,7 @@ function doRoomReady() {
   // Initialize audio on first user interaction
   initAudio();
 
-  ws.send(JSON.stringify({ type: "roomReady" }));
+  ws.send(serialize({ type: "roomReady" }));
 }
 
 // ===== HUD DISPLAY =====
@@ -2628,7 +2659,7 @@ document.addEventListener("keydown", (e) => {
 
   // Q key to cycle weapons
   if (e.key === "q" || e.key === "Q") {
-    ws.send(JSON.stringify({ type: "switchWeapon" }));
+    ws.send(serialize({ type: "switchWeapon" }));
     return;
   }
 
@@ -2636,13 +2667,13 @@ document.addEventListener("keydown", (e) => {
   if (e.key >= "1" && e.key <= "3") {
     const weapons = ["machinegun", "shotgun", "knife"];
     const weaponIndex = parseInt(e.key) - 1;
-    ws.send(JSON.stringify({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
+    ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
     return;
   }
 
   // R key to manually reload
   if (e.key === "r" || e.key === "R") {
-    ws.send(JSON.stringify({ type: "reload" }));
+    ws.send(serialize({ type: "reload" }));
     return;
   }
 
@@ -2664,7 +2695,7 @@ document.addEventListener("keydown", (e) => {
       timestamp: Date.now(),
     };
 
-    ws.send(JSON.stringify(input));
+    ws.send(serialize(input));
 
     // Store for reconciliation
     pendingInputs.push({
@@ -2739,7 +2770,7 @@ document.addEventListener("keyup", (e) => {
       timestamp: Date.now(),
     };
 
-    ws.send(JSON.stringify(input));
+    ws.send(serialize(input));
 
     // Store for reconciliation
     pendingInputs.push({
@@ -2774,7 +2805,7 @@ function releaseAllKeys() {
     if (currentKeys[key]) {
       currentKeys[key] = false;
       inputSequence++;
-      ws.send(JSON.stringify({ type: "keyup", key, sequence: inputSequence, timestamp: Date.now() }));
+      ws.send(serialize({ type: "keyup", key, sequence: inputSequence, timestamp: Date.now() }));
       pendingInputs.push({ sequence: inputSequence, keys: { ...currentKeys }, timestamp: Date.now() });
     }
   }
@@ -2945,7 +2976,7 @@ function initMobileControls() {
 
       // Send aim angle to server
       if (ws && playerId && gameReady) {
-        ws.send(JSON.stringify({ type: "aim", aimAngle }));
+        ws.send(serialize({ type: "aim", aimAngle }));
       }
     }
   }
@@ -2955,7 +2986,7 @@ function initMobileControls() {
     e.preventDefault();
     weaponBtn.classList.add("pressed");
     if (ws && gameReady) {
-      ws.send(JSON.stringify({ type: "switchWeapon" }));
+      ws.send(serialize({ type: "switchWeapon" }));
     }
     setTimeout(() => weaponBtn.classList.remove("pressed"), 150);
   }, { passive: false });
@@ -2980,7 +3011,7 @@ function applyMobileKeys(newKeys) {
         sequence: inputSequence,
         timestamp: Date.now(),
       };
-      ws.send(JSON.stringify(input));
+      ws.send(serialize(input));
 
       pendingInputs.push({
         sequence: inputSequence,
@@ -3150,7 +3181,7 @@ function initSkinSelector() {
 
 function selectSkin(index) {
   selectedSkin = index;
-  if (ws) ws.send(JSON.stringify({ type: "selectSkin", skin: index }));
+  if (ws) ws.send(serialize({ type: "selectSkin", skin: index }));
   initSkinSelector();
 }
 
@@ -3158,7 +3189,7 @@ function selectSkin(index) {
 
 function requestLeaderboard() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "getLeaderboard" }));
+  ws.send(serialize({ type: "getLeaderboard" }));
 }
 
 function showLeaderboard(stats) {

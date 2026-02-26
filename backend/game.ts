@@ -10,6 +10,7 @@ import {
   debouncedBroadcastOnlineList,
 } from "./utils.js";
 import { updatePlayerStats, addMatchHistory, getMatchHistory } from "./database.js";
+import { serialize } from "./protocol.js";
 
 const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3 };
 
@@ -750,7 +751,7 @@ export function checkVictory(game: Game) {
       winnerName: winner.username,
     });
 
-    const endMessage = JSON.stringify({
+    const endMessage = serialize({
       type: "end",
       winnerName: winner.username,
       scoreboard: scoreboard,
@@ -782,7 +783,7 @@ export function checkVictory(game: Game) {
       playerCount: r.players.length,
       maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
     }));
-    const roomListMsg = JSON.stringify({ type: "roomList", rooms: roomList });
+    const roomListMsg = serialize({ type: "roomList", rooms: roomList });
     game.players.forEach((p) => {
       try {
         if (p.ws.readyState === WebSocket.OPEN) {
@@ -790,7 +791,7 @@ export function checkVictory(game: Game) {
           // Send updated match history
           const history = getMatchHistory(p.username, 10);
           if (history.length > 0) {
-            p.ws.send(JSON.stringify({ type: "matchHistory", history }));
+            p.ws.send(serialize({ type: "matchHistory", history }));
           }
         }
       } catch { /* ignore */ }

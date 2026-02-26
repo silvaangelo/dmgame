@@ -20,6 +20,7 @@ import {
 } from "./room.js";
 import { WebSocket } from "ws";
 import { getLeaderboard, getPlayerStats, getMatchHistory, getUserByToken } from "./database.js";
+import { serialize, deserialize } from "./protocol.js";
 
 export function setupSocket() {
   wss.on("connection", (ws) => {
@@ -37,12 +38,13 @@ export function setupSocket() {
       username: p.username,
       status: p.status,
     }));
-    ws.send(JSON.stringify({ type: "onlineList", players: onlineList }));
+    ws.send(serialize({ type: "onlineList", players: onlineList }));
 
     ws.on("message", (msg) => {
-      let data;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: any;
       try {
-        data = JSON.parse(msg.toString());
+        data = deserialize(msg as Buffer);
       } catch {
         return; // Ignore malformed messages
       }
@@ -61,7 +63,7 @@ export function setupSocket() {
           if (user) {
             trimmed = user.username;
           } else {
-            ws.send(JSON.stringify({
+            ws.send(serialize({
               type: "error",
               message: "Sessão expirada. Faça login novamente.",
             }));
@@ -82,7 +84,7 @@ export function setupSocket() {
           username.length > GAME_CONFIG.USERNAME_MAX_LENGTH ||
           !GAME_CONFIG.USERNAME_PATTERN.test(username)
         ) {
-          ws.send(JSON.stringify({
+          ws.send(serialize({
             type: "error",
             message: `Username must be ${GAME_CONFIG.USERNAME_MIN_LENGTH}-${GAME_CONFIG.USERNAME_MAX_LENGTH} characters (letters, numbers, underscores only).`,
           }));
@@ -94,7 +96,7 @@ export function setupSocket() {
           (p) => p.username.toLowerCase() === username.toLowerCase()
         );
         if (usernameTaken) {
-          ws.send(JSON.stringify({
+          ws.send(serialize({
             type: "error",
             message: "Este nome já está em uso. Escolha outro.",
           }));
@@ -137,7 +139,7 @@ export function setupSocket() {
         console.log(`👤 ${username} logged in`);
 
         // Send login success + room list
-        ws.send(JSON.stringify({
+        ws.send(serialize({
           type: "loginSuccess",
           playerId: player.id,
           username,
@@ -149,12 +151,12 @@ export function setupSocket() {
           playerCount: r.players.length,
           maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
         }));
-        ws.send(JSON.stringify({ type: "roomList", rooms: roomList }));
+        ws.send(serialize({ type: "roomList", rooms: roomList }));
 
         // Send match history for this player
         const history = getMatchHistory(username, 10);
         if (history.length > 0) {
-          ws.send(JSON.stringify({ type: "matchHistory", history }));
+          ws.send(serialize({ type: "matchHistory", history }));
         }
 
         return;
@@ -163,7 +165,7 @@ export function setupSocket() {
       // Allow leaderboard requests before login
       if (data.type === "getLeaderboard") {
         const stats = getLeaderboard(10);
-        ws.send(JSON.stringify({ type: "leaderboard", stats }));
+        ws.send(serialize({ type: "leaderboard", stats }));
         return;
       }
 
@@ -191,7 +193,7 @@ export function setupSocket() {
           playerCount: r.players.length,
           maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
         }));
-        ws.send(JSON.stringify({ type: "roomList", rooms: roomList }));
+        ws.send(serialize({ type: "roomList", rooms: roomList }));
         return;
       }
 
@@ -210,7 +212,7 @@ export function setupSocket() {
               (p) => p.id !== player!.id && p.skin === skinIndex
             );
             if (skinTaken) {
-              ws.send(JSON.stringify({
+              ws.send(serialize({
                 type: "skinTaken",
                 message: "Essa skin já foi escolhida por outro jogador.",
               }));
@@ -232,7 +234,7 @@ export function setupSocket() {
               maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
               timeRemaining: room.countdownStarted ? room.timeRemaining : null,
             };
-            const msg = JSON.stringify({ type: "roomUpdate", room: roomData });
+            const msg = serialize({ type: "roomUpdate", room: roomData });
             room.players.forEach((rp) => {
               try {
                 if (rp.ws.readyState === WebSocket.OPEN) rp.ws.send(msg);
@@ -245,13 +247,13 @@ export function setupSocket() {
 
       if (data.type === "getMyStats") {
         const stats = getPlayerStats(player.username);
-        ws.send(JSON.stringify({ type: "myStats", stats }));
+        ws.send(serialize({ type: "myStats", stats }));
         return;
       }
 
       if (data.type === "getMatchHistory") {
         const history = getMatchHistory(player.username, 10);
-        ws.send(JSON.stringify({ type: "matchHistory", history }));
+        ws.send(serialize({ type: "matchHistory", history }));
         return;
       }
 
@@ -393,7 +395,7 @@ export function setupSocket() {
               }));
               try {
                 if (lastPlayer.ws.readyState === WebSocket.OPEN) {
-                  lastPlayer.ws.send(JSON.stringify({ type: "roomList", rooms: roomList }));
+                  lastPlayer.ws.send(serialize({ type: "roomList", rooms: roomList }));
                 }
               } catch { /* ignore */ }
             }

@@ -6,6 +6,7 @@ import { rooms, allPlayers } from "./state.js";
 import { wss } from "./server.js";
 import { debouncedBroadcastOnlineList } from "./utils.js";
 import { startGameFromRoom } from "./matchmaking.js";
+import { serialize } from "./protocol.js";
 
 /* ================= ROOM NAME GENERATOR ================= */
 
@@ -59,7 +60,7 @@ function serializeRoomListItem(room: Room) {
 
 export function broadcastRoomList() {
   const roomList = Array.from(rooms.values()).map(serializeRoomListItem);
-  const msg = JSON.stringify({ type: "roomList", rooms: roomList });
+  const msg = serialize({ type: "roomList", rooms: roomList });
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(msg);
@@ -68,7 +69,7 @@ export function broadcastRoomList() {
 }
 
 function broadcastRoomUpdate(room: Room) {
-  const msg = JSON.stringify({ type: "roomUpdate", room: serializeRoom(room) });
+  const msg = serialize({ type: "roomUpdate", room: serializeRoom(room) });
   room.players.forEach((p) => {
     try {
       if (p.ws.readyState === WebSocket.OPEN) {
@@ -108,7 +109,7 @@ function startRoomCountdown(room: Room) {
     room.timeRemaining--;
 
     // Broadcast countdown to room players
-    const msg = JSON.stringify({
+    const msg = serialize({
       type: "roomCountdown",
       timeRemaining: room.timeRemaining,
     });
@@ -178,7 +179,7 @@ export function createRoom(player: Player): Room | null {
 
   console.log(`🚪 Room "${room.name}" created by ${player.username}`);
 
-  player.ws.send(JSON.stringify({
+  player.ws.send(serialize({
     type: "roomJoined",
     room: serializeRoom(room),
   }));
@@ -191,7 +192,7 @@ export function createRoom(player: Player): Room | null {
 export function joinRoom(player: Player, roomId: string): boolean {
   const room = rooms.get(roomId);
   if (!room) {
-    player.ws.send(JSON.stringify({
+    player.ws.send(serialize({
       type: "error",
       message: "Room not found.",
     }));
@@ -199,7 +200,7 @@ export function joinRoom(player: Player, roomId: string): boolean {
   }
 
   if (room.players.length >= GAME_CONFIG.ROOM_MAX_PLAYERS) {
-    player.ws.send(JSON.stringify({
+    player.ws.send(serialize({
       type: "error",
       message: "Room is full.",
     }));
@@ -215,7 +216,7 @@ export function joinRoom(player: Player, roomId: string): boolean {
 
   console.log(`👤 ${player.username} joined room "${room.name}" (${room.players.length}/${GAME_CONFIG.ROOM_MAX_PLAYERS})`);
 
-  player.ws.send(JSON.stringify({
+  player.ws.send(serialize({
     type: "roomJoined",
     room: serializeRoom(room),
   }));
