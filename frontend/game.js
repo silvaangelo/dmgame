@@ -215,6 +215,82 @@ const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
 const wsUrl = `${wsProtocol}//${location.host}/socket`;
 const assetBase = location.origin;
 
+// ===== MSGPACK DECODER (binary state broadcasts) =====
+const _msgpackTextDecoder = new TextDecoder();
+function decodeMsgpack(buffer) {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  let offset = 0;
+
+  function read() {
+    const b = bytes[offset++];
+    // positive fixint
+    if (b <= 0x7f) return b;
+    // fixmap
+    if ((b & 0xf0) === 0x80) return readMap(b & 0x0f);
+    // fixarray
+    if ((b & 0xf0) === 0x90) return readArray(b & 0x0f);
+    // fixstr
+    if ((b & 0xe0) === 0xa0) return readStr(b & 0x1f);
+    // nil
+    if (b === 0xc0) return null;
+    // false / true
+    if (b === 0xc2) return false;
+    if (b === 0xc3) return true;
+    // bin8
+    if (b === 0xc4) { const n = bytes[offset++]; offset += n; return null; }
+    // float32
+    if (b === 0xca) { const v = view.getFloat32(offset); offset += 4; return v; }
+    // float64
+    if (b === 0xcb) { const v = view.getFloat64(offset); offset += 8; return v; }
+    // uint8
+    if (b === 0xcc) return bytes[offset++];
+    // uint16
+    if (b === 0xcd) { const v = view.getUint16(offset); offset += 2; return v; }
+    // uint32
+    if (b === 0xce) { const v = view.getUint32(offset); offset += 4; return v; }
+    // int8
+    if (b === 0xd0) { const v = view.getInt8(offset); offset += 1; return v; }
+    // int16
+    if (b === 0xd1) { const v = view.getInt16(offset); offset += 2; return v; }
+    // int32
+    if (b === 0xd2) { const v = view.getInt32(offset); offset += 4; return v; }
+    // str8
+    if (b === 0xd9) { const n = bytes[offset++]; return readStr(n); }
+    // str16
+    if (b === 0xda) { const n = view.getUint16(offset); offset += 2; return readStr(n); }
+    // array16
+    if (b === 0xdc) { const n = view.getUint16(offset); offset += 2; return readArray(n); }
+    // array32
+    if (b === 0xdd) { const n = view.getUint32(offset); offset += 4; return readArray(n); }
+    // map16
+    if (b === 0xde) { const n = view.getUint16(offset); offset += 2; return readMap(n); }
+    // negative fixint
+    if (b >= 0xe0) return b - 256;
+    return null;
+  }
+
+  function readStr(len) {
+    const s = _msgpackTextDecoder.decode(new Uint8Array(buffer, offset, len));
+    offset += len;
+    return s;
+  }
+
+  function readArray(len) {
+    const arr = new Array(len);
+    for (let i = 0; i < len; i++) arr[i] = read();
+    return arr;
+  }
+
+  function readMap(len) {
+    const obj = {};
+    for (let i = 0; i < len; i++) { obj[read()] = read(); }
+    return obj;
+  }
+
+  return read();
+}
+
 // ===== PARTICLE SYSTEMS =====
 
 // Explosion system
@@ -1432,6 +1508,7 @@ function connectSpectator() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   ws = new WebSocket(wsUrl);
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
     // If we have a pending login, send it now
@@ -1515,7 +1592,7 @@ async function login() {
 
 function setupWsMessageHandler() {
   ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+    const data = e.data instanceof ArrayBuffer ? decodeMsgpack(e.data) : JSON.parse(e.data);
 
     if (data.type === "error") {
       const errorEl = document.getElementById("usernameError");
