@@ -1793,9 +1793,6 @@ function setupWsMessageHandler() {
       const readyButton = document.getElementById("readyButton");
       readyButton.style.display = "none";
 
-      // Play match start sound
-      playSound("matchstart", 0.7);
-
       // Show "preparing" message
       const waitingMsg = document.getElementById("waitingForPlayers");
       if (waitingMsg) {
@@ -1852,6 +1849,9 @@ function setupWsMessageHandler() {
         const pl = document.getElementById("playerList");
         if (pl) pl.style.display = "block";
       }
+
+      // Play match start sound (after 3s countdown finishes)
+      playSound("matchstart", 0.7);
 
       // Show dramatic game start toast
       showToast("🔥 VAI! 🔥", "#ff6b35");

@@ -444,6 +444,7 @@ export function setupSocket() {
                   deaths: p.deaths,
                   isWinner: p.id === lastPlayer.id,
                 })),
+                audioIndex: Math.floor(Math.random() * 8) + 1,
               });
 
               const tracked = allPlayers.get(lastPlayer.id);

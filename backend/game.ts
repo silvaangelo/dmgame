@@ -814,13 +814,27 @@ export function checkVictory(game: Game) {
       winnerName: winner.username,
     });
 
-    const endMessage = serialize({
-      type: "end",
-      winnerName: winner.username,
-      scoreboard: scoreboard,
-    });
+    // Pick a random win sound index (1-8)
+    const winAudioIndex = Math.floor(Math.random() * 8) + 1;
 
+    // Assign unique lose sound indices (1-9) to each loser
+    const loseIndices = Array.from({ length: 9 }, (_, i) => i + 1);
+    for (let i = loseIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [loseIndices[i], loseIndices[j]] = [loseIndices[j], loseIndices[i]];
+    }
+    let loseIdx = 0;
+
+    // Send per-player end message so each loser gets a different sound
     game.players.forEach((p) => {
+      const isWinner = p.id === winner.id;
+      const audioIndex = isWinner ? winAudioIndex : loseIndices[loseIdx++ % loseIndices.length];
+      const endMessage = serialize({
+        type: "end",
+        winnerName: winner.username,
+        scoreboard: scoreboard,
+        audioIndex,
+      });
       try {
         if (p.ws.readyState === WebSocket.OPEN) {
           p.ws.send(endMessage);
