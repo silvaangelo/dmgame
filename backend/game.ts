@@ -78,6 +78,9 @@ function handleKill(
 
   checkVictory(game);
 
+  // In Last Man Standing mode, no respawns
+  if (game.gameMode === "lastManStanding") return;
+
   if (games.has(game.id)) {
     setTimeout(() => {
       if (games.has(game.id)) {
@@ -1006,7 +1009,121 @@ export function spawnLightning(game: Game) {
 
 /* ================= VICTORY ================= */
 
+function clearGameIntervals(game: Game) {
+  if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
+  if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+  if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
+  if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
+  if (game.zoneShrinkInterval) clearInterval(game.zoneShrinkInterval);
+  if (game.zoneDamageInterval) clearInterval(game.zoneDamageInterval);
+  if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
+}
+
+function endGame(game: Game, winner: Player) {
+  clearGameIntervals(game);
+
+  // Save stats for all players
+  game.players.forEach((p) => {
+    updatePlayerStats(p.username, p.kills, p.deaths, p.id === winner.id);
+  });
+
+  const scoreboard = game.players
+    .map((p) => ({
+      username: p.username,
+      kills: p.kills,
+      deaths: p.deaths,
+      isWinner: p.id === winner.id,
+    }))
+    .sort((a, b) => b.kills - a.kills);
+
+  // Save match history
+  addMatchHistory({
+    timestamp: Date.now(),
+    players: scoreboard,
+    winnerName: winner.username,
+  });
+
+  // Pick a random win sound index (1-8)
+  const winAudioIndex = Math.floor(Math.random() * 8) + 1;
+
+  // Assign unique lose sound indices (1-9) to each loser
+  const loseIndices = Array.from({ length: 9 }, (_, i) => i + 1);
+  for (let i = loseIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [loseIndices[i], loseIndices[j]] = [loseIndices[j], loseIndices[i]];
+  }
+  let loseIdx = 0;
+
+  // Send per-player end message so each loser gets a different sound
+  game.players.forEach((p) => {
+    const isWinner = p.id === winner.id;
+    const audioIndex = isWinner ? winAudioIndex : loseIndices[loseIdx++ % loseIndices.length];
+    const endMessage = serialize({
+      type: "end",
+      winnerName: winner.username,
+      scoreboard: scoreboard,
+      audioIndex,
+      gameMode: game.gameMode,
+    });
+    try {
+      if (p.ws.readyState === WebSocket.OPEN) {
+        p.ws.send(endMessage);
+      }
+    } catch (error) {
+      console.error(
+        `Failed to send victory message to ${p.username}:`,
+        error
+      );
+    }
+  });
+
+  game.players.forEach((p) => {
+    const tracked = allPlayers.get(p.id);
+    if (tracked) tracked.status = "online";
+  });
+  debouncedBroadcastOnlineList();
+
+  // Send room list to all players so they can join a new room
+  const roomList = Array.from(rooms.values()).map((r) => ({
+    id: r.id,
+    name: r.name,
+    playerCount: r.players.length,
+    maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
+  }));
+  const roomListMsg = serialize({ type: "roomList", rooms: roomList });
+  game.players.forEach((p) => {
+    try {
+      if (p.ws.readyState === WebSocket.OPEN) {
+        p.ws.send(roomListMsg);
+      }
+    } catch { /* ignore */ }
+  });
+
+  setTimeout(() => {
+    games.delete(game.id);
+  }, 2000);
+}
+
 export function checkVictory(game: Game) {
+  if (game.gameMode === "lastManStanding") {
+    // LMS: game must have started to check victory
+    if (!game.started) return;
+
+    const alivePlayers = game.players.filter((p) => p.hp > 0);
+
+    if (alivePlayers.length <= 1) {
+      // If exactly 1 alive, they win. If 0 (simultaneous death), pick most kills.
+      const winner = alivePlayers.length === 1
+        ? alivePlayers[0]
+        : game.players.reduce((best, p) => (p.kills > best.kills ? p : best), game.players[0]);
+
+      console.log(`🏆 ${winner.username} is the last one standing! Game over.`);
+      endGame(game, winner);
+    }
+    return;
+  }
+
+  // Deathmatch: first to KILLS_TO_WIN kills
   const winner = game.players.find(
     (p) => p.kills >= GAME_CONFIG.KILLS_TO_WIN
   );
@@ -1015,108 +1132,7 @@ export function checkVictory(game: Game) {
     console.log(
       `🏆 ${winner.username} wins with ${winner.kills} kills! Game over.`
     );
-
-    if (game.obstacleSpawnInterval) {
-      clearInterval(game.obstacleSpawnInterval);
-    }
-    if (game.pickupSpawnInterval) {
-      clearInterval(game.pickupSpawnInterval);
-    }
-    if (game.bombSpawnInterval) {
-      clearTimeout(game.bombSpawnInterval);
-    }
-    if (game.lightningSpawnInterval) {
-      clearTimeout(game.lightningSpawnInterval);
-    }
-    if (game.zoneShrinkInterval) {
-      clearInterval(game.zoneShrinkInterval);
-    }
-    if (game.zoneDamageInterval) {
-      clearInterval(game.zoneDamageInterval);
-    }
-    if (game.lootCrateSpawnInterval) {
-      clearInterval(game.lootCrateSpawnInterval);
-    }
-
-    // Save stats for all players
-    game.players.forEach((p) => {
-      updatePlayerStats(p.username, p.kills, p.deaths, p.id === winner.id);
-    });
-
-    const scoreboard = game.players
-      .map((p) => ({
-        username: p.username,
-        kills: p.kills,
-        deaths: p.deaths,
-        isWinner: p.id === winner.id,
-      }))
-      .sort((a, b) => b.kills - a.kills);
-
-    // Save match history
-    addMatchHistory({
-      timestamp: Date.now(),
-      players: scoreboard,
-      winnerName: winner.username,
-    });
-
-    // Pick a random win sound index (1-8)
-    const winAudioIndex = Math.floor(Math.random() * 8) + 1;
-
-    // Assign unique lose sound indices (1-9) to each loser
-    const loseIndices = Array.from({ length: 9 }, (_, i) => i + 1);
-    for (let i = loseIndices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [loseIndices[i], loseIndices[j]] = [loseIndices[j], loseIndices[i]];
-    }
-    let loseIdx = 0;
-
-    // Send per-player end message so each loser gets a different sound
-    game.players.forEach((p) => {
-      const isWinner = p.id === winner.id;
-      const audioIndex = isWinner ? winAudioIndex : loseIndices[loseIdx++ % loseIndices.length];
-      const endMessage = serialize({
-        type: "end",
-        winnerName: winner.username,
-        scoreboard: scoreboard,
-        audioIndex,
-      });
-      try {
-        if (p.ws.readyState === WebSocket.OPEN) {
-          p.ws.send(endMessage);
-        }
-      } catch (error) {
-        console.error(
-          `Failed to send victory message to ${p.username}:`,
-          error
-        );
-      }
-    });
-
-    game.players.forEach((p) => {
-      const tracked = allPlayers.get(p.id);
-      if (tracked) tracked.status = "online";
-    });
-    debouncedBroadcastOnlineList();
-
-    // Send room list to all players so they can join a new room
-    const roomList = Array.from(rooms.values()).map((r) => ({
-      id: r.id,
-      name: r.name,
-      playerCount: r.players.length,
-      maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-    }));
-    const roomListMsg = serialize({ type: "roomList", rooms: roomList });
-    game.players.forEach((p) => {
-      try {
-        if (p.ws.readyState === WebSocket.OPEN) {
-          p.ws.send(roomListMsg);
-        }
-      } catch { /* ignore */ }
-    });
-
-    setTimeout(() => {
-      games.delete(game.id);
-    }, 2000);
+    endGame(game, winner);
   }
 }
 

@@ -124,6 +124,18 @@
             Escolha sua skin:</p>
           <div id="skinOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
         </div>
+        <div id="gameModeVoting" style="margin-bottom: 14px;">
+          <p style="color: #8aaa8a; font-size: 17px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace;">🎮
+            Modo de Jogo:</p>
+          <div id="gameModeOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+            <button class="gamemode-btn" data-mode="random" onclick="doVoteGameMode('random')">🎲 Aleatório <span
+                class="vote-count"></span></button>
+            <button class="gamemode-btn" data-mode="deathmatch" onclick="doVoteGameMode('deathmatch')">💀 Deathmatch
+              <span class="vote-count"></span></button>
+            <button class="gamemode-btn" data-mode="lastManStanding" onclick="doVoteGameMode('lastManStanding')">👑
+              Último Vivo <span class="vote-count"></span></button>
+          </div>
+        </div>
         <div style="display: flex; gap: 12px; justify-content: center; flex-direction: column; align-items: center;">
           <button id="roomReadyBtn" onclick="doRoomReady()">⚔ BORA! ⚔</button>
           <button id="roomLeaveBtn" onclick="doLeaveRoom()"

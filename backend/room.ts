@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { WebSocket } from "ws";
-import type { Player, Room } from "./types.js";
+import type { Player, Room, GameMode, GameModeVote } from "./types.js";
 import { GAME_CONFIG } from "./config.js";
 import { rooms, allPlayers } from "./state.js";
 import { wss } from "./server.js";
@@ -33,6 +33,18 @@ function generateRoomName(): string {
 /* ================= ROOM SERIALIZATION ================= */
 
 function serializeRoom(room: Room) {
+  // Count votes per option
+  const voteCounts: Record<string, number> = { random: 0, deathmatch: 0, lastManStanding: 0 };
+  for (const vote of room.gameModeVotes.values()) {
+    voteCounts[vote] = (voteCounts[vote] || 0) + 1;
+  }
+
+  // Build per-player vote map (id → vote)
+  const playerVotes: Record<string, string> = {};
+  for (const [pid, vote] of room.gameModeVotes.entries()) {
+    playerVotes[pid] = vote;
+  }
+
   return {
     id: room.id,
     name: room.name,
@@ -44,6 +56,8 @@ function serializeRoom(room: Room) {
     })),
     maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
     timeRemaining: room.countdownStarted ? room.timeRemaining : null,
+    gameModeVotes: playerVotes,
+    gameModeCounts: voteCounts,
   };
 }
 
@@ -151,6 +165,41 @@ function handleRoomTimeout(room: Room) {
   }
 }
 
+/* ================= GAMEMODE VOTING ================= */
+
+export function resolveGameModeVotes(room: Room): GameMode {
+  const counts: Record<string, number> = { deathmatch: 0, lastManStanding: 0 };
+
+  for (const vote of room.gameModeVotes.values()) {
+    if (vote === "random") {
+      // "random" votes don't count toward either mode
+      continue;
+    }
+    counts[vote] = (counts[vote] || 0) + 1;
+  }
+
+  const dm = counts.deathmatch;
+  const lms = counts.lastManStanding;
+
+  if (dm === 0 && lms === 0) {
+    // No one voted (or all voted random) → pick random
+    return Math.random() < 0.5 ? "deathmatch" : "lastManStanding";
+  }
+  if (dm > lms) return "deathmatch";
+  if (lms > dm) return "lastManStanding";
+  // Tie → pick random between the two
+  return Math.random() < 0.5 ? "deathmatch" : "lastManStanding";
+}
+
+export function voteGameMode(player: Player, vote: GameModeVote) {
+  const room = findRoomByPlayer(player.id);
+  if (!room) return;
+
+  room.gameModeVotes.set(player.id, vote);
+  console.log(`🗳️ ${player.username} voted for "${vote}" in room "${room.name}"`);
+  broadcastRoomUpdate(room);
+}
+
 /* ================= ROOM OPERATIONS ================= */
 
 export function createRoom(player: Player): Room | null {
@@ -169,6 +218,7 @@ export function createRoom(player: Player): Room | null {
     players: [player],
     countdownStarted: false,
     timeRemaining: GAME_CONFIG.ROOM_READY_TIMEOUT,
+    gameModeVotes: new Map(),
   };
 
   // First player in a fresh room — assign skin 0 (guaranteed unique)
@@ -249,6 +299,7 @@ export function leaveRoom(player: Player) {
   if (!room) return;
 
   room.players = room.players.filter((p) => p.id !== player.id);
+  room.gameModeVotes.delete(player.id);
 
   const tracked = allPlayers.get(player.id);
   if (tracked) tracked.status = "online";
@@ -301,6 +352,7 @@ export function removePlayerFromRooms(playerId: string) {
     const playerInRoom = room.players.some((p) => p.id === playerId);
     if (playerInRoom) {
       room.players = room.players.filter((p) => p.id !== playerId);
+      room.gameModeVotes.delete(playerId);
 
       if (room.players.length === 0) {
         clearRoomCountdown(room);

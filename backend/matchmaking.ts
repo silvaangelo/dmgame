@@ -9,7 +9,7 @@ import {
   debouncedBroadcastOnlineList,
 } from "./utils.js";
 import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink, spawnLootCrate, spawnInitialLootCrates } from "./game.js";
-import { broadcastRoomList } from "./room.js";
+import { broadcastRoomList, resolveGameModeVotes } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
 
@@ -252,6 +252,9 @@ export function startGameFromRoom(room: Room) {
     p.dashDirY = 0;
   });
 
+  // Resolve gamemode from room votes
+  const gameMode = resolveGameModeVotes(room);
+
   const game: Game = {
     id: uuid(),
     players,
@@ -262,6 +265,7 @@ export function startGameFromRoom(room: Room) {
     lightnings: [],
     lootCrates: [],
     started: false,
+    gameMode,
     lastBroadcastState: new Map(),
     stateSequence: 0,
     matchStartTime: 0,
@@ -280,7 +284,7 @@ export function startGameFromRoom(room: Room) {
   });
   debouncedBroadcastOnlineList();
 
-  console.log(`🎮 Game created from room "${room.name}"! Game ID: ${game.id}`);
+  console.log(`🎮 Game created from room "${room.name}"! Game ID: ${game.id} (Mode: ${gameMode})`);
   console.log(`   Players: ${players.map((p) => p.username).join(", ")}`);
 
   broadcast(game, {
@@ -290,6 +294,7 @@ export function startGameFromRoom(room: Room) {
     obstacles: game.obstacles,
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
+    gameMode: game.gameMode,
   });
 
   // Start the pre-game ready timeout (15s)
@@ -355,11 +360,14 @@ function beginMatch(game: Game) {
     killsToWin: GAME_CONFIG.KILLS_TO_WIN,
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
+    gameMode: game.gameMode,
   });
 
-  console.log(
-    `🎮 Deathmatch starting NOW! First to ${GAME_CONFIG.KILLS_TO_WIN} kills wins!`
-  );
+  if (game.gameMode === "lastManStanding") {
+    console.log(`🎮 Last Man Standing starting NOW! Last player alive wins!`);
+  } else {
+    console.log(`🎮 Deathmatch starting NOW! First to ${GAME_CONFIG.KILLS_TO_WIN} kills wins!`);
+  }
 
   game.obstacleSpawnInterval = setInterval(() => {
     if (games.has(game.id)) {

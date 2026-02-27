@@ -2,6 +2,9 @@ import { WebSocket } from "ws";
 
 export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper";
 
+export type GameMode = "deathmatch" | "lastManStanding";
+export type GameModeVote = "random" | "deathmatch" | "lastManStanding";
+
 export type Player = {
   id: string;
   username: string;
@@ -106,6 +109,7 @@ export type Game = {
   lightnings: Lightning[];
   lootCrates: LootCrate[];
   started: boolean;
+  gameMode: GameMode;
   lastBroadcastState?: Map<string, unknown>;
   stateSequence: number;
   obstacleSpawnInterval?: NodeJS.Timeout;
@@ -134,6 +138,7 @@ export type Room = {
   countdownInterval?: NodeJS.Timeout;
   countdownTimeout?: NodeJS.Timeout;
   timeRemaining: number;
+  gameModeVotes: Map<string, GameModeVote>;
 };
 
 export type TrackedPlayer = {

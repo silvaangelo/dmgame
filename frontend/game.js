@@ -225,6 +225,8 @@ const KILL_FEED_MAX = 5;
 // Skins
 let selectedSkin = 0;
 let currentRoomData = null;
+let currentGameMode = "deathmatch"; // "deathmatch" or "lastManStanding"
+let myGameModeVote = null; // local player's vote
 
 // Viral phrases
 const WINNER_PHRASES = [
@@ -1533,6 +1535,8 @@ function returnToLobby() {
   _cachedDOM = null;
   previousPlayerStates.clear();
   gameReady = false;
+  currentGameMode = "deathmatch";
+  myGameModeVote = null;
   floatingNumbers = [];
   lowHPPulseTime = 0;
   lowHPVignetteGradient = null;
@@ -1650,27 +1654,37 @@ function updatePlayerList() {
   if (!listContent) return;
 
   const playerHTML = players
-    .sort((a, b) => b.kills - a.kills)
+    .sort((a, b) => {
+      if (currentGameMode === "lastManStanding") {
+        // Sort alive first, then by kills
+        if ((a.hp > 0) !== (b.hp > 0)) return b.hp > 0 ? 1 : -1;
+      }
+      return b.kills - a.kills;
+    })
     .map((p, index) => {
       const isMe = p.id === playerId;
       const isDead = p.hp <= 0;
       const isLeading = index === 0 && p.kills > 0;
-      const killProgress = Math.min(
-        100,
-        (p.kills / GAME_CONFIG.KILLS_TO_WIN) * 100,
-      );
+      const isLMS = currentGameMode === "lastManStanding";
+      const killProgress = isLMS
+        ? (isDead ? 0 : 100)
+        : Math.min(100, (p.kills / GAME_CONFIG.KILLS_TO_WIN) * 100);
+      const killsLabel = isLMS
+        ? `🎯 ${p.kills}`
+        : `🎯 ${p.kills}/${GAME_CONFIG.KILLS_TO_WIN}`;
+      const statusIcon = isLMS && isDead ? " ☠️ ELIMINADO" : isDead ? "💀" : "";
       return `
-        <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px;">
+        <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px; ${isDead && isLMS ? "opacity: 0.5;" : ""}">
           <div style="font-weight: ${isMe ? "bold" : "normal"}; color: ${isDead ? "#666" : "#f0f0f0"}; margin-bottom: 5px; font-size: 18px; font-family: 'Rajdhani', sans-serif;">
-            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(Você)" : ""} ${isDead ? "💀" : ""}
+            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(Você)" : ""} ${statusIcon}
           </div>
           <div style="font-size: 15px; display: flex; gap: 10px; font-family: 'Share Tech Mono', monospace;">
             <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= 2 ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/4</span>
-            <span style="color: #ffaa44;">🎯 ${p.kills}/${GAME_CONFIG.KILLS_TO_WIN}</span>
+            <span style="color: #ffaa44;">${killsLabel}</span>
             <span style="color: #aa88aa;">💀 ${p.deaths || 0}</span>
           </div>
           <div style="margin-top: 5px; background: #1a1f14; border-radius: 2px; height: 4px; overflow: hidden;">
-            <div style="width: ${killProgress}%; height: 100%; background: linear-gradient(90deg, #ff6b35, #ff4422);"></div>
+            <div style="width: ${killProgress}%; height: 100%; background: linear-gradient(90deg, ${isLMS ? (isDead ? '#666' : '#e63946') : '#ff6b35'}, ${isLMS ? (isDead ? '#444' : '#c1121f') : '#ff4422'});"></div>
           </div>
         </div>
       `;
@@ -2064,6 +2078,8 @@ function setupWsMessageHandler() {
       const localP = players.find((p) => p.username === loggedInUsername);
       if (localP) playerId = localP.id;
       gameReady = false;
+      currentGameMode = data.gameMode || "deathmatch";
+      myGameModeVote = null; // Reset vote for next round
       obstacleCanvasDirty = true;
       _cachedDOM = null; // Refresh cached DOM references
 
@@ -2142,8 +2158,15 @@ function setupWsMessageHandler() {
       // Play match start sound (after 3s countdown finishes)
       playSound("matchstart", 0.7);
 
-      // Show dramatic game start toast
-      showToast("🔥 VAI! 🔥", "#ff6b35");
+      // Update gamemode from server
+      if (data.gameMode) currentGameMode = data.gameMode;
+
+      // Show dramatic game start toast with mode info
+      if (currentGameMode === "lastManStanding") {
+        showToast("👑 ÚLTIMO VIVO! 👑", "#e63946");
+      } else {
+        showToast("🔥 VAI! 🔥", "#ff6b35");
+      }
 
       // Show in-game controls hint (fades after a few seconds)
       const igc = document.getElementById("inGameControls");
@@ -2792,6 +2815,9 @@ function setupWsMessageHandler() {
         </div>`;
       }).join("");
 
+      // Update gameMode from end message
+      const endGameMode = data.gameMode || currentGameMode;
+
       // Pick a random viral phrase
       const viralPhrase = isLocalWinner
         ? WINNER_PHRASES[Math.floor(Math.random() * WINNER_PHRASES.length)].replace("{winner}", "Você")
@@ -2800,8 +2826,9 @@ function setupWsMessageHandler() {
       // Banner
       document.getElementById("victoryBanner").innerHTML =
         isLocalWinner ? "\uD83C\uDF89 \uD83C\uDF86 \uD83C\uDF89" : "\u2694\uFE0F \uD83D\uDC80 \u2694\uFE0F";
+      const modeLabel = endGameMode === "lastManStanding" ? "👑 ÚLTIMO VIVO!" : "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6";
       document.getElementById("victoryMessage").innerHTML =
-        isLocalWinner ? "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6" : esc(data.winnerName) + " VENCEU!";
+        isLocalWinner ? modeLabel : esc(data.winnerName) + (endGameMode === "lastManStanding" ? " SOBREVIVEU!" : " VENCEU!");
       document.getElementById("victorySubtext").innerHTML = viralPhrase;
       document.getElementById("victoryShowcase").innerHTML = showcaseHTML;
       document.getElementById("victoryScoreboard").innerHTML = scoreboardHTML;
@@ -3027,6 +3054,14 @@ function updateRoomScreen(room) {
       readyBtn.textContent = "⚔ ESTOU PRONTO! ⚔";
     }
   }
+
+  // Sync local vote from server data (e.g. after reconnect)
+  if (room.gameModeVotes && room.gameModeVotes[playerId] && !myGameModeVote) {
+    myGameModeVote = room.gameModeVotes[playerId];
+  }
+
+  // Update gamemode vote buttons
+  updateGameModeButtons();
 }
 
 function doCreateRoom() {
@@ -3051,6 +3086,7 @@ function doLeaveRoom() {
 
   ws.send(serialize({ type: "leaveRoom" }));
   currentRoomData = null;
+  myGameModeVote = null;
   document.getElementById("roomScreen").style.display = "none";
   document.getElementById("roomListScreen").style.display = "block";
 }
@@ -3068,6 +3104,37 @@ function doRoomReady() {
   initAudio();
 
   ws.send(serialize({ type: "roomReady" }));
+}
+
+function doVoteGameMode(mode) {
+  if (!ws) return;
+  myGameModeVote = mode;
+  ws.send(serialize({ type: "voteGameMode", vote: mode }));
+  // Update button highlights immediately (optimistic)
+  updateGameModeButtons();
+}
+
+function updateGameModeButtons() {
+  const btns = document.querySelectorAll(".gamemode-btn");
+  btns.forEach((btn) => {
+    if (btn.dataset.mode === myGameModeVote) {
+      btn.classList.add("selected");
+    } else {
+      btn.classList.remove("selected");
+    }
+  });
+
+  // Update vote counts if we have room data
+  if (currentRoomData && currentRoomData.gameModeCounts) {
+    const counts = currentRoomData.gameModeCounts;
+    btns.forEach((btn) => {
+      const countEl = btn.querySelector(".vote-count");
+      if (countEl) {
+        const c = counts[btn.dataset.mode] || 0;
+        countEl.textContent = c > 0 ? `(${c})` : "";
+      }
+    });
+  }
 }
 
 // ===== HUD DISPLAY =====
@@ -3091,13 +3158,25 @@ function updateShotUI() {
 
   // Update kills progress
   if (killsDisplay) {
-    killsDisplay.textContent = `🏆 ${player.kills}/${GAME_CONFIG.KILLS_TO_WIN}`;
-    if (player.kills >= GAME_CONFIG.KILLS_TO_WIN - 1) {
-      killsDisplay.style.color = "#ff4422";
-      killsDisplay.style.textShadow = "0 0 12px rgba(255,68,34,0.5)";
+    if (currentGameMode === "lastManStanding") {
+      const alive = players.filter((p) => p.hp > 0).length;
+      killsDisplay.textContent = `👑 ${alive} vivos | ${player.kills} abates`;
+      if (alive <= 2) {
+        killsDisplay.style.color = "#ff4422";
+        killsDisplay.style.textShadow = "0 0 12px rgba(255,68,34,0.5)";
+      } else {
+        killsDisplay.style.color = "#e63946";
+        killsDisplay.style.textShadow = "0 0 8px rgba(230,57,70,0.3)";
+      }
     } else {
-      killsDisplay.style.color = "#ff6b35";
-      killsDisplay.style.textShadow = "0 0 8px rgba(255,107,53,0.3)";
+      killsDisplay.textContent = `🏆 ${player.kills}/${GAME_CONFIG.KILLS_TO_WIN}`;
+      if (player.kills >= GAME_CONFIG.KILLS_TO_WIN - 1) {
+        killsDisplay.style.color = "#ff4422";
+        killsDisplay.style.textShadow = "0 0 12px rgba(255,68,34,0.5)";
+      } else {
+        killsDisplay.style.color = "#ff6b35";
+        killsDisplay.style.textShadow = "0 0 8px rgba(255,107,53,0.3)";
+      }
     }
   }
 
@@ -3115,7 +3194,11 @@ function updateShotUI() {
 
   // Show respawn message if dead
   if (player.hp <= 0) {
-    healthDisplay.textContent = RESPAWN_PHRASES[Math.floor(Math.random() * RESPAWN_PHRASES.length)];
+    if (currentGameMode === "lastManStanding") {
+      healthDisplay.textContent = "☠️ ELIMINADO — Assistindo...";
+    } else {
+      healthDisplay.textContent = RESPAWN_PHRASES[Math.floor(Math.random() * RESPAWN_PHRASES.length)];
+    }
     if (hpBarFill) {
       hpBarFill.style.width = "0%";
       hpBarFill.className = "hud-hp-bar-fill";

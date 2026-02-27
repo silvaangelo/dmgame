@@ -17,6 +17,7 @@ import {
   markRoomReady,
   removePlayerFromRooms,
   findRoomByPlayer,
+  voteGameMode,
 } from "./room.js";
 import { WebSocket } from "ws";
 import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
@@ -276,6 +277,16 @@ export function setupSocket() {
           player.skin = skinIndex;
           // Broadcast room update so others see the skin change
           if (room) {
+            // Build vote data
+            const playerVotes: Record<string, string> = {};
+            for (const [pid, vote] of room.gameModeVotes.entries()) {
+              playerVotes[pid] = vote;
+            }
+            const voteCounts: Record<string, number> = { random: 0, deathmatch: 0, lastManStanding: 0 };
+            for (const vote of room.gameModeVotes.values()) {
+              voteCounts[vote] = (voteCounts[vote] || 0) + 1;
+            }
+
             const roomData = {
               id: room.id,
               name: room.name,
@@ -287,6 +298,8 @@ export function setupSocket() {
               })),
               maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
               timeRemaining: room.countdownStarted ? room.timeRemaining : null,
+              gameModeVotes: playerVotes,
+              gameModeCounts: voteCounts,
             };
             const msg = serialize({ type: "roomUpdate", room: roomData });
             room.players.forEach((rp) => {
@@ -295,6 +308,14 @@ export function setupSocket() {
               } catch { /* ignore */ }
             });
           }
+        }
+        return;
+      }
+
+      if (data.type === "voteGameMode") {
+        const validVotes = ["random", "deathmatch", "lastManStanding"];
+        if (data.vote && validVotes.includes(data.vote)) {
+          voteGameMode(player, data.vote);
         }
         return;
       }

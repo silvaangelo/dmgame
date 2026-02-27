@@ -455,6 +455,49 @@ canvas {
   50% { opacity: 0.4; }
 }
 
+/* ===== GAMEMODE VOTING ===== */
+
+#gameModeVoting {
+  text-align: center;
+}
+
+.gamemode-btn {
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: 'Rajdhani', sans-serif;
+  background: linear-gradient(180deg, #2a3a2a 0%, #1a2a1a 100%);
+  color: #8aaa8a;
+  border: 2px solid #3a4a3a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  min-width: 130px;
+}
+
+.gamemode-btn:hover {
+  background: linear-gradient(180deg, #3a4a3a 0%, #2a3a2a 100%);
+  color: #d9a04a;
+  border-color: #5a6a5a;
+  transform: translateY(-1px);
+}
+
+.gamemode-btn.selected {
+  background: linear-gradient(180deg, #4a3a1a 0%, #3a2a0a 100%);
+  color: #ffd700;
+  border-color: #d9a04a;
+  box-shadow: 0 0 12px rgba(217, 160, 74, 0.3), inset 0 0 8px rgba(217, 160, 74, 0.1);
+}
+
+.gamemode-btn .vote-count {
+  font-size: 13px;
+  color: #d9a04a;
+  font-family: 'Share Tech Mono', monospace;
+  margin-left: 4px;
+}
+
 #queueStatus {
   margin-top: 16px;
   padding: 12px;
