@@ -117,10 +117,10 @@ export function updateGame(game: Game) {
 
     // Dash movement overrides normal movement
     const isDashing = Date.now() < player.dashUntil;
+    const radiusSqDash = playerRadius * playerRadius;
     if (isDashing) {
       const dashSpeed = GAME_CONFIG.DASH_SPEED;
-      // Move in dash direction with collision
-      const oldX = player.x;
+      // Move in dash direction with push-out collision
       player.x += player.dashDirX * dashSpeed;
       player.x = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x));
       for (const obstacle of game.obstacles) {
@@ -129,13 +129,20 @@ export function updateGame(game: Game) {
         const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
         const distanceX = player.x - closestX;
         const distanceY = player.y - closestY;
-        if (distanceX * distanceX + distanceY * distanceY < playerRadius * playerRadius) {
-          player.x = oldX;
-          break;
+        const dSq = distanceX * distanceX + distanceY * distanceY;
+        if (dSq < radiusSqDash) {
+          if (dSq > 0.0001) {
+            const dist = Math.sqrt(dSq);
+            player.x += (distanceX / dist) * (playerRadius - dist);
+          } else {
+            player.x = obstacle.x + obstacle.size / 2 < player.x
+              ? obstacle.x + obstacle.size + playerRadius
+              : obstacle.x - playerRadius;
+          }
         }
       }
+      player.x = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x));
 
-      const oldY = player.y;
       player.y += player.dashDirY * dashSpeed;
       player.y = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y));
       for (const obstacle of game.obstacles) {
@@ -144,18 +151,26 @@ export function updateGame(game: Game) {
         const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
         const distanceX = player.x - closestX;
         const distanceY = player.y - closestY;
-        if (distanceX * distanceX + distanceY * distanceY < playerRadius * playerRadius) {
-          player.y = oldY;
-          break;
+        const dSq = distanceX * distanceX + distanceY * distanceY;
+        if (dSq < radiusSqDash) {
+          if (dSq > 0.0001) {
+            const dist = Math.sqrt(dSq);
+            player.y += (distanceY / dist) * (playerRadius - dist);
+          } else {
+            player.y = obstacle.y + obstacle.size / 2 < player.y
+              ? obstacle.y + obstacle.size + playerRadius
+              : obstacle.y - playerRadius;
+          }
         }
       }
+      player.y = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y));
       return; // Skip normal movement during dash
     }
 
     const speed = getPlayerSpeed(player);
+    const radiusSq = playerRadius * playerRadius;
 
-    // Move X axis first, then resolve collisions on X
-    const oldX = player.x;
+    // Move X axis first, then resolve collisions on X (push-out)
     if (player.keys.a) player.x -= speed;
     if (player.keys.d) player.x += speed;
     player.x = Math.max(
@@ -177,14 +192,24 @@ export function updateGame(game: Game) {
       const distanceY = player.y - closestY;
       const distanceSquared = distanceX * distanceX + distanceY * distanceY;
 
-      if (distanceSquared < playerRadius * playerRadius) {
-        player.x = oldX;
-        break;
+      if (distanceSquared < radiusSq) {
+        if (distanceSquared > 0.0001) {
+          const dist = Math.sqrt(distanceSquared);
+          player.x += (distanceX / dist) * (playerRadius - dist);
+        } else {
+          // Exactly overlapping — push away from obstacle center
+          player.x = obstacle.x + obstacle.size / 2 < player.x
+            ? obstacle.x + obstacle.size + playerRadius
+            : obstacle.x - playerRadius;
+        }
       }
     }
+    player.x = Math.max(
+      margin,
+      Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x)
+    );
 
-    // Move Y axis, then resolve collisions on Y
-    const oldY = player.y;
+    // Move Y axis, then resolve collisions on Y (push-out)
     if (player.keys.w) player.y -= speed;
     if (player.keys.s) player.y += speed;
     player.y = Math.max(
@@ -206,11 +231,21 @@ export function updateGame(game: Game) {
       const distanceY = player.y - closestY;
       const distanceSquared = distanceX * distanceX + distanceY * distanceY;
 
-      if (distanceSquared < playerRadius * playerRadius) {
-        player.y = oldY;
-        break;
+      if (distanceSquared < radiusSq) {
+        if (distanceSquared > 0.0001) {
+          const dist = Math.sqrt(distanceSquared);
+          player.y += (distanceY / dist) * (playerRadius - dist);
+        } else {
+          player.y = obstacle.y + obstacle.size / 2 < player.y
+            ? obstacle.y + obstacle.size + playerRadius
+            : obstacle.y - playerRadius;
+        }
       }
     }
+    player.y = Math.max(
+      margin,
+      Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y)
+    );
   });
 
   const bulletsToRemove = new Set<string>();

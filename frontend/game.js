@@ -1273,12 +1273,12 @@ function applyInput(x, y, keys, weapon, speedBoosted) {
   const boostMultiplier = speedBoosted ? GAME_CONFIG.PICKUP_SPEED_MULTIPLIER : 1;
   const speed = GAME_CONFIG.PLAYER_SPEED * knifeBonus * boostMultiplier;
   const playerRadius = GAME_CONFIG.PLAYER_RADIUS;
+  const radiusSq = playerRadius * playerRadius;
   const margin = playerRadius;
   let newX = x;
   let newY = y;
 
-  // X axis movement + collision
-  const oldX = newX;
+  // X axis movement + collision (push-out resolution)
   if (keys.a) newX -= speed;
   if (keys.d) newX += speed;
   newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
@@ -1288,14 +1288,22 @@ function applyInput(x, y, keys, weapon, speedBoosted) {
     const cy = Math.max(obs.y, Math.min(newY, obs.y + obs.size));
     const dx = newX - cx;
     const dy = newY - cy;
-    if (dx * dx + dy * dy < playerRadius * playerRadius) {
-      newX = oldX;
-      break;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < radiusSq) {
+      if (distSq > 0.0001) {
+        const dist = Math.sqrt(distSq);
+        newX += (dx / dist) * (playerRadius - dist);
+      } else {
+        // Exactly overlapping — push away from obstacle center
+        newX = obs.x + obs.size / 2 < newX
+          ? obs.x + obs.size + playerRadius
+          : obs.x - playerRadius;
+      }
     }
   }
+  newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
 
-  // Y axis movement + collision
-  const oldY = newY;
+  // Y axis movement + collision (push-out resolution)
   if (keys.w) newY -= speed;
   if (keys.s) newY += speed;
   newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
@@ -1305,11 +1313,19 @@ function applyInput(x, y, keys, weapon, speedBoosted) {
     const cy = Math.max(obs.y, Math.min(newY, obs.y + obs.size));
     const dx = newX - cx;
     const dy = newY - cy;
-    if (dx * dx + dy * dy < playerRadius * playerRadius) {
-      newY = oldY;
-      break;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < radiusSq) {
+      if (distSq > 0.0001) {
+        const dist = Math.sqrt(distSq);
+        newY += (dy / dist) * (playerRadius - dist);
+      } else {
+        newY = obs.y + obs.size / 2 < newY
+          ? obs.y + obs.size + playerRadius
+          : obs.y - playerRadius;
+      }
     }
   }
+  newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
 
   return { x: newX, y: newY };
 }
@@ -1321,6 +1337,9 @@ const audioBuffers = {};
 let readyAlarmSource = null;
 let readyAlarmGain = null;
 const activeGameSources = [];
+let masterVolume = 0.7; // 0.0 – 1.0, persisted in localStorage
+let gameEnded = false; // prevents new game sounds after match ends
+try { const saved = localStorage.getItem("masterVolume"); if (saved !== null) masterVolume = parseFloat(saved); } catch (_) { /* ignore */ }
 let machinegunSoundIndex = 0;
 
 function initAudio() {
@@ -1365,7 +1384,7 @@ function playSound(bufferName, volume = 1.0, playbackRate = 1.0) {
   source.buffer = audioBuffers[bufferName];
   source.playbackRate.value = playbackRate;
   const gain = audioCtx.createGain();
-  gain.gain.value = volume;
+  gain.gain.value = volume * masterVolume;
   source.connect(gain);
   gain.connect(audioCtx.destination);
   source.start(0);
@@ -1393,7 +1412,7 @@ function playPositionalSound(
   const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
   // Quadratic falloff for more realistic attenuation
   const attenuation = distanceFactor * distanceFactor;
-  const finalVolume = volume * (0.05 + 0.95 * attenuation);
+  const finalVolume = volume * masterVolume * (0.05 + 0.95 * attenuation);
   // Stronger panning for clearer left/right separation
   const pan = Math.max(
     -1,
@@ -1549,6 +1568,8 @@ function returnToLobby() {
   dashCooldownUntil = 0;
   dashTrails = [];
   stopHeartbeat();
+  stopAllGameSounds();
+  gameEnded = false;
   lastKilledByUsername = "";
   pendingDeathWeapon.clear();
 
@@ -2590,7 +2611,7 @@ function setupWsMessageHandler() {
             triggerScreenShake(5);
           }
           // Play death sound with positional audio
-          playPositionalSound("died", p.x, p.y, 0.5);
+          if (!gameEnded) playPositionalSound("died", p.x, p.y, 0.3);
           // Hit marker for the killer (us)
           if (p.id !== playerId) createHitMarker();
         } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
@@ -2707,8 +2728,8 @@ function setupWsMessageHandler() {
       wasReloading = currentPlayer ? currentPlayer.reloading : false;
 
       // Play scream sound when current player takes damage
-      if (currentPlayer && currentPlayer.hp < previousHP) {
-        playPositionalSound("scream", predictedX, predictedY, 0.6);
+      if (currentPlayer && currentPlayer.hp < previousHP && !gameEnded) {
+        playPositionalSound("scream", predictedX, predictedY, 0.3);
       }
       previousHP = currentPlayer ? currentPlayer.hp : 3;
 
@@ -2751,6 +2772,9 @@ function setupWsMessageHandler() {
     if (data.type === "end") {
       console.log("Game over! Winner:", data.winnerName);
 
+      // Prevent any further in-game sounds (scream, died, etc.)
+      gameEnded = true;
+
       // Clear any previous celebration (e.g. from a race condition)
       if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
       if (victoryCountdownInterval) { clearInterval(victoryCountdownInterval); victoryCountdownInterval = null; }
@@ -2759,6 +2783,7 @@ function setupWsMessageHandler() {
       stopAllGameSounds();
       stopHeartbeat();
 
+      // Small delay so the stopAllGameSounds fully clears before we play the end sound
       // Hide ready screen if showing
       document.getElementById("readyScreen").style.display = "none";
 
@@ -2766,10 +2791,10 @@ function setupWsMessageHandler() {
       const localPlayer = data.scoreboard.find((p) => p.username === loggedInUsername);
       const isLocalWinner = localPlayer && localPlayer.isWinner;
 
-      // Play ONE win/lose sound
+      // Play ONE win/lose sound (lowered volume)
       const audioIdx = data.audioIndex || 1;
       const firstSound = isLocalWinner ? `win-${audioIdx}` : `lose-${audioIdx}`;
-      playSound(firstSound, 0.7);
+      playSound(firstSound, 0.5);
 
       // Start celebration: periodic bomb explosions (visual + one bomb sound each)
       celebrationIsWinner = isLocalWinner;
@@ -2788,7 +2813,7 @@ function setupWsMessageHandler() {
         triggerScreenShake(3 + Math.random() * 4);
         // One bomb sound per explosion
         const bIdx = Math.floor(Math.random() * 5) + 1;
-        playSound(`bomb-${bIdx}`, 0.4, 0.9 + Math.random() * 0.2);
+        playSound(`bomb-${bIdx}`, 0.25, 0.9 + Math.random() * 0.2);
       }, 1100);
 
       // Sort scoreboard by kills descending
@@ -3901,6 +3926,65 @@ function showToast(text, color) {
       activeToasts = activeToasts.filter((t) => t !== toast);
     }, 500);
   }, 2200);
+}
+
+// ===== VOLUME CONTROL =====
+
+function initVolumeSlider() {
+  const slider = document.getElementById("volumeSlider");
+  const label = document.getElementById("volumeLabel");
+  const icon = document.getElementById("volumeIcon");
+  if (!slider) return;
+  slider.value = Math.round(masterVolume * 100);
+  if (label) label.textContent = Math.round(masterVolume * 100) + "%";
+  if (icon) icon.textContent = masterVolume === 0 ? "🔇" : masterVolume < 0.4 ? "🔉" : "🔊";
+  slider.addEventListener("input", () => {
+    masterVolume = parseInt(slider.value) / 100;
+    try { localStorage.setItem("masterVolume", String(masterVolume)); } catch (_) { /* ignore */ }
+    syncVolumeControls();
+  });
+}
+
+let preMuteVolume = 0.7;
+function toggleMute() {
+  if (masterVolume > 0) {
+    preMuteVolume = masterVolume;
+    masterVolume = 0;
+  } else {
+    masterVolume = preMuteVolume || 0.7;
+  }
+  try { localStorage.setItem("masterVolume", String(masterVolume)); } catch (_) { /* ignore */ }
+  syncVolumeControls();
+}
+
+// Initialize volume slider on page load
+document.addEventListener("DOMContentLoaded", () => {
+  initVolumeSlider();
+  // HUD in-game volume slider
+  const hudSlider = document.getElementById("hudVolumeSlider");
+  if (hudSlider) {
+    hudSlider.value = Math.round(masterVolume * 100);
+    hudSlider.addEventListener("input", () => {
+      masterVolume = parseInt(hudSlider.value) / 100;
+      try { localStorage.setItem("masterVolume", String(masterVolume)); } catch (_) { /* ignore */ }
+      syncVolumeControls();
+    });
+  }
+});
+
+function syncVolumeControls() {
+  const lobbySlider = document.getElementById("volumeSlider");
+  const lobbyLabel = document.getElementById("volumeLabel");
+  const lobbyIcon = document.getElementById("volumeIcon");
+  const hudSlider = document.getElementById("hudVolumeSlider");
+  const hudIcon = document.getElementById("hudVolumeIcon");
+  const val = Math.round(masterVolume * 100);
+  const iconStr = masterVolume === 0 ? "🔇" : masterVolume < 0.4 ? "🔉" : "🔊";
+  if (lobbySlider) lobbySlider.value = val;
+  if (lobbyLabel) lobbyLabel.textContent = val + "%";
+  if (lobbyIcon) lobbyIcon.textContent = iconStr;
+  if (hudSlider) hudSlider.value = val;
+  if (hudIcon) hudIcon.textContent = iconStr;
 }
 
 // ===== SKINS =====

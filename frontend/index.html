@@ -153,6 +153,15 @@
         <div>🏆 Primeiro a 5 abates!</div>
       </div>
       <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
+        <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔊 Volume</div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="volumeIcon" style="cursor:pointer;" onclick="toggleMute()">🔊</span>
+          <input type="range" id="volumeSlider" min="0" max="100"
+            style="flex:1; accent-color: #ff6b35; cursor: pointer;">
+          <span id="volumeLabel" style="font-size: 12px; min-width: 30px; text-align: right;">70%</span>
+        </div>
+      </div>
+      <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
         <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔫 Armas</div>
         <div><kbd>1</kbd> 💥 Metralhadora</div>
         <div><kbd>2</kbd> 🔥 Shotgun</div>
@@ -189,6 +198,12 @@
           <span id="cooldownDisplay"></span>
           <span id="reloadDisplay"></span>
           <span id="speedBoostDisplay"></span>
+        </div>
+        <div class="hud-section hud-volume" style="display:flex;align-items:center;gap:4px;min-width:80px;">
+          <span id="hudVolumeIcon" style="cursor:pointer;font-size:14px;"
+            onclick="toggleMute();syncVolumeControls();">🔊</span>
+          <input type="range" id="hudVolumeSlider" min="0" max="100"
+            style="width:60px;accent-color:#ff6b35;cursor:pointer;height:4px;">
         </div>
       </div>
     </div>
