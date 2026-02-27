@@ -415,6 +415,14 @@ export function setupSocket() {
           const currentIndex = WEAPON_CYCLE.indexOf(player.weapon);
           player.weapon = WEAPON_CYCLE[(currentIndex + 1) % WEAPON_CYCLE.length];
         }
+        // Cap ammo to the new weapon's magazine size
+        const maxAmmo =
+          player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_AMMO :
+          player.weapon === "sniper" ? GAME_CONFIG.SNIPER_AMMO :
+          GAME_CONFIG.SHOTS_PER_MAGAZINE;
+        if (player.shots > maxAmmo) {
+          player.shots = maxAmmo;
+        }
       }
 
       if (type === "ready") {

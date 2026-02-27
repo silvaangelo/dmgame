@@ -18,7 +18,7 @@ const GAME_CONFIG = {
   ARENA_HEIGHT: 900,
   PLAYER_RADIUS: 20,
   PLAYER_SPEED: 8,
-  SHOTS_PER_MAGAZINE: 30,
+  SHOTS_PER_MAGAZINE: 25,
   MAX_BLOOD_STAINS: 150,
   MAX_PARTICLES: 100,
   MAX_EXPLOSIONS: 8,
@@ -29,7 +29,7 @@ const GAME_CONFIG = {
   BLOOD_PARTICLE_COUNT: 8,
   KILLS_TO_WIN: 5,
   KNIFE_SPEED_BONUS: 1.5,
-  PICKUP_SPEED_MULTIPLIER: 1.5,
+  PICKUP_SPEED_MULTIPLIER: 2.0,
 };
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
@@ -227,6 +227,7 @@ let selectedSkin = 0;
 let currentRoomData = null;
 let currentGameMode = "deathmatch"; // "deathmatch" or "lastManStanding"
 let myGameModeVote = null; // local player's vote
+let maxHp = 4; // updated from server on game start (LMS uses 20)
 
 // Viral phrases
 const WINNER_PHRASES = [
@@ -1679,7 +1680,7 @@ function updatePlayerList() {
             ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(Você)" : ""} ${statusIcon}
           </div>
           <div style="font-size: 15px; display: flex; gap: 10px; font-family: 'Share Tech Mono', monospace;">
-            <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= 2 ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/4</span>
+            <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= Math.ceil(maxHp * 0.5) ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/${maxHp}</span>
             <span style="color: #ffaa44;">${killsLabel}</span>
             <span style="color: #aa88aa;">💀 ${p.deaths || 0}</span>
           </div>
@@ -2080,6 +2081,7 @@ function setupWsMessageHandler() {
       gameReady = false;
       currentGameMode = data.gameMode || "deathmatch";
       myGameModeVote = null; // Reset vote for next round
+      if (data.maxHp) maxHp = data.maxHp;
       obstacleCanvasDirty = true;
       _cachedDOM = null; // Refresh cached DOM references
 
@@ -2160,6 +2162,7 @@ function setupWsMessageHandler() {
 
       // Update gamemode from server
       if (data.gameMode) currentGameMode = data.gameMode;
+      if (data.maxHp) maxHp = data.maxHp;
 
       // Show dramatic game start toast with mode info
       if (currentGameMode === "lastManStanding") {
@@ -2200,7 +2203,7 @@ function setupWsMessageHandler() {
       if (respawnedPlayer) {
         respawnedPlayer.x = data.x;
         respawnedPlayer.y = data.y;
-        respawnedPlayer.hp = 4; // Reset HP
+        respawnedPlayer.hp = maxHp; // Reset HP
 
         // Update interpolation target for respawned player
         if (data.playerId !== playerId) {
@@ -2234,16 +2237,19 @@ function setupWsMessageHandler() {
     }
 
     if (data.type === "obstacleDestroyed") {
-      // Update obstacle when destroyed (bandwidth optimization)
-      const obstacle = obstacles.find((o) => o.id === data.obstacleId);
-      if (obstacle) {
-        createImpactSparks(
-          obstacle.x + obstacle.size / 2,
-          obstacle.y + obstacle.size / 2,
-        );
-        obstacle.destroyed = true;
-        obstacleCanvasDirty = true;
+      // Update obstacle(s) when destroyed — supports group destruction
+      const ids = data.destroyedIds || [data.obstacleId];
+      for (const oid of ids) {
+        const obstacle = obstacles.find((o) => o.id === oid);
+        if (obstacle) {
+          createImpactSparks(
+            obstacle.x + obstacle.size / 2,
+            obstacle.y + obstacle.size / 2,
+          );
+          obstacle.destroyed = true;
+        }
       }
+      obstacleCanvasDirty = true;
     }
 
     if (data.type === "zoneWarning") {
@@ -2965,11 +2971,12 @@ function renderTop3(stats) {
 
   const medals = ["🥇", "🥈", "🥉"];
   container.innerHTML = stats.slice(0, 3).map((s, i) => {
-    const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
+    const kde = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
+    const mmr = s.mmr != null ? s.mmr : 1000;
     return `<div class="top3-entry">
       <span class="top3-medal">${medals[i]}</span>
       <span class="top3-name">${esc(s.username)}</span>
-      <span class="top3-stats">${s.kills}K · ${s.wins}V · K/D ${kd}</span>
+      <span class="top3-stats">⭐${mmr} · K/D ${kde} · ${s.wins}V</span>
     </div>`;
   }).join("");
 }
@@ -3189,7 +3196,8 @@ function updateShotUI() {
   } else if (player.weapon === "minigun") {
     shotsDisplay.textContent = `${weaponName} | ∞`;
   } else {
-    shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/30`;
+    const weaponMaxAmmo = player.weapon === "shotgun" ? 8 : player.weapon === "sniper" ? 5 : 25;
+    shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/${weaponMaxAmmo}`;
   }
 
   // Show respawn message if dead
@@ -3205,13 +3213,13 @@ function updateShotUI() {
     }
   } else {
     const armorText = player.armor > 0 ? ` +🛡${player.armor}` : "";
-    healthDisplay.textContent = `❤️ ${player.hp}/4${armorText}`;
+    healthDisplay.textContent = `❤️ ${player.hp}/${maxHp}${armorText}`;
     if (hpBarFill) {
-      const hpPercent = (player.hp / 4) * 100;
+      const hpPercent = (player.hp / maxHp) * 100;
       hpBarFill.style.width = hpPercent + "%";
-      if (player.hp <= 1) {
+      if (player.hp <= Math.ceil(maxHp * 0.25)) {
         hpBarFill.className = "hud-hp-bar-fill hp-danger";
-      } else if (player.hp <= 2) {
+      } else if (player.hp <= Math.ceil(maxHp * 0.5)) {
         hpBarFill.className = "hud-hp-bar-fill hp-mid";
       } else {
         hpBarFill.className = "hud-hp-bar-fill";
@@ -3940,11 +3948,12 @@ function showLeaderboard(stats) {
     container.innerHTML = '<p style="color: #8aaa8a; font-style: italic;">Nenhuma estatística ainda. Jogue uma partida!</p>';
   } else {
     container.innerHTML = stats.map((s, i) => {
-      const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2);
+      const kde = s.deaths > 0 ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2);
+      const mmr = s.mmr != null ? s.mmr : 1000;
       return `<div class="lb-row ${i === 0 ? "top" : ""}">
         <span class="lb-rank">${i + 1}.</span>
         <span class="lb-name">${i === 0 ? "👑 " : ""}${esc(s.username)}</span>
-        <span class="lb-stats">${s.kills}K / ${s.deaths}M (${kd}) | ${s.wins}V / ${s.gamesPlayed}J</span>
+        <span class="lb-stats">⭐${mmr} | K/D ${kde} | ${s.wins}V/${s.losses || 0}D | ${s.kills}K</span>
       </div>`;
     }).join("");
   }
@@ -4956,7 +4965,7 @@ function render() {
     const barHeight = 5;
     const barX = renderX - barWidth / 2;
     const barY = renderY - 28;
-    const hpPercent = p.hp / 4;
+    const hpPercent = p.hp / maxHp;
 
     // Background
     ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -4971,7 +4980,7 @@ function render() {
     // Armor bar (golden, stacked below HP bar)
     if (p.armor > 0) {
       const armorBarY = barY + barHeight + 1;
-      const armorPercent = p.armor / 2;
+      const armorPercent = p.armor / 3;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(barX - 1, armorBarY, barWidth + 2, 3);
       ctx.fillStyle = "#ddaa22";

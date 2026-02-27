@@ -99,9 +99,25 @@ export function getPlayerStats(username: string): PlayerStats {
       kills: 0,
       deaths: 0,
       wins: 0,
+      losses: 0,
       gamesPlayed: 0,
+      mmr: 1000,
     }
   );
+}
+
+/**
+ * Simple MMR formula:
+ *   base change = +25 for win, -15 for loss
+ *   KDE bonus   = clamp(KDE - 1, -0.5, 2) * 5   (reward high KDE, penalise low)
+ *   streak      = none (kept simple)
+ *   floor       = 0 (MMR cannot go negative)
+ */
+function calculateMmrChange(won: boolean, kills: number, deaths: number): number {
+  const base = won ? 25 : -15;
+  const kde = deaths > 0 ? kills / deaths : kills;
+  const kdeBonus = Math.min(2, Math.max(-0.5, kde - 1)) * 5;
+  return Math.round(base + kdeBonus);
 }
 
 export function updatePlayerStats(
@@ -114,14 +130,20 @@ export function updatePlayerStats(
   existing.kills += kills;
   existing.deaths += deaths;
   existing.gamesPlayed += 1;
-  if (won) existing.wins += 1;
+  if (won) {
+    existing.wins += 1;
+  } else {
+    existing.losses += 1;
+  }
+  const mmrDelta = calculateMmrChange(won, kills, deaths);
+  existing.mmr = Math.max(0, existing.mmr + mmrDelta);
   stats.set(username, existing);
   saveStats();
 }
 
 export function getLeaderboard(limit: number = 10): PlayerStats[] {
   return Array.from(stats.values())
-    .sort((a, b) => b.kills - a.kills)
+    .sort((a, b) => b.mmr - a.mmr)
     .slice(0, limit);
 }
 

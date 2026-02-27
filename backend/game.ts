@@ -38,7 +38,8 @@ function handleKill(
     killer.killStreak++;
 
     // Heal on kill — recover 1 HP (capped at max)
-    killer.hp = Math.min(GAME_CONFIG.PLAYER_HP, killer.hp + 1);
+    const maxHp = game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP;
+    killer.hp = Math.min(maxHp, killer.hp + 1);
 
     // Revenge tracking
     const isRevenge = victim.lastKilledBy === "" ? false : killer.lastKilledBy === victim.id;
@@ -240,9 +241,26 @@ export function updateGame(game: Game) {
     if (hitObstacle) {
       hitObstacle.destroyed = true;
       bulletsToRemove.add(bullet.id);
+      const destroyedIds = [hitObstacle.id];
+
+      // If this wall block belongs to a group, check if the remaining group is ≤ 1 block
+      if (hitObstacle.groupId) {
+        const groupSiblings = game.obstacles.filter(
+          (o) => o.groupId === hitObstacle.groupId && !o.destroyed && o.id !== hitObstacle.id
+        );
+        if (groupSiblings.length <= 1) {
+          // Destroy remaining sibling(s) too — no single-block walls
+          groupSiblings.forEach((o) => {
+            o.destroyed = true;
+            destroyedIds.push(o.id);
+          });
+        }
+      }
+
       broadcast(game, {
         type: "obstacleDestroyed",
         obstacleId: hitObstacle.id,
+        destroyedIds,
       });
       return;
     }
@@ -631,7 +649,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
     player.shots--;
     if (player.shots === 0) {
       player.reloading = true;
-      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.SNIPER_RELOAD_TIME);
+      setTimeout(() => { player.shots = GAME_CONFIG.SNIPER_AMMO; player.reloading = false; }, GAME_CONFIG.SNIPER_RELOAD_TIME);
     }
     const bullet: Bullet = {
       id: uuid(), x: player.x, y: player.y,
@@ -663,8 +681,9 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
   if (player.shots === 0) {
     player.reloading = true;
     const reloadTime = player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_RELOAD_TIME : GAME_CONFIG.MACHINEGUN_RELOAD_TIME;
+    const refillAmount = player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_AMMO : GAME_CONFIG.SHOTS_PER_MAGAZINE;
     setTimeout(() => {
-      player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
+      player.shots = refillAmount;
       player.reloading = false;
     }, reloadTime);
   }
@@ -725,7 +744,12 @@ export function reloadWeapon(player: Player) {
   if (player.reloading) return;
   if (player.hp <= 0) return;
   if (player.weapon === "knife" || player.weapon === "minigun") return;
-  if (player.shots >= GAME_CONFIG.SHOTS_PER_MAGAZINE) return;
+
+  // Check if already full
+  const maxAmmo = player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_AMMO
+    : player.weapon === "sniper" ? GAME_CONFIG.SNIPER_AMMO
+    : GAME_CONFIG.SHOTS_PER_MAGAZINE;
+  if (player.shots >= maxAmmo) return;
 
   player.reloading = true;
   let reloadTime: number;
@@ -736,7 +760,7 @@ export function reloadWeapon(player: Player) {
     default: reloadTime = GAME_CONFIG.RELOAD_TIME;
   }
   setTimeout(() => {
-    player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
+    player.shots = maxAmmo;
     player.reloading = false;
   }, reloadTime);
 }
@@ -744,9 +768,10 @@ export function reloadWeapon(player: Player) {
 /* ================= PICKUPS ================= */
 
 function applyPickup(player: Player, pickup: Pickup, game: Game) {
+  const maxHp = game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP;
   switch (pickup.type) {
     case "health":
-      player.hp = Math.min(GAME_CONFIG.PLAYER_HP, player.hp + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
+      player.hp = Math.min(maxHp, player.hp + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
       break;
     case "ammo":
       player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;

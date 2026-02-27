@@ -86,7 +86,7 @@ describe("Pickup Application", () => {
   test("health pickup heals player", () => {
     const player = createTestPlayer({ hp: 1 });
     applyPickup(player, createPickup("health"));
-    expect(player.hp).toBe(1 + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
+    expect(player.hp).toBe(Math.min(GAME_CONFIG.PLAYER_HP, 1 + GAME_CONFIG.PICKUP_HEALTH_AMOUNT));
   });
 
   test("health pickup does not exceed max HP", () => {

@@ -67,6 +67,7 @@ export type Obstacle = {
   size: number;
   destroyed: boolean;
   type?: string;
+  groupId?: string;  // wall segments sharing a groupId get destroyed together
 };
 
 export type Bomb = {
@@ -153,7 +154,9 @@ export type PlayerStats = {
   kills: number;
   deaths: number;
   wins: number;
+  losses: number;
   gamesPlayed: number;
+  mmr: number;
 };
 
 export type MatchHistoryEntry = {

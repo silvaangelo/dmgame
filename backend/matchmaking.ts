@@ -103,6 +103,7 @@ export function startGameFromRoom(room: Room) {
       });
 
       if (isHorizontal) {
+        const gId = uuid(); // group all blocks in this wall segment
         for (let j = 0; j < wallLength; j++) {
           obstacles.push({
             id: uuid(),
@@ -111,9 +112,11 @@ export function startGameFromRoom(room: Room) {
             size: blockSize,
             destroyed: false,
             type: "wall",
+            groupId: gId,
           });
         }
       } else {
+        const gId = uuid();
         for (let j = 0; j < wallLength; j++) {
           obstacles.push({
             id: uuid(),
@@ -122,6 +125,7 @@ export function startGameFromRoom(room: Room) {
             size: blockSize,
             destroyed: false,
             type: "wall",
+            groupId: gId,
           });
         }
       }
@@ -255,6 +259,13 @@ export function startGameFromRoom(room: Room) {
   // Resolve gamemode from room votes
   const gameMode = resolveGameModeVotes(room);
 
+  // In LMS, players start with more HP (no respawns)
+  if (gameMode === "lastManStanding") {
+    players.forEach((p) => {
+      p.hp = GAME_CONFIG.LMS_PLAYER_HP;
+    });
+  }
+
   const game: Game = {
     id: uuid(),
     players,
@@ -295,6 +306,7 @@ export function startGameFromRoom(room: Room) {
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
     gameMode: game.gameMode,
+    maxHp: game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP,
   });
 
   // Start the pre-game ready timeout (15s)
@@ -361,6 +373,7 @@ function beginMatch(game: Game) {
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
     gameMode: game.gameMode,
+    maxHp: game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP,
   });
 
   if (game.gameMode === "lastManStanding") {
