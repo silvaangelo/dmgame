@@ -2,6 +2,8 @@
 
 Real-time multiplayer top-down shooter — play directly in your browser.
 
+Server located in Brazil, ping may vary based on your location. Best played on desktop with keyboard and mouse, but mobile support is available with touch controls.
+
 🎮 **Play now:** [https://biru-shooting-game.com](https://biru-shooting-game.com)
 
 ## About
