@@ -44,12 +44,14 @@ Without it, TypeScript error TS2742 occurs because the inferred type references 
 
 ### 6. Compact State Format
 
-The 40 Hz state broadcast uses **arrays instead of objects** to save bandwidth:
+The 35 Hz state broadcast uses **arrays instead of objects** to save bandwidth, serialized with **MessagePack** (`backend/protocol.ts`):
 ```
-Player: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weaponCode, kills]
+Player: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weaponCode, kills, skin, speedBoosted, shielded, invisible, regen]
 Bullet: [id, x, y, weaponCode]
+Pickup: [id, x, y, typeCode]
 ```
-Weapon codes: `0 = machinegun`, `1 = shotgun`, `2 = knife`, `3 = minigun` (powerup)
+Weapon codes: `0 = machinegun`, `1 = shotgun`, `2 = knife`, `3 = minigun` (powerup), `4 = sniper`
+Pickup type codes: `0 = health`, `1 = ammo`, `2 = speed`, `3 = minigun`, `4 = shield`, `5 = invisibility`, `6 = regen`
 
 If you add a field to the player state, you must update:
 - `backend/utils.ts` → `serializePlayersCompact()`
@@ -68,6 +70,7 @@ If you add a field to the player state, you must update:
 | `server.ts`       | Express + HTTP + WSS setup                       | app, server, wss                   |
 | `state.ts`        | Mutable shared state                             | rooms, games, allPlayers           |
 | `utils.ts`        | Broadcast, serialization, lookups                | broadcast, serializePlayersCompact |
+| `protocol.ts`     | MessagePack serialize/deserialize                | serialize, deserialize             |
 | `game.ts`         | Game loop, physics, combat, respawn              | updateGame, shoot, startGameLoop   |
 | `room.ts`         | Room creation, join/leave, room ready            | createRoom, joinRoom, leaveRoom    |
 | `matchmaking.ts`  | Game creation from rooms, pre-game ready         | startGameFromRoom, checkAllReady   |
@@ -81,6 +84,7 @@ If you add a field to the player state, you must update:
 | `styles.css`  | All CSS (panels, HUD, kill feed, minimap, animations)  |
 | `game.js`     | All JS (rendering, networking, audio, input, particles)|
 | `assets/`     | Audio files (shot, reload, scream, etc.)               |
+| `lib/`        | Vendor libraries (msgpack.min.js)                      |
 
 ## Common Tasks
 
@@ -88,11 +92,12 @@ If you add a field to the player state, you must update:
 
 1. Add weapon constants to `backend/config.ts` (`GAME_CONFIG`)
 2. Add weapon to `WEAPON_CYCLE` in `backend/config.ts` (unless it's a powerup-only weapon)
-3. Add weapon handling in `backend/game.ts` → `shoot()` (cooldown, damage, behavior)
-4. Add weapon cycling in `backend/socket.ts` → `switchWeapon` handler
-5. Add weapon rendering in `frontend/game.js` → player rendering section (draw the weapon sprite)
-6. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
-7. Update compact serialization if needed (`utils.ts` + `game.js` state handler)
+3. Add weapon code to `WEAPON_CODES` in `backend/utils.ts` → `serializePlayersCompact()`
+4. Add weapon handling in `backend/game.ts` → `shoot()` (cooldown, damage, behavior)
+5. Add weapon cycling in `backend/socket.ts` → `switchWeapon` handler
+6. Add weapon code mapping in `frontend/game.js` → `weaponCodeMap` in state handler
+7. Add weapon rendering in `frontend/game.js` → player rendering section (draw the weapon sprite)
+8. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
 
 ### Adding a New Game Event
 
@@ -132,20 +137,24 @@ bun run lint:fix
 
 # Build for production
 bun run build
+
+# Run tests
+bun test
 ```
 
 The dev server uses Bun which runs TypeScript directly without a build step. The frontend files are served as-is from the `frontend/` directory.
 
 ## Testing Changes
 
-There are no automated tests. To verify changes:
+Unit tests exist in the `tests/` directory covering bullet physics, collision detection, pickups, and utilities.
 
-1. Run `pnpm typecheck` — ensure TypeScript compiles
-2. Run `pnpm lint` — ensure no lint errors
-3. Start the server with `pnpm dev`
-4. Open `http://localhost:3000` in 2+ browser tabs
-5. Join queue in both tabs, play through a match
-6. Verify: movement feels responsive, bullets hit correctly, kill feed updates, sounds play, scoreboard is accurate
+1. Run `bun test` — run unit tests
+2. Run `bun run typecheck` — ensure TypeScript compiles
+3. Run `bun run lint` — ensure no lint errors
+4. Start the server with `bun run dev`
+5. Open `http://localhost:3000` in 2+ browser tabs
+6. Join queue in both tabs, play through a match
+7. Verify: movement feels responsive, bullets hit correctly, kill feed updates, sounds play, scoreboard is accurate
 
 ## Pitfalls to Avoid
 
@@ -157,6 +166,7 @@ There are no automated tests. To verify changes:
 - **Don't modify obstacle positions after creation** — they're static until destroyed
 - **Don't use `let` where `const` suffices** — ESLint will flag it
 - **Don't create frontend modules/imports** — game.js runs as a single global script
+- **Don't use JSON for WebSocket messages** — use `serialize()`/`deserialize()` from `protocol.ts` (MessagePack)
 
 ## Tech Stack Reference
 

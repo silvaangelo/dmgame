@@ -179,6 +179,17 @@ let victoryCountdownInterval = null;
 let arenaZone = null; // { x, y, w, h } or null if not active
 let zoneWarningShown = false;
 
+// Zone clouds (floating outside safe zone)
+let zoneClouds = [];
+
+// Loot crates
+let lootCrates = [];
+let crateDestroyEffects = [];
+
+// Dash
+let dashCooldownUntil = 0;
+let dashTrails = [];
+
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
 function getCachedDOM() {
@@ -1023,15 +1034,75 @@ let lowHPVignetteW = 0;
 let lowHPVignetteH = 0;
 
 // Arena zone rendering (shrinking safe zone)
+function ensureZoneClouds() {
+  if (!arenaZone || zoneClouds.length > 0) return;
+  // Spawn clouds in the danger zone around the edges
+  const count = 30;
+  for (let i = 0; i < count; i++) {
+    zoneClouds.push({
+      x: Math.random() * GAME_CONFIG.ARENA_WIDTH,
+      y: Math.random() * GAME_CONFIG.ARENA_HEIGHT,
+      size: 40 + Math.random() * 80,
+      opacity: 0.15 + Math.random() * 0.25,
+      speed: 0.2 + Math.random() * 0.4,
+      angle: Math.random() * Math.PI * 2,
+      drift: (Math.random() - 0.5) * 0.005,
+    });
+  }
+}
+
+function updateZoneClouds() {
+  if (!arenaZone) return;
+  zoneClouds.forEach((c) => {
+    c.x += Math.cos(c.angle) * c.speed;
+    c.y += Math.sin(c.angle) * c.speed;
+    c.angle += c.drift;
+    // Wrap around arena edges
+    if (c.x < -c.size) c.x = GAME_CONFIG.ARENA_WIDTH + c.size;
+    if (c.x > GAME_CONFIG.ARENA_WIDTH + c.size) c.x = -c.size;
+    if (c.y < -c.size) c.y = GAME_CONFIG.ARENA_HEIGHT + c.size;
+    if (c.y > GAME_CONFIG.ARENA_HEIGHT + c.size) c.y = -c.size;
+  });
+}
+
+function renderZoneClouds() {
+  if (!arenaZone || zoneClouds.length === 0) return;
+  const z = arenaZone;
+  ctx.save();
+  // Only draw clouds outside the safe zone using clipping
+  ctx.beginPath();
+  ctx.rect(0, 0, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT);
+  ctx.rect(z.x + z.w, z.y, -z.w, z.h); // counter-clockwise to cut out safe zone
+  ctx.clip("evenodd");
+
+  zoneClouds.forEach((c) => {
+    const gradient = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.size);
+    gradient.addColorStop(0, `rgba(200, 60, 60, ${c.opacity * 0.6})`);
+    gradient.addColorStop(0.5, `rgba(150, 40, 40, ${c.opacity * 0.3})`);
+    gradient.addColorStop(1, "rgba(100, 20, 20, 0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
 function renderZone() {
   if (!arenaZone) return;
   const z = arenaZone;
+
+  ensureZoneClouds();
+  updateZoneClouds();
 
   // Draw red danger overlay outside the safe zone using clipping
   ctx.save();
 
   // Fill entire arena with danger color, then clip out the safe zone
-  ctx.fillStyle = "rgba(180, 30, 30, 0.15)";
+  // Stronger red the further the zone has shrunk
+  const shrinkRatio = 1 - (z.w * z.h) / (GAME_CONFIG.ARENA_WIDTH * GAME_CONFIG.ARENA_HEIGHT);
+  const dangerAlpha = 0.12 + shrinkRatio * 0.18;
+  ctx.fillStyle = `rgba(180, 30, 30, ${dangerAlpha})`;
 
   // Top strip
   if (z.y > 0) ctx.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, z.y);
@@ -1043,6 +1114,9 @@ function renderZone() {
   // Right strip
   const rightX = z.x + z.w;
   if (rightX < GAME_CONFIG.ARENA_WIDTH) ctx.fillRect(rightX, z.y, GAME_CONFIG.ARENA_WIDTH - rightX, z.h);
+
+  // Render floating danger clouds
+  renderZoneClouds();
 
   // Pulsing border for the safe zone
   const pulse = 0.5 + 0.3 * Math.sin(Date.now() / 400);
@@ -1464,6 +1538,11 @@ function returnToLobby() {
   lowHPVignetteGradient = null;
   arenaZone = null;
   zoneWarningShown = false;
+  zoneClouds = [];
+  lootCrates = [];
+  crateDestroyEffects = [];
+  dashCooldownUntil = 0;
+  dashTrails = [];
   stopHeartbeat();
   lastKilledByUsername = "";
   pendingDeathWeapon.clear();
@@ -2289,6 +2368,33 @@ function setupWsMessageHandler() {
       createLightningStrike(lx, ly, lRadius);
     }
 
+    // Loot crate events
+    if (data.type === "crateSpawned") {
+      const c = data.crate;
+      // Only add if not already tracked (state sync covers it)
+      if (!lootCrates.find((lc) => lc.id === c.id)) {
+        lootCrates.push({ id: c.id, x: c.x, y: c.y, hp: c.hp });
+      }
+    }
+
+    if (data.type === "crateHit") {
+      const crate = lootCrates.find((c) => c.id === data.crateId);
+      if (crate) {
+        crate.hp = data.hp;
+        crate.hitFlash = Date.now();
+      }
+    }
+
+    if (data.type === "crateDestroyed") {
+      lootCrates = lootCrates.filter((c) => c.id !== data.crateId);
+      // Create destruction effect
+      crateDestroyEffects.push({
+        x: data.pickup.x,
+        y: data.pickup.y,
+        time: Date.now(),
+      });
+    }
+
     if (data.type === "leaderboard") {
       showLeaderboard(data.stats);
     }
@@ -2327,6 +2433,8 @@ function setupWsMessageHandler() {
           shielded: p[12] === 1,
           invisible: p[13] === 1,
           regen: p[14] === 1,
+          armor: p[15] || 0,
+          dashing: p[16] === 1,
           username: usernameMap.get(p[0]) || "Jogador",
         };
       }
@@ -2363,7 +2471,7 @@ function setupWsMessageHandler() {
       });
 
       // Parse compact pickups: [id, x, y, typeCode]
-      const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen" };
+      const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen", 7: "armor" };
       const parsedPickups = (data.pk || []).map((pk) => {
         if (Array.isArray(pk)) {
           return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
@@ -2375,6 +2483,16 @@ function setupWsMessageHandler() {
       // Update zone shrinking state
       if (data.z) {
         arenaZone = { x: data.z[0], y: data.z[1], w: data.z[2], h: data.z[3] };
+      }
+
+      // Update loot crates
+      if (data.cr) {
+        lootCrates = data.cr.map((c) => {
+          if (Array.isArray(c)) {
+            return { id: c[0], x: c[1], y: c[2], hp: c[3] };
+          }
+          return c;
+        });
       }
 
       // Check for deaths before updating players
@@ -3003,7 +3121,8 @@ function updateShotUI() {
       hpBarFill.className = "hud-hp-bar-fill";
     }
   } else {
-    healthDisplay.textContent = `❤️ ${player.hp}/4`;
+    const armorText = player.armor > 0 ? ` +🛡${player.armor}` : "";
+    healthDisplay.textContent = `❤️ ${player.hp}/4${armorText}`;
     if (hpBarFill) {
       const hpPercent = (player.hp / 4) * 100;
       hpBarFill.style.width = hpPercent + "%";
@@ -3046,6 +3165,13 @@ function updateShotUI() {
     const parts = [];
     if (player.speedBoosted) parts.push("⚡ TURBO!");
     if (player.weapon === "minigun") parts.push("🔥 MINIGUN!");
+    if (player.armor > 0) parts.push(`🛡 ARMOR x${player.armor}`);
+    const dashRemaining = Math.max(0, dashCooldownUntil - Date.now());
+    if (dashRemaining > 0) {
+      parts.push(`💨 ${(dashRemaining / 1000).toFixed(1)}s`);
+    } else {
+      parts.push("💨 DASH [Shift]");
+    }
     speedBoostDisplay.textContent = parts.join(" ");
   }
 }
@@ -3102,6 +3228,28 @@ document.addEventListener("keydown", (e) => {
   // R key to manually reload
   if (e.key === "r" || e.key === "R") {
     ws.send(serialize({ type: "reload" }));
+    return;
+  }
+
+  // Shift key to dash
+  if (e.key === "Shift") {
+    e.preventDefault();
+    if (Date.now() >= dashCooldownUntil) {
+      ws.send(serialize({ type: "dash" }));
+      dashCooldownUntil = Date.now() + 3000; // mirror server cooldown
+      // Create dash trail for local player
+      const localP = players.find((p) => p.id === playerId);
+      if (localP) {
+        for (let i = 0; i < 5; i++) {
+          dashTrails.push({
+            x: predictedX + (Math.random() - 0.5) * 6,
+            y: predictedY + (Math.random() - 0.5) * 6,
+            alpha: 0.7,
+            skin: localP.skin || 0,
+          });
+        }
+      }
+    }
     return;
   }
 
@@ -3791,11 +3939,11 @@ function renderPickupEffects() {
 function renderPickups() {
   const pickupColors = {
     health: "#ff4444", ammo: "#44bb44", speed: "#4488ff", minigun: "#ff8800",
-    shield: "#44ddff", invisibility: "#aa66ff", regen: "#44ff88",
+    shield: "#44ddff", invisibility: "#aa66ff", regen: "#44ff88", armor: "#ddaa22",
   };
   const pickupIcons = {
     health: "+", ammo: "A", speed: "S", minigun: "M",
-    shield: "🛡", invisibility: "👻", regen: "♥",
+    shield: "🛡", invisibility: "👻", regen: "♥", armor: "V",
   };
   const now = Date.now();
 
@@ -3835,6 +3983,113 @@ function renderPickups() {
     ctx.fillText(icon, pk.x, pk.y + floatY);
     ctx.textAlign = "start";
     ctx.textBaseline = "alphabetic";
+  });
+}
+
+// ===== LOOT CRATE RENDERING =====
+
+function renderLootCrates() {
+  const now = Date.now();
+  lootCrates.forEach((crate) => {
+    const half = 14;
+
+    // Hit flash effect
+    const flashActive = crate.hitFlash && now - crate.hitFlash < 150;
+
+    // Shadow
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(crate.x - half + 2, crate.y - half + 2, half * 2, half * 2);
+
+    // Crate body
+    ctx.fillStyle = flashActive ? "#ffeeaa" : "#8B6914";
+    ctx.fillRect(crate.x - half, crate.y - half, half * 2, half * 2);
+
+    // Border
+    ctx.strokeStyle = flashActive ? "#fff" : "#5a4010";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(crate.x - half, crate.y - half, half * 2, half * 2);
+
+    // Cross planks
+    ctx.strokeStyle = "#6B5010";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(crate.x - half, crate.y - half);
+    ctx.lineTo(crate.x + half, crate.y + half);
+    ctx.moveTo(crate.x + half, crate.y - half);
+    ctx.lineTo(crate.x - half, crate.y + half);
+    ctx.stroke();
+
+    // HP indicator (small circles)
+    for (let i = 0; i < crate.hp; i++) {
+      ctx.fillStyle = "#44ff44";
+      ctx.beginPath();
+      ctx.arc(crate.x - 6 + i * 6, crate.y + half + 6, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // "?" icon
+    ctx.fillStyle = "#ffdd44";
+    ctx.font = "bold 14px 'Rajdhani', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("?", crate.x, crate.y);
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
+  });
+}
+
+function updateCrateDestroyEffects() {
+  const now = Date.now();
+  compactInPlace(crateDestroyEffects, (e) => now - e.time < 500);
+}
+
+function renderCrateDestroyEffects() {
+  const now = Date.now();
+  crateDestroyEffects.forEach((e) => {
+    const t = (now - e.time) / 500;
+    const alpha = 1 - t;
+    // Expanding ring
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = "#ddaa22";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 10 + t * 30, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Wood splinters
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 * i) / 6;
+      const dist = t * 25;
+      const sx = e.x + Math.cos(angle) * dist;
+      const sy = e.y + Math.sin(angle) * dist;
+      ctx.fillStyle = "#8B6914";
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillRect(sx - 2, sy - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1.0;
+  });
+}
+
+// ===== DASH TRAIL RENDERING =====
+
+function updateDashTrails() {
+  for (let i = dashTrails.length - 1; i >= 0; i--) {
+    dashTrails[i].alpha -= 0.04;
+    if (dashTrails[i].alpha <= 0) {
+      dashTrails.splice(i, 1);
+    }
+  }
+}
+
+function renderDashTrails() {
+  dashTrails.forEach((trail) => {
+    const skin = SKINS[trail.skin] || SKINS[0];
+    ctx.globalAlpha = trail.alpha * 0.5;
+    ctx.fillStyle = skin.primary;
+    ctx.beginPath();
+    ctx.arc(trail.x, trail.y, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
   });
 }
 
@@ -4311,6 +4566,7 @@ function render() {
   updateFloatingNumbers();
   updateKillEffects();
   updateDeathAnimations();
+  updateDashTrails();
 
   // Dust clouds when local player moves
   if (
@@ -4355,11 +4611,19 @@ function render() {
   renderPickups();
   renderPickupEffects();
 
+  // Render loot crates
+  updateCrateDestroyEffects();
+  renderLootCrates();
+  renderCrateDestroyEffects();
+
   // Render bombs
   renderBombs();
 
   // Render lightning warnings
   renderLightningWarnings();
+
+  // Render dash trails (below players)
+  renderDashTrails();
 
   // Find bounty leader ONCE (player with most kills, minimum 2)
   let bountyLeaderId = null;
@@ -4409,6 +4673,37 @@ function render() {
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(renderX, renderY, 24, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Dash visual — fast motion blur ring
+    if (p.dashing) {
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = "rgba(255, 255, 100, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1.0;
+      // Create trail particles for other players dashing
+      if (p.id !== playerId && Math.random() < 0.5) {
+        dashTrails.push({
+          x: renderX + (Math.random() - 0.5) * 10,
+          y: renderY + (Math.random() - 0.5) * 10,
+          alpha: 0.5,
+          skin: p.skin || 0,
+        });
+      }
+    }
+
+    // Armor visual — golden outline
+    if (p.armor > 0) {
+      ctx.strokeStyle = "rgba(221, 170, 34, 0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 19, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -4590,6 +4885,16 @@ function render() {
     ctx.fillStyle = hpColor;
     ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
 
+    // Armor bar (golden, stacked below HP bar)
+    if (p.armor > 0) {
+      const armorBarY = barY + barHeight + 1;
+      const armorPercent = p.armor / 2;
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(barX - 1, armorBarY, barWidth + 2, 3);
+      ctx.fillStyle = "#ddaa22";
+      ctx.fillRect(barX, armorBarY, barWidth * armorPercent, 2);
+    }
+
     // Username
     ctx.font = "bold 20px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
@@ -4643,19 +4948,31 @@ function render() {
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(b.x, b.y);
-      const trailLen = 18;
-      const angle = b.dx !== undefined ? Math.atan2(b.dy, b.dx) : 0;
+      const trailLen = 22;
+      // Use dx/dy for predicted bullets, or compute from previous position
+      let angle;
+      if (b.dx !== undefined && b.dy !== undefined) {
+        angle = Math.atan2(b.dy, b.dx);
+      } else {
+        const prev = previousBulletPositions.get(b.id);
+        if (prev && (prev.x !== b.x || prev.y !== b.y)) {
+          angle = Math.atan2(b.y - prev.y, b.x - prev.x);
+          b._lastAngle = angle;
+        } else {
+          angle = b._lastAngle !== undefined ? b._lastAngle : 0;
+        }
+      }
       ctx.lineTo(b.x - Math.cos(angle) * trailLen, b.y - Math.sin(angle) * trailLen);
       ctx.stroke();
       // Core dot
       ctx.fillStyle = "#88ccff";
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2);
       ctx.fill();
       // Glow
-      ctx.fillStyle = "rgba(68,170,255,0.25)";
+      ctx.fillStyle = "rgba(68,170,255,0.3)";
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, 8, 0, Math.PI * 2);
       ctx.fill();
     } else {
       // Machine gun tracer - yellow

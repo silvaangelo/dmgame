@@ -8,7 +8,7 @@ import {
   findGameByPlayer,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { shoot, checkVictory, reloadWeapon } from "./game.js";
+import { shoot, checkVictory, reloadWeapon, performDash } from "./game.js";
 import { checkAllReady } from "./matchmaking.js";
 import {
   createRoom,
@@ -174,6 +174,13 @@ export function setupSocket() {
           invisibleUntil: 0,
           regenUntil: 0,
           lastRegenTick: 0,
+          // Armor
+          armor: 0,
+          // Dash
+          dashCooldownUntil: 0,
+          dashUntil: 0,
+          dashDirX: 0,
+          dashDirY: 0,
           // Anti-cheat
           msgCount: 0,
           msgWindowStart: Date.now(),
@@ -319,6 +326,11 @@ export function setupSocket() {
 
       if (data.type === "reload") {
         reloadWeapon(player);
+        return;
+      }
+
+      if (data.type === "dash") {
+        performDash(player);
         return;
       }
 
@@ -469,6 +481,7 @@ export function setupSocket() {
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
             if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
             if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
+            if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
             games.delete(game.id);
           } else {
             checkVictory(game);
@@ -480,6 +493,7 @@ export function setupSocket() {
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
             if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
             if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
+            if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
             games.delete(game.id);
           }
         }

@@ -12,23 +12,27 @@ Deathmatch Arena is a fast-paced browser game where players fight in a top-down 
 
 ### Features
 
-- **3 weapons** — Machine Gun, Shotgun, and Knife (+ Minigun powerup)
-- **Pickups** — Health, ammo, speed boosts, and minigun scattered across the arena
-- **Bombs** — Randomly spawning explosives that keep you on your toes
+- **4 weapons** — Machine Gun, Shotgun, Knife, and Sniper Rifle (+ Minigun powerup)
+- **Powerups** — Health, ammo, speed boost, minigun, shield, invisibility, and health regen
+- **Bombs & Lightning** — Randomly spawning explosives and lightning strikes
+- **Dynamic zone** — Arena shrinks over time, forcing players together
 - **Destructible obstacles** — Shoot through walls and trees
 - **Kill streaks** — Get rewarded for consecutive kills
 - **Mobile support** — Touch controls with virtual joystick
-- **Real-time** — 50 Hz server tick rate with client-side prediction
+- **Real-time** — 35 Hz server tick rate with client-side prediction
+- **MessagePack protocol** — Binary WebSocket serialization for minimal bandwidth
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Runtime | Node.js ≥ 24 |
+| Runtime | Bun ≥ 1.2 |
 | Backend | TypeScript, Express 5, ws |
 | Frontend | Vanilla JS, Canvas 2D, Web Audio API |
-| Build | tsc (prod), tsx (dev) |
-| Package | pnpm 10 |
+| Protocol | MessagePack (binary WebSocket) |
+| Build | tsc (typecheck), Bun (runtime) |
+| Package | Bun (built-in package manager) |
+| Lint | ESLint 10, typescript-eslint |
 | Container | Docker, docker-compose |
 | CI/CD | GitHub Actions → DigitalOcean Droplet |
 
@@ -36,10 +40,10 @@ Deathmatch Arena is a fast-paced browser game where players fight in a top-down 
 
 ```bash
 # Install dependencies
-pnpm install
+bun install
 
 # Start dev server
-pnpm dev
+bun run dev
 
 # Open in browser
 open http://localhost:3000
@@ -49,12 +53,13 @@ open http://localhost:3000
 
 | Command | Description |
 |---------|-------------|
-| `pnpm dev` | Start dev server (tsx, live reload) |
-| `pnpm build` | Compile TypeScript to `dist/` |
-| `pnpm start` | Run production build |
-| `pnpm typecheck` | Type-check without emitting |
-| `pnpm lint` | Run ESLint |
-| `pnpm lint:fix` | Auto-fix lint issues |
+| `bun run dev` | Start dev server (hot reload via `--watch`) |
+| `bun run build` | Compile TypeScript + bundle frontend |
+| `bun run start` | Run production build |
+| `bun run typecheck` | Type-check without emitting |
+| `bun run lint` | Run ESLint |
+| `bun run lint:fix` | Auto-fix lint issues |
+| `bun test` | Run unit tests |
 
 ## Docker
 

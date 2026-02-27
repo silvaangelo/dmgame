@@ -30,6 +30,13 @@ export type Player = {
   invisibleUntil: number;
   regenUntil: number;
   lastRegenTick: number;
+  // Armor (temporary extra HP above max)
+  armor: number;
+  // Dash ability
+  dashCooldownUntil: number;
+  dashUntil: number;
+  dashDirX: number;
+  dashDirY: number;
   // Anti-cheat
   msgCount: number;
   msgWindowStart: number;
@@ -77,7 +84,15 @@ export type Pickup = {
   id: string;
   x: number;
   y: number;
-  type: "health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen";
+  type: "health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen" | "armor";
+  createdAt: number;
+};
+
+export type LootCrate = {
+  id: string;
+  x: number;
+  y: number;
+  hp: number;
   createdAt: number;
 };
 
@@ -89,6 +104,7 @@ export type Game = {
   pickups: Pickup[];
   bombs: Bomb[];
   lightnings: Lightning[];
+  lootCrates: LootCrate[];
   started: boolean;
   lastBroadcastState?: Map<string, unknown>;
   stateSequence: number;
@@ -96,6 +112,7 @@ export type Game = {
   pickupSpawnInterval?: NodeJS.Timeout;
   bombSpawnInterval?: NodeJS.Timeout;
   lightningSpawnInterval?: NodeJS.Timeout;
+  lootCrateSpawnInterval?: NodeJS.Timeout;
   preGameTimeout?: NodeJS.Timeout;
   preGameCountdownInterval?: NodeJS.Timeout;
   // Dynamic arena shrinking

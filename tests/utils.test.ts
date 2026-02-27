@@ -62,6 +62,11 @@ describe("serializePlayersCompact", () => {
       invisibleUntil: 0,
       regenUntil: 0,
       lastRegenTick: 0,
+      armor: 0,
+      dashCooldownUntil: 0,
+      dashUntil: 0,
+      dashDirX: 0,
+      dashDirY: 0,
       msgCount: 0,
       msgWindowStart: 0,
       violations: 0,
@@ -79,6 +84,7 @@ describe("serializePlayersCompact", () => {
       pickups: [],
       bombs: [],
       lightnings: [],
+      lootCrates: [],
       started: true,
       stateSequence: 0,
       matchStartTime: 0,
@@ -149,6 +155,8 @@ describe("serializePlayersCompact", () => {
     expect(p[12]).toBe(1); // shielded
     expect(p[13]).toBe(1); // invisible
     expect(p[14]).toBe(1); // regen
+    expect(p[15]).toBe(0); // armor (default 0)
+    expect(p[16]).toBe(0); // not dashing
   });
 
   test("expired powerups show as inactive", () => {
@@ -166,5 +174,22 @@ describe("serializePlayersCompact", () => {
     expect(p[12]).toBe(0);
     expect(p[13]).toBe(0);
     expect(p[14]).toBe(0);
+  });
+
+  test("armor serializes correctly", () => {
+    const player = createMockPlayer({ armor: 2 });
+    const game = createMockGame([player]);
+    const result = serializePlayersCompact(game);
+    const p = result[0] as unknown[];
+    expect(p[15]).toBe(2);
+  });
+
+  test("dashing state serializes correctly", () => {
+    const future = Date.now() + 5000;
+    const player = createMockPlayer({ dashUntil: future });
+    const game = createMockGame([player]);
+    const result = serializePlayersCompact(game);
+    const p = result[0] as unknown[];
+    expect(p[16]).toBe(1);
   });
 });

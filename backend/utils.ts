@@ -63,6 +63,8 @@ export function serializePlayersCompact(game: Game) {
     now < p.shieldUntil ? 1 : 0,
     now < p.invisibleUntil ? 1 : 0,
     now < p.regenUntil ? 1 : 0,
+    p.armor,
+    now < p.dashUntil ? 1 : 0,
   ]);
 }
 

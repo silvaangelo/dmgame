@@ -1,5 +1,5 @@
 export const GAME_CONFIG = {
-  TICK_RATE: 30,
+  TICK_RATE: 35,
   MAX_PLAYERS: 10,
   MIN_PLAYERS: 2,
   QUEUE_COUNTDOWN: 10,
@@ -9,7 +9,11 @@ export const GAME_CONFIG = {
   PLAYER_RADIUS: 20,
   SHOTS_PER_MAGAZINE: 30,
   SHOT_COOLDOWN: 35,
-  RELOAD_TIME: 1500,
+  RELOAD_TIME: 1950,
+  // Weapon-specific reload times
+  MACHINEGUN_RELOAD_TIME: 1800,
+  SHOTGUN_RELOAD_TIME: 2400,
+  SNIPER_RELOAD_TIME: 2800,
   BULLET_SPEED: 15,
   BULLET_LIFETIME: 2000,
   ARENA_WIDTH: 1400,
@@ -29,30 +33,38 @@ export const GAME_CONFIG = {
   KNIFE_RANGE: 55,
   KNIFE_SPEED_BONUS: 1.5,
   // Pickups
-  PICKUP_SPAWN_INTERVAL: 12000,
-  PICKUP_LIFETIME: 20000,
+  PICKUP_SPAWN_INTERVAL: 10000,
+  PICKUP_LIFETIME: 25000,
   PICKUP_RADIUS: 30,
-  PICKUP_HEALTH_AMOUNT: 2,
-  PICKUP_SPEED_DURATION: 5000,
-  PICKUP_SPEED_MULTIPLIER: 1.5,
-  MAX_PICKUPS: 5,
+  PICKUP_HEALTH_AMOUNT: 3,
+  PICKUP_SPEED_DURATION: 8000,
+  PICKUP_SPEED_MULTIPLIER: 1.8,
+  MAX_PICKUPS: 6,
   // Minigun (powerup)
-  MINIGUN_COOLDOWN: 18,
-  MINIGUN_DAMAGE: 1,
-  MINIGUN_RECOIL: 0.08,
-  MINIGUN_DURATION: 8000,
+  MINIGUN_COOLDOWN: 14,
+  MINIGUN_DAMAGE: 2,
+  MINIGUN_RECOIL: 0.06,
+  MINIGUN_DURATION: 12000,
   // Sniper Rifle
   SNIPER_COOLDOWN: 1200,
   SNIPER_DAMAGE: 4,
   SNIPER_BULLET_SPEED: 30,
   // Shield powerup
-  SHIELD_DURATION: 6000,
-  SHIELD_ABSORB: 2, // absorbs 2 HP worth of damage
+  SHIELD_DURATION: 10000,
+  SHIELD_ABSORB: 3, // absorbs 3 HP worth of damage
   // Invisibility powerup
-  INVISIBILITY_DURATION: 5000,
+  INVISIBILITY_DURATION: 8000,
   // Health Regen powerup
-  REGEN_DURATION: 8000,
-  REGEN_TICK_INTERVAL: 2000, // heal 1 HP every 2 seconds
+  REGEN_DURATION: 12000,
+  REGEN_TICK_INTERVAL: 1500, // heal 1 HP every 1.5 seconds
+  // Armor pickup
+  ARMOR_AMOUNT: 2,           // +2 temporary HP above max
+  ARMOR_MAX: 2,              // max armor a player can have
+  // Dash ability
+  DASH_COOLDOWN: 3000,       // 3s between dashes
+  DASH_DURATION: 150,        // dash lasts 150ms
+  DASH_SPEED: 28,            // pixels per tick during dash
+  DASH_INVINCIBLE: true,     // i-frames during dash
   // Bombs
   BOMB_SPAWN_INTERVAL: 3000,
   BOMB_FUSE_TIME: 1000,
@@ -73,6 +85,12 @@ export const GAME_CONFIG = {
   ZONE_DAMAGE_INTERVAL: 1000,   // Damage every 1s
   ZONE_DAMAGE: 1,               // 1 HP per tick outside zone
   ZONE_MIN_SIZE: 200,           // Minimum zone size (width/height)
+  // Loot crates
+  LOOT_CRATE_HP: 3,             // hits to destroy a crate
+  LOOT_CRATE_SIZE: 28,          // collision size
+  LOOT_CRATE_COUNT: 6,          // initial crates per match
+  LOOT_CRATE_RESPAWN_INTERVAL: 20000, // respawn a crate every 20s
+  LOOT_CRATE_MAX: 8,            // max crates on map
   ROOM_MAX_PLAYERS: 10,
   ROOM_READY_TIMEOUT: 45,
   PRE_GAME_READY_TIMEOUT: 15,

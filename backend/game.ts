@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup, Bomb, Lightning } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
@@ -108,9 +108,47 @@ export function updateGame(game: Game) {
       player.reloading = false;
     }
 
-    const speed = getPlayerSpeed(player);
     const playerRadius = GAME_CONFIG.PLAYER_RADIUS;
     const margin = playerRadius;
+
+    // Dash movement overrides normal movement
+    const isDashing = Date.now() < player.dashUntil;
+    if (isDashing) {
+      const dashSpeed = GAME_CONFIG.DASH_SPEED;
+      // Move in dash direction with collision
+      const oldX = player.x;
+      player.x += player.dashDirX * dashSpeed;
+      player.x = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x));
+      for (const obstacle of game.obstacles) {
+        if (obstacle.destroyed) continue;
+        const closestX = Math.max(obstacle.x, Math.min(player.x, obstacle.x + obstacle.size));
+        const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
+        const distanceX = player.x - closestX;
+        const distanceY = player.y - closestY;
+        if (distanceX * distanceX + distanceY * distanceY < playerRadius * playerRadius) {
+          player.x = oldX;
+          break;
+        }
+      }
+
+      const oldY = player.y;
+      player.y += player.dashDirY * dashSpeed;
+      player.y = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y));
+      for (const obstacle of game.obstacles) {
+        if (obstacle.destroyed) continue;
+        const closestX = Math.max(obstacle.x, Math.min(player.x, obstacle.x + obstacle.size));
+        const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
+        const distanceX = player.x - closestX;
+        const distanceY = player.y - closestY;
+        if (distanceX * distanceX + distanceY * distanceY < playerRadius * playerRadius) {
+          player.y = oldY;
+          break;
+        }
+      }
+      return; // Skip normal movement during dash
+    }
+
+    const speed = getPlayerSpeed(player);
 
     // Move X axis first, then resolve collisions on X
     const oldX = player.x;
@@ -206,11 +244,37 @@ export function updateGame(game: Game) {
       return;
     }
 
+    // Loot crate bullet collision
+    const crateHalf = GAME_CONFIG.LOOT_CRATE_SIZE / 2;
+    const hitCrate = game.lootCrates.find(
+      (c) =>
+        bullet.x >= c.x - crateHalf &&
+        bullet.x <= c.x + crateHalf &&
+        bullet.y >= c.y - crateHalf &&
+        bullet.y <= c.y + crateHalf
+    );
+    if (hitCrate) {
+      bulletsToRemove.add(bullet.id);
+      hitCrate.hp--;
+      if (hitCrate.hp <= 0) {
+        destroyLootCrate(hitCrate, game);
+      } else {
+        broadcast(game, {
+          type: "crateHit",
+          crateId: hitCrate.id,
+          hp: hitCrate.hp,
+        });
+      }
+      return;
+    }
+
     // Use slightly generous hit detection for bullets
     const hitRadiusSq = (GAME_CONFIG.PLAYER_RADIUS * 1.2) ** 2;
     const enemy = game.players.find(
       (p) => {
         if (p.id === bullet.playerId || p.hp <= 0) return false;
+        // Dash invincibility — can't be hit while dashing
+        if (GAME_CONFIG.DASH_INVINCIBLE && Date.now() < p.dashUntil) return false;
         const bdx = p.x - bullet.x;
         const bdy = p.y - bullet.y;
         return bdx * bdx + bdy * bdy < hitRadiusSq;
@@ -226,6 +290,14 @@ export function updateGame(game: Game) {
         // Shield absorbs damage — reduce shield time instead
         enemy.shieldUntil -= 1500; // each hit drains 1.5s of shield
         // Knockback still applies
+      } else if (enemy.armor > 0) {
+        // Armor absorbs damage first
+        const armorAbsorb = Math.min(enemy.armor, bullet.damage);
+        enemy.armor -= armorAbsorb;
+        const remaining = bullet.damage - armorAbsorb;
+        if (remaining > 0) {
+          enemy.hp -= remaining;
+        }
       } else {
         enemy.hp -= bullet.damage;
       }
@@ -394,10 +466,13 @@ export function updateGame(game: Game) {
   ]);
   const compactPickups = game.pickups.map((pk) => {
     const PICKUP_TYPE_CODES: Record<string, number> = {
-      health: 0, ammo: 1, speed: 2, minigun: 3, shield: 4, invisibility: 5, regen: 6,
+      health: 0, ammo: 1, speed: 2, minigun: 3, shield: 4, invisibility: 5, regen: 6, armor: 7,
     };
     return [pk.id, Math.round(pk.x), Math.round(pk.y), PICKUP_TYPE_CODES[pk.type] ?? 0];
   });
+
+  // Compact loot crates: [id, x, y, hp]
+  const compactCrates = game.lootCrates.map((c) => [c.id, Math.round(c.x), Math.round(c.y), c.hp]);
 
   // Delta compression: only send players whose state actually changed
   if (!game.lastBroadcastState) {
@@ -426,14 +501,16 @@ export function updateGame(game: Game) {
   }
 
   const lastPickupCount = game.lastBroadcastState.get("pickupCount") as number || 0;
+  const lastCrateCount = game.lastBroadcastState.get("crateCount") as number || 0;
   // Skip broadcast if truly nothing changed
-  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount) {
+  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount && compactCrates.length === lastCrateCount) {
     return;
   }
 
   // Commit new state only when we actually broadcast
   game.lastBroadcastState.set("players", newPlayerStates);
   game.lastBroadcastState.set("pickupCount", compactPickups.length);
+  game.lastBroadcastState.set("crateCount", compactCrates.length);
 
   game.stateSequence++;
   broadcast(game, {
@@ -443,6 +520,7 @@ export function updateGame(game: Game) {
     df: changedPlayers.length < compactPlayers.length ? 1 : 0,
     b: compactBullets,
     pk: compactPickups,
+    cr: compactCrates,
     z: game.zoneShrinking ? [
       Math.round(game.zoneX),
       Math.round(game.zoneY),
@@ -471,6 +549,8 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
     const meleeRangeSq = meleeRange * meleeRange;
     game.players.forEach((target) => {
       if (target.id === player.id || target.hp <= 0) return;
+      // Dash invincibility — can't be hit while dashing
+      if (GAME_CONFIG.DASH_INVINCIBLE && Date.now() < target.dashUntil) return;
 
       const dx = target.x - player.x;
       const dy = target.y - player.y;
@@ -485,6 +565,11 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
           // Shield absorption for knife
           if (Date.now() < target.shieldUntil) {
             target.shieldUntil -= 1500;
+          } else if (target.armor > 0) {
+            const armorAbsorb = Math.min(target.armor, GAME_CONFIG.KNIFE_DAMAGE);
+            target.armor -= armorAbsorb;
+            const remaining = GAME_CONFIG.KNIFE_DAMAGE - armorAbsorb;
+            if (remaining > 0) target.hp -= remaining;
           } else {
             target.hp -= GAME_CONFIG.KNIFE_DAMAGE;
           }
@@ -543,7 +628,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
     player.shots--;
     if (player.shots === 0) {
       player.reloading = true;
-      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.RELOAD_TIME);
+      setTimeout(() => { player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE; player.reloading = false; }, GAME_CONFIG.SNIPER_RELOAD_TIME);
     }
     const bullet: Bullet = {
       id: uuid(), x: player.x, y: player.y,
@@ -574,10 +659,11 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
 
   if (player.shots === 0) {
     player.reloading = true;
+    const reloadTime = player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_RELOAD_TIME : GAME_CONFIG.MACHINEGUN_RELOAD_TIME;
     setTimeout(() => {
       player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
       player.reloading = false;
-    }, GAME_CONFIG.RELOAD_TIME);
+    }, reloadTime);
   }
 
   // Shotgun fires multiple pellets
@@ -639,10 +725,17 @@ export function reloadWeapon(player: Player) {
   if (player.shots >= GAME_CONFIG.SHOTS_PER_MAGAZINE) return;
 
   player.reloading = true;
+  let reloadTime: number;
+  switch (player.weapon) {
+    case "sniper": reloadTime = GAME_CONFIG.SNIPER_RELOAD_TIME; break;
+    case "shotgun": reloadTime = GAME_CONFIG.SHOTGUN_RELOAD_TIME; break;
+    case "machinegun": reloadTime = GAME_CONFIG.MACHINEGUN_RELOAD_TIME; break;
+    default: reloadTime = GAME_CONFIG.RELOAD_TIME;
+  }
   setTimeout(() => {
     player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
     player.reloading = false;
-  }, GAME_CONFIG.RELOAD_TIME);
+  }, reloadTime);
 }
 
 /* ================= PICKUPS ================= */
@@ -674,6 +767,9 @@ function applyPickup(player: Player, pickup: Pickup, game: Game) {
       player.regenUntil = Date.now() + GAME_CONFIG.REGEN_DURATION;
       player.lastRegenTick = Date.now();
       break;
+    case "armor":
+      player.armor = Math.min(GAME_CONFIG.ARMOR_MAX, player.armor + GAME_CONFIG.ARMOR_AMOUNT);
+      break;
   }
 
   broadcast(game, {
@@ -689,7 +785,7 @@ function applyPickup(player: Player, pickup: Pickup, game: Game) {
 export function spawnPickup(game: Game) {
   if (game.pickups.length >= GAME_CONFIG.MAX_PICKUPS) return;
 
-  const types: Array<"health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen"> = ["health", "ammo", "speed", "minigun", "shield", "invisibility", "regen"];
+  const types: Array<"health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen" | "armor"> = ["health", "ammo", "speed", "minigun", "shield", "invisibility", "regen", "armor"];
   const type = types[Math.floor(Math.random() * types.length)];
 
   let validPosition = false;
@@ -726,6 +822,114 @@ export function spawnPickup(game: Game) {
     };
     game.pickups.push(pickup);
   }
+}
+
+/* ================= LOOT CRATES ================= */
+
+function destroyLootCrate(crate: LootCrate, game: Game) {
+  game.lootCrates = game.lootCrates.filter((c) => c.id !== crate.id);
+
+  // Drop a random pickup at the crate's position
+  const types: Array<Pickup["type"]> = ["health", "ammo", "speed", "minigun", "shield", "invisibility", "regen", "armor"];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const pickup: Pickup = {
+    id: uuid(),
+    x: crate.x,
+    y: crate.y,
+    type,
+    createdAt: Date.now(),
+  };
+  game.pickups.push(pickup);
+
+  broadcast(game, {
+    type: "crateDestroyed",
+    crateId: crate.id,
+    pickup: { id: pickup.id, x: Math.round(pickup.x), y: Math.round(pickup.y), type: pickup.type },
+  });
+}
+
+export function spawnLootCrate(game: Game) {
+  if (game.lootCrates.length >= GAME_CONFIG.LOOT_CRATE_MAX) return;
+
+  let validPosition = false;
+  let attempts = 0;
+  let crateX = 0;
+  let crateY = 0;
+
+  while (!validPosition && attempts < 20) {
+    crateX = 80 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 160);
+    crateY = 80 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 160);
+
+    validPosition = isPositionClear(crateX, crateY, game.obstacles, GAME_CONFIG.LOOT_CRATE_SIZE);
+
+    // Don't spawn too close to players
+    for (const player of game.players) {
+      if (player.hp <= 0) continue;
+      const dist = Math.sqrt((crateX - player.x) ** 2 + (crateY - player.y) ** 2);
+      if (dist < 80) {
+        validPosition = false;
+        break;
+      }
+    }
+
+    attempts++;
+  }
+
+  if (validPosition) {
+    const crate: LootCrate = {
+      id: uuid(),
+      x: crateX,
+      y: crateY,
+      hp: GAME_CONFIG.LOOT_CRATE_HP,
+      createdAt: Date.now(),
+    };
+    game.lootCrates.push(crate);
+
+    broadcast(game, {
+      type: "crateSpawned",
+      crate: { id: crate.id, x: Math.round(crate.x), y: Math.round(crate.y), hp: crate.hp },
+    });
+  }
+}
+
+export function spawnInitialLootCrates(game: Game) {
+  for (let i = 0; i < GAME_CONFIG.LOOT_CRATE_COUNT; i++) {
+    spawnLootCrate(game);
+  }
+}
+
+/* ================= DASH ================= */
+
+export function performDash(player: Player) {
+  const now = Date.now();
+  if (player.hp <= 0) return;
+  if (now < player.dashCooldownUntil) return;
+
+  // Determine dash direction from current movement keys, or aim direction as fallback
+  let dirX = 0;
+  let dirY = 0;
+  if (player.keys.a) dirX -= 1;
+  if (player.keys.d) dirX += 1;
+  if (player.keys.w) dirY -= 1;
+  if (player.keys.s) dirY += 1;
+
+  if (dirX === 0 && dirY === 0) {
+    // Dash in aim direction
+    dirX = Math.cos(player.aimAngle);
+    dirY = Math.sin(player.aimAngle);
+  }
+
+  // Normalize
+  const mag = Math.sqrt(dirX * dirX + dirY * dirY);
+  if (mag > 0) {
+    dirX /= mag;
+    dirY /= mag;
+  }
+
+  player.dashDirX = dirX;
+  player.dashDirY = dirY;
+  player.dashUntil = now + GAME_CONFIG.DASH_DURATION;
+  player.dashCooldownUntil = now + GAME_CONFIG.DASH_COOLDOWN;
 }
 
 /* ================= BOMBS ================= */
@@ -829,6 +1033,9 @@ export function checkVictory(game: Game) {
     }
     if (game.zoneDamageInterval) {
       clearInterval(game.zoneDamageInterval);
+    }
+    if (game.lootCrateSpawnInterval) {
+      clearInterval(game.lootCrateSpawnInterval);
     }
 
     // Save stats for all players
@@ -970,6 +1177,11 @@ export function respawnPlayer(player: Player, game: Game) {
   player.invisibleUntil = 0;
   player.regenUntil = 0;
   player.lastRegenTick = 0;
+  player.armor = 0;
+  player.dashCooldownUntil = 0;
+  player.dashUntil = 0;
+  player.dashDirX = 0;
+  player.dashDirY = 0;
 
   // Safety: push player out of any overlapping obstacles
   const pr = GAME_CONFIG.PLAYER_RADIUS;
@@ -1136,10 +1348,19 @@ export function startZoneShrink(game: Game) {
         player.y <= game.zoneY + game.zoneH;
 
       if (!inZone) {
+        // Progressive damage — the further outside the zone, the more damage
+        const distLeft = Math.max(0, game.zoneX - player.x);
+        const distRight = Math.max(0, player.x - (game.zoneX + game.zoneW));
+        const distTop = Math.max(0, game.zoneY - player.y);
+        const distBottom = Math.max(0, player.y - (game.zoneY + game.zoneH));
+        const maxDist = Math.max(distLeft, distRight, distTop, distBottom);
+        // Base 1 damage, +1 per 80px outside the zone (max 4)
+        const zoneDmg = Math.min(4, GAME_CONFIG.ZONE_DAMAGE + Math.floor(maxDist / 80));
+
         if (Date.now() < player.shieldUntil) {
           player.shieldUntil -= 1500;
         } else {
-          player.hp -= GAME_CONFIG.ZONE_DAMAGE;
+          player.hp -= zoneDmg;
           if (player.hp <= 0) {
             player.hp = 0;
             handleKill(undefined, player, "zone", game);

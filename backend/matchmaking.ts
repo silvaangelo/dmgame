@@ -8,7 +8,7 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink } from "./game.js";
+import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink, spawnLootCrate, spawnInitialLootCrates } from "./game.js";
 import { broadcastRoomList } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
@@ -245,6 +245,11 @@ export function startGameFromRoom(room: Room) {
     p.invisibleUntil = 0;
     p.regenUntil = 0;
     p.lastRegenTick = 0;
+    p.armor = 0;
+    p.dashCooldownUntil = 0;
+    p.dashUntil = 0;
+    p.dashDirX = 0;
+    p.dashDirY = 0;
   });
 
   const game: Game = {
@@ -255,6 +260,7 @@ export function startGameFromRoom(room: Room) {
     pickups: [],
     bombs: [],
     lightnings: [],
+    lootCrates: [],
     started: false,
     lastBroadcastState: new Map(),
     stateSequence: 0,
@@ -392,6 +398,16 @@ function beginMatch(game: Game) {
     }, delay);
   };
   scheduleLightning();
+
+  // Spawn initial loot crates + respawn interval
+  spawnInitialLootCrates(game);
+  game.lootCrateSpawnInterval = setInterval(() => {
+    if (games.has(game.id)) {
+      spawnLootCrate(game);
+    } else {
+      clearInterval(game.lootCrateSpawnInterval);
+    }
+  }, GAME_CONFIG.LOOT_CRATE_RESPAWN_INTERVAL);
 
   // Schedule arena zone shrinking after ZONE_SHRINK_START ms
   setTimeout(() => {

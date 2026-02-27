@@ -32,6 +32,11 @@ function createTestPlayer(overrides: Partial<Player> = {}): Player {
     invisibleUntil: 0,
     regenUntil: 0,
     lastRegenTick: 0,
+    armor: 0,
+    dashCooldownUntil: 0,
+    dashUntil: 0,
+    dashDirX: 0,
+    dashDirY: 0,
     msgCount: 0,
     msgWindowStart: 0,
     violations: 0,
@@ -67,6 +72,9 @@ function applyPickup(player: Player, pickup: Pickup) {
       player.regenUntil = Date.now() + GAME_CONFIG.REGEN_DURATION;
       player.lastRegenTick = Date.now();
       break;
+    case "armor":
+      player.armor = Math.min(GAME_CONFIG.ARMOR_MAX, player.armor + GAME_CONFIG.ARMOR_AMOUNT);
+      break;
   }
 }
 
@@ -76,9 +84,9 @@ function createPickup(type: Pickup["type"]): Pickup {
 
 describe("Pickup Application", () => {
   test("health pickup heals player", () => {
-    const player = createTestPlayer({ hp: 2 });
+    const player = createTestPlayer({ hp: 1 });
     applyPickup(player, createPickup("health"));
-    expect(player.hp).toBe(2 + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
+    expect(player.hp).toBe(1 + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
   });
 
   test("health pickup does not exceed max HP", () => {
@@ -135,6 +143,18 @@ describe("Pickup Application", () => {
     applyPickup(player, createPickup("regen"));
     expect(player.regenUntil).toBeGreaterThanOrEqual(before + GAME_CONFIG.REGEN_DURATION);
     expect(player.lastRegenTick).toBeGreaterThanOrEqual(before);
+  });
+
+  test("armor pickup adds armor", () => {
+    const player = createTestPlayer({ armor: 0 });
+    applyPickup(player, createPickup("armor"));
+    expect(player.armor).toBe(GAME_CONFIG.ARMOR_AMOUNT);
+  });
+
+  test("armor pickup does not exceed max", () => {
+    const player = createTestPlayer({ armor: GAME_CONFIG.ARMOR_MAX });
+    applyPickup(player, createPickup("armor"));
+    expect(player.armor).toBe(GAME_CONFIG.ARMOR_MAX);
   });
 });
 
