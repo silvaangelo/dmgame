@@ -64,11 +64,6 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - internal
       - web

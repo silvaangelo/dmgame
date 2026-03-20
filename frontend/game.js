@@ -269,14 +269,27 @@ function handleBinaryState(buf) {
       reconciledX = result.x;
       reconciledY = result.y;
     });
-    predictedX = reconciledX;
-    predictedY = reconciledY;
+    // Smooth correction: snap large errors (real collisions/respawns), blend small drift (network jitter)
+    var errX = reconciledX - predictedX;
+    var errY = reconciledY - predictedY;
+    var errDist = Math.sqrt(errX * errX + errY * errY);
+    if (errDist > 80) {
+      predictedX = reconciledX;
+      predictedY = reconciledY;
+    } else if (errDist > 0.5) {
+      predictedX += errX * 0.25;
+      predictedY += errY * 0.25;
+    }
 
     var now = Date.now();
     pendingInputs = pendingInputs.filter(function(inp) { return now - inp.timestamp < 1000; });
   }
 
-  updateLeaderboardOverlay();
+  // Throttle leaderboard DOM rebuild to ~5 Hz (was 35 Hz — causing layout thrash every tick)
+  if (Date.now() - lastLeaderboardUpdate > 200) {
+    lastLeaderboardUpdate = Date.now();
+    updateLeaderboardOverlay();
+  }
 }
 
 // ===== HTML ESCAPING (XSS prevention) =====
@@ -572,6 +585,7 @@ const playerTargets = new Map(); // Store target positions for other players
 let lastStateTime = 0;
 const INTERPOLATION_SPEED = 0.45; // How fast to interpolate (0-1)
 let lastShootTime = 0;
+let lastLeaderboardUpdate = 0;
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -622,6 +636,11 @@ canvas.addEventListener("mouseup", function(e) {
   if (e.button === 0) {
     isMouseDown = false;
   }
+});
+
+// Catch mouse releases outside the canvas (prevents stuck shooting on drag-out)
+window.addEventListener("mouseup", function(e) {
+  if (e.button === 0) isMouseDown = false;
 });
 
 // Prevent context menu on right-click
@@ -2546,15 +2565,27 @@ function connect() {
           reconciledX = result.x;
           reconciledY = result.y;
         });
-        predictedX = reconciledX;
-        predictedY = reconciledY;
+        // Smooth correction: snap large errors, blend small drift
+        const errX2 = reconciledX - predictedX;
+        const errY2 = reconciledY - predictedY;
+        const errDist2 = Math.sqrt(errX2 * errX2 + errY2 * errY2);
+        if (errDist2 > 80) {
+          predictedX = reconciledX;
+          predictedY = reconciledY;
+        } else if (errDist2 > 0.5) {
+          predictedX += errX2 * 0.25;
+          predictedY += errY2 * 0.25;
+        }
 
         const now = Date.now();
         pendingInputs = pendingInputs.filter(function(i) { return now - i.timestamp < 1000; });
       }
 
-      // Update leaderboard overlay
-      updateLeaderboardOverlay();
+      // Throttle leaderboard DOM rebuild to ~5 Hz
+      if (Date.now() - lastLeaderboardUpdate > 200) {
+        lastLeaderboardUpdate = Date.now();
+        updateLeaderboardOverlay();
+      }
       return;
     }
 
@@ -2926,12 +2957,12 @@ document.addEventListener("keydown", (e) => {
   if (keysPressed.has(e.key)) return;
   keysPressed.add(e.key);
 
-  // Map arrow keys to WASD
+  // Map arrow keys to WASD (and prevent default to stop page scrolling in-game)
   let mappedKey = e.key;
-  if (e.key === "ArrowUp") mappedKey = "w";
-  if (e.key === "ArrowDown") mappedKey = "s";
-  if (e.key === "ArrowLeft") mappedKey = "a";
-  if (e.key === "ArrowRight") mappedKey = "d";
+  if (e.key === "ArrowUp") { mappedKey = "w"; e.preventDefault(); }
+  if (e.key === "ArrowDown") { mappedKey = "s"; e.preventDefault(); }
+  if (e.key === "ArrowLeft") { mappedKey = "a"; e.preventDefault(); }
+  if (e.key === "ArrowRight") { mappedKey = "d"; e.preventDefault(); }
 
   // Q key to cycle weapons
   if (e.key === "q" || e.key === "Q") {
@@ -3039,8 +3070,6 @@ document.addEventListener("keyup", (e) => {
     return;
   }
 
-  if (!ws || !gameReady) return;
-
   keysPressed.delete(e.key);
 
   // Map arrow keys to WASD
@@ -3056,10 +3085,12 @@ document.addEventListener("keyup", (e) => {
     mappedKey === "s" ||
     mappedKey === "d"
   ) {
-    inputSequence++;
-
-    // Update current keys state
+    // Always release the key locally — prevents stuck movement when WS drops
     currentKeys[mappedKey] = false;
+
+    if (!ws || !gameReady) return;
+
+    inputSequence++;
 
     const input = {
       type: "keyup",
@@ -3098,17 +3129,19 @@ document.addEventListener("keyup", (e) => {
 // keyup never fires. We detect blur / visibility-change and release everything.
 
 function releaseAllKeys() {
-  if (!ws || !gameReady) return;
+  // Always clear local state first — prevents stuck keys/shooting even if WS is down
+  keysPressed.clear();
+  isMouseDown = false;
   for (const key of ["w", "a", "s", "d"]) {
     if (currentKeys[key]) {
       currentKeys[key] = false;
-      inputSequence++;
-      ws.send(serialize({ type: "keyup", key, sequence: inputSequence, timestamp: Date.now() }));
-      pendingInputs.push({ sequence: inputSequence, keys: { ...currentKeys }, timestamp: Date.now() });
+      if (ws && gameReady) {
+        inputSequence++;
+        ws.send(serialize({ type: "keyup", key, sequence: inputSequence, timestamp: Date.now() }));
+        pendingInputs.push({ sequence: inputSequence, keys: { ...currentKeys }, timestamp: Date.now() });
+      }
     }
   }
-  keysPressed.clear();
-  isMouseDown = false;
 }
 
 window.addEventListener("blur", releaseAllKeys);
@@ -3674,35 +3707,46 @@ function renderPickupEffects() {
 }
 
 // ============ ORB RENDERING ============
+// Pre-rendered orb sprite — radial gradient created ONCE instead of once per orb per frame.
+let _orbSprite = null;
+const _ORB_SPRITE_SIZE = 42; // 2 * (orbRadius 13 + glowRing 8)
+
+function _ensureOrbSprite() {
+  if (_orbSprite) return;
+  _orbSprite = document.createElement("canvas");
+  _orbSprite.width = _ORB_SPRITE_SIZE;
+  _orbSprite.height = _ORB_SPRITE_SIZE;
+  const oc = _orbSprite.getContext("2d");
+  const c = _ORB_SPRITE_SIZE / 2; // centre = 21
+  const r = 13;
+  // Outer glow ring
+  oc.globalAlpha = 0.3;
+  oc.fillStyle = "#00ffcc";
+  oc.beginPath();
+  oc.arc(c, c, r + 8, 0, Math.PI * 2);
+  oc.fill();
+  // Inner orb with radial gradient (built once)
+  oc.globalAlpha = 0.9;
+  const g = oc.createRadialGradient(c, c, 0, c, c, r);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.4, "#66ffdd");
+  g.addColorStop(1, "#00cc99");
+  oc.fillStyle = g;
+  oc.beginPath();
+  oc.arc(c, c, r, 0, Math.PI * 2);
+  oc.fill();
+}
+
 function renderOrbs() {
+  if (orbs.length === 0) return;
+  _ensureOrbSprite();
   const now = Date.now();
   for (let i = 0; i < orbs.length; i++) {
     const orb = orbs[i];
-    if (!isOnScreen(orb.x, orb.y, 30)) continue;
-
-    // Pulsating glow effect
+    if (!isOnScreen(orb.x, orb.y)) continue;
     const pulse = 0.7 + 0.3 * Math.sin(now * 0.004 + orb.x * 0.1 + orb.y * 0.1);
-    const radius = 13 * pulse;
-
-    // Outer glow
-    ctx.save();
-    ctx.globalAlpha = 0.3 * pulse;
-    ctx.fillStyle = "#00ffcc";
-    ctx.beginPath();
-    ctx.arc(orb.x, orb.y, radius + 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Inner orb
-    ctx.globalAlpha = 0.9;
-    const gradient = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, radius);
-    gradient.addColorStop(0, "#ffffff");
-    gradient.addColorStop(0.4, "#66ffdd");
-    gradient.addColorStop(1, "#00cc99");
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(orb.x, orb.y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    const sz = _ORB_SPRITE_SIZE * pulse;
+    ctx.drawImage(_orbSprite, orb.x - sz * 0.5, orb.y - sz * 0.5, sz, sz);
   }
 }
 

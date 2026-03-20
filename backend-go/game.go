@@ -14,6 +14,13 @@ import (
 const cellSize = 200
 const cullMargin = 2400.0
 
+// Package-level grids — cleared and rebuilt each tick instead of reallocated,
+// eliminating 70 map allocations per second (2 grids × 35 Hz).
+var (
+	globalObstacleGrid = NewSpatialGrid(cellSize)
+	globalPlayerGrid   = NewSpatialGrid(cellSize)
+)
+
 /* ================= KILL STREAKS ================= */
 
 var streakThresholds = []struct {
@@ -157,7 +164,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 	checkSpawnTimers(game, now)
 
 	// ── Build spatial grid for obstacles ──
-	obstacleGrid := NewSpatialGrid(cellSize)
+	globalObstacleGrid.Clear()
+	obstacleGrid := globalObstacleGrid
 	for _, obs := range game.Obstacles {
 		if !obs.Destroyed {
 			obstacleGrid.Insert(&SpatialEntry{
@@ -231,7 +239,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 	}
 
 	// Build player grid after movement
-	playerGrid := NewSpatialGrid(cellSize)
+	globalPlayerGrid.Clear()
+	playerGrid := globalPlayerGrid
 	for _, p := range game.Players {
 		if p.HP > 0 {
 			playerGrid.Insert(&SpatialEntry{
