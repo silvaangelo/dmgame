@@ -17,15 +17,9 @@ func main() {
 	// Initialize database
 	initDatabase()
 
-	// Initialize the persistent game
+	// Initialize the persistent game (also starts game loop + round timer internally)
 	game := initPersistentGame()
 	setPersistentGame(game)
-
-	// Start the game loop
-	startGameLoop(game)
-
-	// Start round timer
-	startRoundTimer(game)
 
 	// Start heartbeat for WebSocket connections
 	startHeartbeat()

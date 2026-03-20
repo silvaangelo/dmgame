@@ -4,17 +4,19 @@ import "math"
 
 // SpatialGrid provides O(1) spatial queries using a hash grid.
 type SpatialGrid struct {
-	cellSize float64
-	cells    map[int64][]*SpatialEntry
+	cellSize   float64
+	cells      map[int64][]*SpatialEntry
+	queryGen   uint64 // incremented each query to avoid dedup map allocation
 }
 
 // SpatialEntry stores a reference with position and size.
 type SpatialEntry struct {
-	ID   string
-	X    float64
-	Y    float64
-	Size float64 // used as both width and height for AABB
-	Data interface{}
+	ID       string
+	X        float64
+	Y        float64
+	Size     float64 // used as both width and height for AABB
+	Data     interface{}
+	lastSeen uint64 // generation counter for dedup
 }
 
 // NewSpatialGrid creates a new grid with the given cell size.
@@ -52,21 +54,24 @@ func (g *SpatialGrid) Insert(e *SpatialEntry) {
 }
 
 // QueryRect returns all entries overlapping the given rectangle.
+// Uses a generation counter for O(1) dedup instead of allocating a map.
 func (g *SpatialGrid) QueryRect(x, y, w, h float64) []*SpatialEntry {
 	minCX := int(math.Floor(x / g.cellSize))
 	minCY := int(math.Floor(y / g.cellSize))
 	maxCX := int(math.Floor((x + w) / g.cellSize))
 	maxCY := int(math.Floor((y + h) / g.cellSize))
 
-	seen := make(map[string]bool)
+	g.queryGen++
+	gen := g.queryGen
+
 	var result []*SpatialEntry
 
 	for cx := minCX; cx <= maxCX; cx++ {
 		for cy := minCY; cy <= maxCY; cy++ {
 			key := g.cellKey(cx, cy)
 			for _, e := range g.cells[key] {
-				if !seen[e.ID] {
-					seen[e.ID] = true
+				if e.lastSeen != gen {
+					e.lastSeen = gen
 					result = append(result, e)
 				}
 			}

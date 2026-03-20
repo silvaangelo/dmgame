@@ -1,0 +1,582 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"math/rand"
+	"time"
+)
+
+/* ================= ROUND TIMER ================= */
+
+func startRoundTimer(game *Game) {
+	roundDuration := GameConfig.RoundDuration
+	game.MatchStartTime = unixMs()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			// Compute remaining time inside the lock, then release before broadcasting.
+			game.mu.Lock()
+			elapsed := unixMs() - game.MatchStartTime
+			remaining := max(0, int((roundDuration-elapsed+999)/1000)) // ceil
+			game.mu.Unlock()
+
+			broadcast(game, map[string]interface{}{
+				"type":      "gameTimer",
+				"remaining": remaining,
+			})
+
+			if remaining <= 0 {
+				endRound(game)
+				return
+			}
+		}
+	}()
+}
+
+func endRound(game *Game) {
+	game.mu.Lock()
+	game.RoundEnded = true
+
+	// Build scoreboard
+	type scoreEntry struct {
+		Username string `msgpack:"username"`
+		Kills    int    `msgpack:"kills"`
+		Deaths   int    `msgpack:"deaths"`
+		Score    int    `msgpack:"score"`
+	}
+	scoreboard := make([]scoreEntry, 0, len(game.Players))
+	for _, p := range game.Players {
+		scoreboard = append(scoreboard, scoreEntry{
+			Username: p.Username,
+			Kills:    p.Kills,
+			Deaths:   p.Deaths,
+			Score:    p.Score,
+		})
+	}
+	// Sort by score desc
+	for i := 0; i < len(scoreboard); i++ {
+		for j := i + 1; j < len(scoreboard); j++ {
+			if scoreboard[j].Score > scoreboard[i].Score {
+				scoreboard[i], scoreboard[j] = scoreboard[j], scoreboard[i]
+			}
+		}
+	}
+
+	winnerName := "Nobody"
+	if len(scoreboard) > 0 {
+		winnerName = scoreboard[0].Username
+	}
+
+	// Save stats
+	for _, p := range game.Players {
+		updateStats(p.Username, p.Kills, p.Deaths, p.Username == winnerName)
+	}
+
+	// Save match history
+	historyPlayers := make([]MatchHistoryPlayer, 0)
+	for _, s := range scoreboard {
+		historyPlayers = append(historyPlayers, MatchHistoryPlayer{
+			Username: s.Username,
+			Kills:    s.Kills,
+			Deaths:   s.Deaths,
+			IsWinner: s.Username == winnerName,
+		})
+	}
+	addMatchHistory(&MatchHistoryEntry{
+		Timestamp:  unixMs(),
+		Players:    historyPlayers,
+		WinnerName: winnerName,
+	})
+
+	// Compute MVP awards
+	type mvpAward struct {
+		Category string `msgpack:"category"`
+		Label    string `msgpack:"label"`
+		Player   string `msgpack:"player"`
+		Value    int    `msgpack:"value"`
+	}
+	mvpAwards := make([]mvpAward, 0, 4)
+
+	var mostKillsP, mostOrbsP, longestStreakP, mostDamageP *Player
+	for _, p := range game.Players {
+		if mostKillsP == nil || p.Kills > mostKillsP.Kills {
+			mostKillsP = p
+		}
+		if mostOrbsP == nil || p.OrbsCollected > mostOrbsP.OrbsCollected {
+			mostOrbsP = p
+		}
+		if longestStreakP == nil || p.MaxStreak > longestStreakP.MaxStreak {
+			longestStreakP = p
+		}
+		if mostDamageP == nil || p.TotalDamage > mostDamageP.TotalDamage {
+			mostDamageP = p
+		}
+	}
+	if mostKillsP != nil && mostKillsP.Kills > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostKills", "Most Kills", mostKillsP.Username, mostKillsP.Kills})
+	}
+	if mostOrbsP != nil && mostOrbsP.OrbsCollected > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostOrbs", "Most Orbs", mostOrbsP.Username, mostOrbsP.OrbsCollected})
+	}
+	if longestStreakP != nil && longestStreakP.MaxStreak >= 2 {
+		mvpAwards = append(mvpAwards, mvpAward{"longestStreak", "Longest Streak", longestStreakP.Username, longestStreakP.MaxStreak})
+	}
+	if mostDamageP != nil && mostDamageP.TotalDamage > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostDamage", "Most Damage", mostDamageP.Username, mostDamageP.TotalDamage})
+	}
+
+	// Collect per-player roundEnd messages inside the lock, send after unlocking.
+	type pendingMsg struct {
+		player *Player
+		data   []byte
+	}
+	pendingMsgs := make([]pendingMsg, 0, len(game.Players))
+
+	// Sound indices
+	winAudioIndex := rand.Intn(8) + 1
+	loseIndices := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	rand.Shuffle(len(loseIndices), func(i, j int) {
+		loseIndices[i], loseIndices[j] = loseIndices[j], loseIndices[i]
+	})
+	loseIdx := 0
+
+	for _, p := range game.Players {
+		isWinner := p.Username == winnerName
+		audioIndex := winAudioIndex
+		if !isWinner {
+			audioIndex = loseIndices[loseIdx%len(loseIndices)]
+			loseIdx++
+		}
+		msg, _ := Serialize(map[string]interface{}{
+			"type":         "roundEnd",
+			"winnerName":   winnerName,
+			"scoreboard":   scoreboard,
+			"audioIndex":   audioIndex,
+			"restartDelay": GameConfig.RoundRestartDelay,
+			"mvpAwards":    mvpAwards,
+		})
+		pendingMsgs = append(pendingMsgs, pendingMsg{player: p, data: msg})
+	}
+	game.mu.Unlock()
+
+	// Send outside the lock so a slow client doesn't stall the server.
+	for _, pm := range pendingMsgs {
+		sendRaw(pm.player, pm.data)
+	}
+
+	// Schedule new round
+	time.AfterFunc(time.Duration(GameConfig.RoundRestartDelay)*time.Millisecond, func() {
+		resetPersistentRound(game)
+	})
+}
+
+func resetPersistentRound(game *Game) {
+	game.mu.Lock()
+
+	game.RoundEnded = false
+
+	// Regenerate obstacles
+	game.Obstacles = generateObstacles()
+	game.Bullets = make([]*Bullet, 0)
+	game.Pickups = make([]*Pickup, 0)
+	game.Orbs = make([]*Orb, 0)
+	game.Bombs = make([]*Bomb, 0)
+	game.Lightnings = make([]*Lightning, 0)
+	game.LootCrates = make([]*LootCrate, 0)
+	game.StateSequence = 0
+	game.Zone = Zone{X: 0, Y: 0, W: GameConfig.ArenaWidth, H: GameConfig.ArenaHeight}
+	game.ZoneShrinking = false
+
+	now := unixMs()
+	game.LastObstacleSpawn = now
+	game.LastPickupSpawn = now
+	game.LastOrbSpawn = now
+	game.LastBombSpawn = now
+	game.LastLightningSpawn = now
+	game.LastCrateSpawn = now
+	game.NextBombDelay = 0
+	game.NextLightningDelay = 0
+
+	// Reset all player stats
+	for _, p := range game.Players {
+		p.Kills = 0
+		p.Deaths = 0
+		p.Score = 0
+		p.KillStreak = 0
+		p.LastKilledBy = ""
+		p.WaitingForRespawn = false
+		p.HP = GameConfig.PlayerHP
+		p.Shots = GameConfig.ShotsPerMag
+		p.Reloading = false
+		p.Weapon = WeaponMachinegun
+		p.SpeedBoostUntil = 0
+		p.MinigunUntil = 0
+		p.ShieldUntil = 0
+		p.InvisibleUntil = 0
+		p.RegenUntil = 0
+		p.LastRegenTick = 0
+		p.Armor = 0
+		p.DashCooldownUntil = 0
+		p.DashUntil = 0
+		p.Keys = Keys{}
+
+		// Reset MVP tracking
+		p.TotalDamage = 0
+		p.MaxStreak = 0
+		p.OrbsCollected = 0
+		p.IsUnderdog = false
+	}
+
+	// Respawn all players
+	for _, p := range game.Players {
+		bestX := GameConfig.ArenaWidth / 2
+		bestY := GameConfig.ArenaHeight / 2
+		bestDistance := 0.0
+		for attempt := 0; attempt < 50; attempt++ {
+			testX := 50 + rand.Float64()*(GameConfig.ArenaWidth-100)
+			testY := 50 + rand.Float64()*(GameConfig.ArenaHeight-100)
+			if !isPositionClear(testX, testY, game.Obstacles, GameConfig.PlayerRadius) {
+				continue
+			}
+			minDist := math.Inf(1)
+			for _, other := range game.Players {
+				if other.ID == p.ID || other.HP <= 0 {
+					continue
+				}
+				d := distance(testX, testY, other.X, other.Y)
+				if d < minDist {
+					minDist = d
+				}
+			}
+			if minDist > bestDistance {
+				bestDistance = minDist
+				bestX = testX
+				bestY = testY
+			}
+		}
+		p.X = bestX
+		p.Y = bestY
+	}
+
+	// Spawn initial entities
+	spawnInitialOrbs(game)
+	spawnInitialLootCrates(game)
+
+	// Build shortIdMap
+	shortIDMap := make(map[uint16]map[string]string)
+	for _, p := range game.Players {
+		shortIDMap[p.ShortID] = map[string]string{
+			"id":       p.ID,
+			"username": p.Username,
+		}
+	}
+
+	// Collect per-player roundStart messages inside the lock, send after unlocking.
+	type pendingMsg struct {
+		player *Player
+		data   []byte
+	}
+	pendingMsgs := make([]pendingMsg, 0, len(game.Players))
+	for _, p := range game.Players {
+		msg, _ := Serialize(map[string]interface{}{
+			"type":        "roundStart",
+			"obstacles":   serializeObstacles(game.Obstacles),
+			"orbs":        serializeOrbs(game.Orbs),
+			"arenaWidth":  GameConfig.ArenaWidth,
+			"arenaHeight": GameConfig.ArenaHeight,
+			"maxHp":       GameConfig.PlayerHP,
+			"shortIdMap":  shortIDMap,
+			"playerX":     int(math.Round(p.X)),
+			"playerY":     int(math.Round(p.Y)),
+		})
+		pendingMsgs = append(pendingMsgs, pendingMsg{player: p, data: msg})
+	}
+
+	playerCount := len(game.Players)
+	game.mu.Unlock()
+
+	// Send outside the lock so a slow client doesn't stall the server.
+	for _, pm := range pendingMsgs {
+		sendRaw(pm.player, pm.data)
+	}
+
+	fmt.Printf("🔄 New round started! (%d players)\n", playerCount)
+
+	// Start new round timer (in a new goroutine, from outside lock)
+	go func() {
+		startRoundTimer(game)
+	}()
+}
+
+// serializeObstacles converts obstacles for msgpack transmission.
+func serializeObstacles(obstacles []*Obstacle) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(obstacles))
+	for _, o := range obstacles {
+		entry := map[string]interface{}{
+			"id":        o.ID,
+			"x":         o.X,
+			"y":         o.Y,
+			"size":      o.Size,
+			"destroyed": o.Destroyed,
+			"type":      o.Type,
+		}
+		if o.GroupID != "" {
+			entry["groupId"] = o.GroupID
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+/* ================= PLAYER JOIN/LEAVE ================= */
+
+func addPlayerToGame(player *Player, game *Game) {
+	bestX := GameConfig.ArenaWidth / 2
+	bestY := GameConfig.ArenaHeight / 2
+	bestDistance := 0.0
+
+	for attempt := 0; attempt < 50; attempt++ {
+		testX := 50 + rand.Float64()*(GameConfig.ArenaWidth-100)
+		testY := 50 + rand.Float64()*(GameConfig.ArenaHeight-100)
+		if !isPositionClear(testX, testY, game.Obstacles, GameConfig.PlayerRadius) {
+			continue
+		}
+
+		minDist := math.Inf(1)
+		for _, other := range game.Players {
+			if other.HP <= 0 {
+				continue
+			}
+			d := distance(testX, testY, other.X, other.Y)
+			if d < minDist {
+				minDist = d
+			}
+		}
+		if len(game.Players) == 0 {
+			minDist = 1000
+		}
+		if minDist > bestDistance {
+			bestDistance = minDist
+			bestX = testX
+			bestY = testY
+		}
+	}
+
+	player.X = bestX
+	player.Y = bestY
+	player.HP = GameConfig.PlayerHP
+	player.Shots = GameConfig.ShotsPerMag
+	player.Reloading = false
+	player.Kills = 0
+	player.Deaths = 0
+	player.Score = 0
+	player.Weapon = WeaponMachinegun
+	player.Keys = Keys{}
+	player.LastProcessedInput = 0
+	player.AimAngle = 0
+	player.LastKilledBy = ""
+	player.ShieldUntil = 0
+	player.InvisibleUntil = 0
+	player.RegenUntil = 0
+	player.LastRegenTick = 0
+	player.Armor = 0
+	player.DashCooldownUntil = 0
+	player.DashUntil = 0
+	player.DashDirX = 0
+	player.DashDirY = 0
+	player.KillStreak = 0
+	player.WaitingForRespawn = false
+	player.Ready = true
+
+	game.Players = append(game.Players, player)
+
+	fmt.Printf("➕ %s joined the arena (%d players)\n", player.Username, len(game.Players))
+}
+
+func removePlayerFromGame(playerID string, game *Game) {
+	var player *Player
+	for _, p := range game.Players {
+		if p.ID == playerID {
+			player = p
+			break
+		}
+	}
+
+	if player != nil {
+		updateStats(player.Username, player.Kills, player.Deaths, false)
+		fmt.Printf("➖ %s left the arena (score: %d)\n", player.Username, player.Score)
+	}
+
+	game.Players = removePlayerFromSlice(game.Players, playerID)
+
+	// Remove their bullets
+	filtered := make([]*Bullet, 0, len(game.Bullets))
+	for _, b := range game.Bullets {
+		if b.PlayerID != playerID {
+			filtered = append(filtered, b)
+		}
+	}
+	game.Bullets = filtered
+}
+
+/* ================= RESPAWN ================= */
+
+func respawnPlayer(player *Player, game *Game) {
+	player.WaitingForRespawn = false
+
+	bestX := GameConfig.ArenaWidth / 2
+	bestY := GameConfig.ArenaHeight / 2
+	if game.ZoneShrinking {
+		bestX = game.Zone.X + game.Zone.W/2
+		bestY = game.Zone.Y + game.Zone.H/2
+	}
+	bestDistance := 0.0
+
+	alivePlayers := make([]*Player, 0)
+	for _, p := range game.Players {
+		if p.HP > 0 && p.ID != player.ID {
+			alivePlayers = append(alivePlayers, p)
+		}
+	}
+
+	spawnMargin := 50.0
+	spawnMinX := spawnMargin
+	spawnMinY := spawnMargin
+	spawnMaxX := GameConfig.ArenaWidth - spawnMargin
+	spawnMaxY := GameConfig.ArenaHeight - spawnMargin
+	if game.ZoneShrinking {
+		spawnMinX = game.Zone.X + spawnMargin
+		spawnMinY = game.Zone.Y + spawnMargin
+		spawnMaxX = game.Zone.X + game.Zone.W - spawnMargin
+		spawnMaxY = game.Zone.Y + game.Zone.H - spawnMargin
+	}
+
+	for attempt := 0; attempt < 50; attempt++ {
+		testX := spawnMinX + rand.Float64()*math.Max(0, spawnMaxX-spawnMinX)
+		testY := spawnMinY + rand.Float64()*math.Max(0, spawnMaxY-spawnMinY)
+
+		if !isPositionClear(testX, testY, game.Obstacles, GameConfig.PlayerRadius) {
+			continue
+		}
+
+		minDist := math.Inf(1)
+		for _, other := range alivePlayers {
+			d := distance(testX, testY, other.X, other.Y)
+			if d < minDist {
+				minDist = d
+			}
+		}
+		if minDist > bestDistance {
+			bestDistance = minDist
+			bestX = testX
+			bestY = testY
+		}
+	}
+
+	player.X = bestX
+	player.Y = bestY
+	player.HP = GameConfig.PlayerHP
+	player.Shots = GameConfig.ShotsPerMag
+	player.Reloading = false
+	player.Keys = Keys{}
+	player.Weapon = WeaponMachinegun
+	player.SpeedBoostUntil = 0
+	player.MinigunUntil = 0
+	player.ShieldUntil = 0
+	player.InvisibleUntil = 0
+	player.RegenUntil = 0
+	player.LastRegenTick = 0
+	player.Armor = 0
+	player.DashCooldownUntil = 0
+	player.DashUntil = 0
+	player.DashDirX = 0
+	player.DashDirY = 0
+
+	// Push out of obstacles
+	pr := GameConfig.PlayerRadius
+	for _, obs := range game.Obstacles {
+		if obs.Destroyed {
+			continue
+		}
+		closestX := clamp(player.X, obs.X, obs.X+obs.Size)
+		closestY := clamp(player.Y, obs.Y, obs.Y+obs.Size)
+		dx := player.X - closestX
+		dy := player.Y - closestY
+		dist := math.Sqrt(dx*dx + dy*dy)
+		if dist < pr {
+			if dist == 0 {
+				ocx := obs.X + obs.Size/2
+				ocy := obs.Y + obs.Size/2
+				awayX := player.X - ocx
+				awayY := player.Y - ocy
+				awayDist := math.Sqrt(awayX*awayX+awayY*awayY) + 0.001
+				player.X += (awayX / awayDist) * (pr + obs.Size/2)
+				player.Y += (awayY / awayDist) * (pr + obs.Size/2)
+			} else {
+				overlap := pr - dist
+				player.X += (dx / dist) * overlap
+				player.Y += (dy / dist) * overlap
+			}
+		}
+	}
+
+	// Clamp to arena
+	clampMinX := pr
+	clampMinY := pr
+	clampMaxX := GameConfig.ArenaWidth - pr
+	clampMaxY := GameConfig.ArenaHeight - pr
+	if game.ZoneShrinking {
+		clampMinX = math.Max(pr, game.Zone.X+pr)
+		clampMinY = math.Max(pr, game.Zone.Y+pr)
+		clampMaxX = math.Min(GameConfig.ArenaWidth-pr, game.Zone.X+game.Zone.W-pr)
+		clampMaxY = math.Min(GameConfig.ArenaHeight-pr, game.Zone.Y+game.Zone.H-pr)
+	}
+	player.X = clamp(player.X, clampMinX, clampMaxX)
+	player.Y = clamp(player.Y, clampMinY, clampMaxY)
+
+	broadcast(game, map[string]interface{}{
+		"type":     "respawn",
+		"playerId": player.ID,
+		"x":        int(math.Round(bestX)),
+		"y":        int(math.Round(bestY)),
+	})
+}
+
+func requestRespawn(player *Player, game *Game) {
+	if player.HP > 0 {
+		return
+	}
+	if !player.WaitingForRespawn {
+		return
+	}
+	respawnPlayer(player, game)
+}
+
+/* ================= ZONE SHRINK (disabled) ================= */
+
+func startZoneShrink(game *Game) {
+	if game.ZoneShrinking {
+		return
+	}
+	game.ZoneShrinking = true
+	broadcast(game, map[string]interface{}{"type": "zoneWarning"})
+	// Zone shrinking is effectively disabled via config
+}
+
+// min/max helpers for int
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

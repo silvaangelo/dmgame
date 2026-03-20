@@ -493,9 +493,12 @@ function getCachedDOM() {
   return _cachedDOM;
 }
 
-// Pre-rendered obstacle canvas (static, invalidated only on destroy)
+// Pre-rendered obstacle canvas (viewport-sized with padding, ~4× less VRAM than full arena)
 let obstacleCanvas = null;
 let obstacleCanvasDirty = true;
+const OBS_CANVAS_PAD = 400; // extra pixels around viewport before re-render
+let obsCanvasCamX = -9999; // camera pos used for last obstacle render
+let obsCanvasCamY = -9999;
 
 // Kill feed dirty flag (avoid innerHTML comparison)
 let killFeedDirty = true;
@@ -1391,6 +1394,32 @@ function updateZoneClouds() {
   });
 }
 
+// Cached cloud sprite for zone rendering (avoids createRadialGradient per cloud per frame)
+let _cloudSprite = null;
+let _cloudSpriteSize = 0;
+
+function getCloudSprite(size) {
+  // Re-use if size is close enough (within 20%)
+  if (_cloudSprite && Math.abs(_cloudSpriteSize - size) < size * 0.2) return _cloudSprite;
+  const s = Math.ceil(size * 2);
+  const c = document.createElement("canvas");
+  c.width = s;
+  c.height = s;
+  const gc = c.getContext("2d");
+  const r = s / 2;
+  const g = gc.createRadialGradient(r, r, 0, r, r, r);
+  g.addColorStop(0, "rgba(200, 60, 60, 0.6)");
+  g.addColorStop(0.5, "rgba(150, 40, 40, 0.3)");
+  g.addColorStop(1, "rgba(100, 20, 20, 0)");
+  gc.fillStyle = g;
+  gc.beginPath();
+  gc.arc(r, r, r, 0, Math.PI * 2);
+  gc.fill();
+  _cloudSprite = c;
+  _cloudSpriteSize = size;
+  return c;
+}
+
 function renderZoneClouds() {
   if (!arenaZone || zoneClouds.length === 0) return;
   const z = arenaZone;
@@ -1402,15 +1431,11 @@ function renderZoneClouds() {
   ctx.clip("evenodd");
 
   zoneClouds.forEach((c) => {
-    const gradient = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.size);
-    gradient.addColorStop(0, `rgba(200, 60, 60, ${c.opacity * 0.6})`);
-    gradient.addColorStop(0.5, `rgba(150, 40, 40, ${c.opacity * 0.3})`);
-    gradient.addColorStop(1, "rgba(100, 20, 20, 0)");
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, c.size, 0, Math.PI * 2);
-    ctx.fill();
+    const sprite = getCloudSprite(c.size);
+    ctx.globalAlpha = c.opacity;
+    ctx.drawImage(sprite, c.x - c.size, c.y - c.size, c.size * 2, c.size * 2);
   });
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -2850,7 +2875,7 @@ function updateShotUI() {
 
   // Update score display
   if (killsDisplay) {
-    killsDisplay.textContent = `⭐ ${player.score || 0} pts | ${player.kills} kills`;
+    killsDisplay.textContent = `⭐${player.score || 0}`;
     if ((player.score || 0) >= 50) {
       killsDisplay.style.color = "#ffcc00";
       killsDisplay.style.textShadow = "0 0 12px rgba(255,204,0,0.5)";
@@ -2861,24 +2886,23 @@ function updateShotUI() {
   }
 
   const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
-  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", sniper: "3" };
-  const shortcut = WEAPON_SHORTCUTS[player.weapon] || "";
-  const shortcutTag = shortcut ? `[${shortcut}] ` : "";
+  const WEAPON_EMOJI = { machinegun: "🔫", shotgun: "💣", sniper: "🎯" };
+  const wEmoji = WEAPON_EMOJI[player.weapon] || "🔫";
   {
-    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 25;
-    shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/${weaponMaxAmmo}`;
+    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 35;
+    shotsDisplay.textContent = `${wEmoji}${player.shots}/${weaponMaxAmmo}`;
   }
 
   // Show respawn message if dead
   if (player.hp <= 0) {
-    healthDisplay.textContent = "💀 DEAD — Click RESPAWN";
+    healthDisplay.textContent = "💀 DEAD";
     if (hpBarFill) {
       hpBarFill.style.width = "0%";
       hpBarFill.className = "hud-hp-bar-fill";
     }
   } else {
-    const armorText = player.armor > 0 ? ` +🛡${player.armor}` : "";
-    healthDisplay.textContent = `❤️ ${player.hp}/${maxHp}${armorText}`;
+    const armorText = player.armor > 0 ? `+${player.armor}` : "";
+    healthDisplay.textContent = `${player.hp}/${maxHp}${armorText}`;
     if (hpBarFill) {
       const hpPercent = (player.hp / maxHp) * 100;
       hpBarFill.style.width = hpPercent + "%";
@@ -2903,14 +2927,14 @@ function updateShotUI() {
     !player.reloading
   ) {
     const remaining = (weaponCooldown - timeSinceLastShot) / 1000;
-    cooldownDisplay.textContent = `⏱️ ${remaining.toFixed(2)}s`;
+    cooldownDisplay.textContent = `${remaining.toFixed(1)}s`;
   } else {
     cooldownDisplay.textContent = "";
   }
 
   // Show reload status
   if (player.reloading) {
-    reloadDisplay.textContent = "🔄 RECARREGANDO...";
+    reloadDisplay.textContent = "🔄 RELOAD";
   } else {
     reloadDisplay.textContent = "";
   }
@@ -2919,13 +2943,13 @@ function updateShotUI() {
   const speedBoostDisplay = dom.speedBoostDisplay;
   if (speedBoostDisplay) {
     const parts = [];
-    if (player.speedBoosted) parts.push("⚡ TURBO!");
-    if (player.armor > 0) parts.push(`🛡 ARMOR x${player.armor}`);
+    if (player.speedBoosted) parts.push("⚡");
+    if (player.armor > 0) parts.push(`🛡${player.armor}`);
     const dashRemaining = Math.max(0, dashCooldownUntil - Date.now());
     if (dashRemaining > 0) {
-      parts.push(`💨 ${(dashRemaining / 1000).toFixed(1)}s`);
+      parts.push(`💨${(dashRemaining / 1000).toFixed(0)}`);
     } else {
-      parts.push("💨 DASH [Shift/Z]");
+      parts.push("💨OK");
     }
     speedBoostDisplay.textContent = parts.join(" ");
   }
@@ -4435,40 +4459,67 @@ function ensureGridCanvas() {
 }
 
 function ensureObstacleCanvas() {
-  if (obstacleCanvas && !obstacleCanvasDirty) return;
+  // Re-render if dirty or camera moved beyond the padding
+  const needsRender = obstacleCanvasDirty ||
+    Math.abs(cameraX - obsCanvasCamX) > OBS_CANVAS_PAD * 0.5 ||
+    Math.abs(cameraY - obsCanvasCamY) > OBS_CANVAS_PAD * 0.5;
+  if (obstacleCanvas && !needsRender) return;
+
+  const cw = GAME_CONFIG.VIEWPORT_WIDTH + OBS_CANVAS_PAD * 2;
+  const ch = GAME_CONFIG.VIEWPORT_HEIGHT + OBS_CANVAS_PAD * 2;
   if (!obstacleCanvas) {
     obstacleCanvas = document.createElement("canvas");
-    obstacleCanvas.width = GAME_CONFIG.ARENA_WIDTH;
-    obstacleCanvas.height = GAME_CONFIG.ARENA_HEIGHT;
+    obstacleCanvas.width = cw;
+    obstacleCanvas.height = ch;
+  } else if (obstacleCanvas.width !== cw || obstacleCanvas.height !== ch) {
+    obstacleCanvas.width = cw;
+    obstacleCanvas.height = ch;
   }
+
+  // Compute the world region this canvas covers
+  const ox = Math.max(0, Math.floor(cameraX - OBS_CANVAS_PAD));
+  const oy = Math.max(0, Math.floor(cameraY - OBS_CANVAS_PAD));
+  obsCanvasCamX = cameraX;
+  obsCanvasCamY = cameraY;
+
   const oc = obstacleCanvas.getContext("2d");
-  oc.clearRect(0, 0, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT);
+  oc.clearRect(0, 0, cw, ch);
+
+  // Store origin offset for drawing back to main canvas
+  obstacleCanvas._ox = ox;
+  obstacleCanvas._oy = oy;
+
   obstacles.forEach((obstacle) => {
     if (obstacle.destroyed) return;
+    // Skip obstacles outside this canvas region
+    const rx = obstacle.x - ox;
+    const ry = obstacle.y - oy;
+    if (rx + obstacle.size < 0 || rx > cw || ry + obstacle.size < 0 || ry > ch) return;
+
     if (obstacle.type === "tree") {
       oc.fillStyle = "#5a4a2a";
-      oc.fillRect(obstacle.x + obstacle.size * 0.4, obstacle.y + obstacle.size * 0.5, obstacle.size * 0.2, obstacle.size * 0.5);
+      oc.fillRect(rx + obstacle.size * 0.4, ry + obstacle.size * 0.5, obstacle.size * 0.2, obstacle.size * 0.5);
       oc.fillStyle = "#2a5a2a";
       oc.beginPath();
-      oc.arc(obstacle.x + obstacle.size * 0.5, obstacle.y + obstacle.size * 0.3, obstacle.size * 0.35, 0, Math.PI * 2);
+      oc.arc(rx + obstacle.size * 0.5, ry + obstacle.size * 0.3, obstacle.size * 0.35, 0, Math.PI * 2);
       oc.fill();
       oc.fillStyle = "#2a6a2a";
       oc.beginPath();
-      oc.arc(obstacle.x + obstacle.size * 0.3, obstacle.y + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
+      oc.arc(rx + obstacle.size * 0.3, ry + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
       oc.fill();
       oc.beginPath();
-      oc.arc(obstacle.x + obstacle.size * 0.7, obstacle.y + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
+      oc.arc(rx + obstacle.size * 0.7, ry + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
       oc.fill();
     } else {
       oc.fillStyle = "#555545";
-      oc.fillRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
+      oc.fillRect(rx, ry, obstacle.size, obstacle.size);
       oc.strokeStyle = "#444434";
       oc.lineWidth = 1;
-      oc.strokeRect(obstacle.x, obstacle.y, obstacle.size, obstacle.size);
+      oc.strokeRect(rx, ry, obstacle.size, obstacle.size);
       oc.strokeStyle = "#666656";
       oc.beginPath();
-      oc.moveTo(obstacle.x + 2, obstacle.y + obstacle.size / 2);
-      oc.lineTo(obstacle.x + obstacle.size - 2, obstacle.y + obstacle.size / 2);
+      oc.moveTo(rx + 2, ry + obstacle.size / 2);
+      oc.lineTo(rx + obstacle.size - 2, ry + obstacle.size / 2);
       oc.stroke();
     }
   });
@@ -4489,36 +4540,58 @@ function updateInterpolation() {
 // ============ MINIMAP ============
 const MINIMAP_SIZE = 180;
 const MINIMAP_PADDING = 14;
+const MINIMAP_INTERVAL = 100; // ~10 FPS
+let _minimapCanvas = null;
+let _lastMinimapRender = 0;
 
 function renderMinimap() {
   if (!gameReady) return;
-  const framePlayer = players.find((p) => p.id === playerId);
+  const framePlayer = _framePlayer;
   if (!framePlayer) return;
 
   const mx = canvas.width - MINIMAP_SIZE - MINIMAP_PADDING;
   const my = canvas.height - MINIMAP_SIZE - MINIMAP_PADDING;
+
+  // Throttle: only re-render minimap content at ~10 FPS
+  const now = performance.now();
+  if (now - _lastMinimapRender >= MINIMAP_INTERVAL || !_minimapCanvas) {
+    _lastMinimapRender = now;
+    if (!_minimapCanvas) {
+      _minimapCanvas = document.createElement("canvas");
+      _minimapCanvas.width = MINIMAP_SIZE;
+      _minimapCanvas.height = MINIMAP_SIZE;
+    }
+    const mc = _minimapCanvas.getContext("2d");
+    _renderMinimapContent(mc, framePlayer);
+  }
+
+  // Blit cached minimap to main canvas
+  ctx.drawImage(_minimapCanvas, mx, my);
+}
+
+function _renderMinimapContent(mc, framePlayer) {
   const scaleX = MINIMAP_SIZE / GAME_CONFIG.ARENA_WIDTH;
   const scaleY = MINIMAP_SIZE / GAME_CONFIG.ARENA_HEIGHT;
 
   // Background
-  ctx.save();
-  ctx.globalAlpha = 0.75;
-  ctx.fillStyle = "#111118";
-  ctx.fillRect(mx, my, MINIMAP_SIZE, MINIMAP_SIZE);
-  ctx.globalAlpha = 1;
+  mc.save();
+  mc.globalAlpha = 0.75;
+  mc.fillStyle = "#111118";
+  mc.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+  mc.globalAlpha = 1;
 
   // Border
-  ctx.strokeStyle = "rgba(255,255,255,0.3)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(mx, my, MINIMAP_SIZE, MINIMAP_SIZE);
+  mc.strokeStyle = "rgba(255,255,255,0.3)";
+  mc.lineWidth = 1;
+  mc.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
   // Draw obstacles as small dark rectangles
   for (let i = 0; i < obstacles.length; i++) {
     const ob = obstacles[i];
-    ctx.fillStyle = "rgba(80,80,80,0.6)";
-    ctx.fillRect(
-      mx + ob.x * scaleX,
-      my + ob.y * scaleY,
+    mc.fillStyle = "rgba(80,80,80,0.6)";
+    mc.fillRect(
+      ob.x * scaleX,
+      ob.y * scaleY,
       ob.width * scaleX,
       ob.height * scaleY
     );
@@ -4527,10 +4600,10 @@ function renderMinimap() {
   // Draw orbs as small cyan dots
   for (let i = 0; i < orbs.length; i++) {
     const orb = orbs[i];
-    ctx.fillStyle = "#00ffcc";
-    ctx.beginPath();
-    ctx.arc(mx + orb.x * scaleX, my + orb.y * scaleY, 1.5, 0, Math.PI * 2);
-    ctx.fill();
+    mc.fillStyle = "#00ffcc";
+    mc.beginPath();
+    mc.arc(orb.x * scaleX, orb.y * scaleY, 1.5, 0, Math.PI * 2);
+    mc.fill();
   }
 
   // Find crown leader for minimap
@@ -4549,59 +4622,63 @@ function renderMinimap() {
     if (p.id === playerId) continue;
     if (p.hp <= 0) continue;
     if (p.invisible) {
-      ctx.fillStyle = "rgba(170,102,255,0.4)";
+      mc.fillStyle = "rgba(170,102,255,0.4)";
     } else if (minimapCrownId === p.id) {
-      ctx.fillStyle = "#ffd700";
+      mc.fillStyle = "#ffd700";
     } else {
-      ctx.fillStyle = "#ff4444";
+      mc.fillStyle = "#ff4444";
     }
     const dotSize = (minimapCrownId === p.id) ? 4 : 2.5;
-    ctx.beginPath();
-    ctx.arc(mx + p.x * scaleX, my + p.y * scaleY, dotSize, 0, Math.PI * 2);
-    ctx.fill();
+    mc.beginPath();
+    mc.arc(p.x * scaleX, p.y * scaleY, dotSize, 0, Math.PI * 2);
+    mc.fill();
     // Crown marker on minimap for #1 player
     if (minimapCrownId === p.id) {
-      ctx.fillStyle = "#ffd700";
-      ctx.font = "10px serif";
-      ctx.textAlign = "center";
-      ctx.fillText("👑", mx + p.x * scaleX, my + p.y * scaleY - 5);
-      ctx.textAlign = "start";
+      mc.fillStyle = "#ffd700";
+      mc.font = "10px serif";
+      mc.textAlign = "center";
+      mc.fillText("👑", p.x * scaleX, p.y * scaleY - 5);
+      mc.textAlign = "start";
     }
   }
 
   // Draw local player as white dot with glow (golden if crown leader)
   const isLocalCrown = (minimapCrownId === playerId);
-  ctx.fillStyle = isLocalCrown ? "#ffd700" : "#ffffff";
-  ctx.shadowColor = isLocalCrown ? "#ffd700" : "#ffffff";
-  ctx.shadowBlur = isLocalCrown ? 6 : 4;
-  ctx.beginPath();
-  ctx.arc(mx + predictedX * scaleX, my + predictedY * scaleY, isLocalCrown ? 4 : 3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
+  mc.fillStyle = isLocalCrown ? "#ffd700" : "#ffffff";
+  mc.shadowColor = isLocalCrown ? "#ffd700" : "#ffffff";
+  mc.shadowBlur = isLocalCrown ? 6 : 4;
+  mc.beginPath();
+  mc.arc(predictedX * scaleX, predictedY * scaleY, isLocalCrown ? 4 : 3, 0, Math.PI * 2);
+  mc.fill();
+  mc.shadowBlur = 0;
   if (isLocalCrown) {
-    ctx.fillStyle = "#ffd700";
-    ctx.font = "10px serif";
-    ctx.textAlign = "center";
-    ctx.fillText("👑", mx + predictedX * scaleX, my + predictedY * scaleY - 5);
-    ctx.textAlign = "start";
+    mc.fillStyle = "#ffd700";
+    mc.font = "10px serif";
+    mc.textAlign = "center";
+    mc.fillText("👑", predictedX * scaleX, predictedY * scaleY - 5);
+    mc.textAlign = "start";
   }
 
   // Draw viewport rectangle
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
-  ctx.lineWidth = 0.5;
-  ctx.strokeRect(
-    mx + cameraX * scaleX,
-    my + cameraY * scaleY,
+  mc.strokeStyle = "rgba(255,255,255,0.5)";
+  mc.lineWidth = 0.5;
+  mc.strokeRect(
+    cameraX * scaleX,
+    cameraY * scaleY,
     GAME_CONFIG.VIEWPORT_WIDTH * scaleX,
     GAME_CONFIG.VIEWPORT_HEIGHT * scaleY
   );
 
-  ctx.restore();
+  mc.restore();
 }
+
+// Cached local player reference — updated once per render frame
+let _framePlayer = null;
 
 function render() {
   const frameNow = Date.now();
-  const framePlayer = players.find((p) => p.id === playerId);
+  _framePlayer = players.find((p) => p.id === playerId);
+  const framePlayer = _framePlayer;
 
   // Update camera position to follow local player
   if (framePlayer) {
@@ -4703,13 +4780,22 @@ function render() {
   // Render dust clouds (ground level)
   renderDustClouds();
 
-  // Render obstacles from cached offscreen canvas (clip to viewport for performance)
+  // Render obstacles from cached offscreen canvas (viewport-sized, padded)
   ensureObstacleCanvas();
-  const sx = Math.max(0, Math.floor(cameraX));
-  const sy = Math.max(0, Math.floor(cameraY));
-  const sw = Math.min(GAME_CONFIG.VIEWPORT_WIDTH + 1, GAME_CONFIG.ARENA_WIDTH - sx);
-  const sh = Math.min(GAME_CONFIG.VIEWPORT_HEIGHT + 1, GAME_CONFIG.ARENA_HEIGHT - sy);
-  if (sw > 0 && sh > 0) ctx.drawImage(obstacleCanvas, sx, sy, sw, sh, sx, sy, sw, sh);
+  if (obstacleCanvas) {
+    const ox = obstacleCanvas._ox || 0;
+    const oy = obstacleCanvas._oy || 0;
+    // Compute the overlap between the viewport and the obstacle canvas region
+    const srcX = Math.max(0, Math.floor(cameraX) - ox);
+    const srcY = Math.max(0, Math.floor(cameraY) - oy);
+    const dstX = ox + srcX; // world-space X
+    const dstY = oy + srcY; // world-space Y
+    const drawW = Math.min(obstacleCanvas.width - srcX, GAME_CONFIG.VIEWPORT_WIDTH + 1);
+    const drawH = Math.min(obstacleCanvas.height - srcY, GAME_CONFIG.VIEWPORT_HEIGHT + 1);
+    if (drawW > 0 && drawH > 0) {
+      ctx.drawImage(obstacleCanvas, srcX, srcY, drawW, drawH, dstX, dstY, drawW, drawH);
+    }
+  }
 
   // Render pickups
   renderPickups();

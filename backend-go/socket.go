@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -104,6 +103,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			game := getPersistentGame()
 			if game != nil {
 				game.mu.Lock()
+				// Cancel any pending reload timer to prevent stale goroutine writes
+				if p.ReloadTimer != nil {
+					p.ReloadTimer.Stop()
+					p.ReloadTimer = nil
+				}
 				removePlayerFromGame(p.ID, game)
 				game.mu.Unlock()
 
@@ -219,7 +223,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			game.mu.Lock()
 
 			newPlayer := &Player{
-				ID:       uuid.New().String(),
+				ID:       nextEntityID(),
 				ShortID:  game.NextShortID,
 				Username: username,
 				Conn:     conn,
@@ -389,12 +393,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "selectSkin":
 			skinIndex := safeInt(m, "skin", -1)
 			if skinIndex >= 0 && skinIndex <= 7 {
+				game.mu.Lock()
 				p.Skin = skinIndex
+				game.mu.Unlock()
 			}
 
 		case "keydown":
 			key := safeString(m, "key", "")
 			seq := safeInt(m, "sequence", 0)
+			game.mu.Lock()
 			switch key {
 			case "w":
 				p.Keys.W = true
@@ -406,10 +413,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				p.Keys.D = true
 			}
 			p.LastProcessedInput = seq
+			game.mu.Unlock()
 
 		case "keyup":
 			key := safeString(m, "key", "")
 			seq := safeInt(m, "sequence", 0)
+			game.mu.Lock()
 			switch key {
 			case "w":
 				p.Keys.W = false
@@ -421,6 +430,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				p.Keys.D = false
 			}
 			p.LastProcessedInput = seq
+			game.mu.Unlock()
 
 		case "shoot":
 			dirX := safeFloat(m, "dirX", 0)
@@ -440,7 +450,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "aim":
 			angle := safeFloat(m, "aimAngle", 0)
 			if !math.IsNaN(angle) && !math.IsInf(angle, 0) {
+				game.mu.Lock()
 				p.AimAngle = angle
+				game.mu.Unlock()
 			}
 
 		case "switchWeapon":
@@ -450,6 +462,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			p.LastWeaponSwitch = now
 
+			game.mu.Lock()
 			requestedWeapon := WeaponType(safeString(m, "weapon", ""))
 			if requestedWeapon != "" {
 				// Check if the requested weapon is in the cycle
@@ -492,6 +505,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if p.Shots > maxAmmo {
 				p.Shots = maxAmmo
 			}
+			game.mu.Unlock()
 		}
 	}
 }

@@ -4,11 +4,22 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// globalEntityID provides a fast, lock-free incrementing ID for all entities.
+// Replaces uuid.New().String() to eliminate crypto/rand overhead (35 Hz × N entities).
+var globalEntityID atomic.Uint64
+
+// nextEntityID returns a unique string ID like "e1", "e2", etc.
+func nextEntityID() string {
+	return "e" + strconv.FormatUint(globalEntityID.Add(1), 10)
+}
 
 // unixMs returns the current time in milliseconds.
 func unixMs() int64 {
@@ -96,6 +107,27 @@ func isPositionClear(x, y float64, obstacles []*Obstacle, radius float64) bool {
 		dx := x - closestX
 		dy := y - closestY
 		if dx*dx+dy*dy < radius*radius {
+			return false
+		}
+	}
+	return true
+}
+
+// isPositionClearGrid is the spatial-grid-accelerated version of isPositionClear.
+// Uses O(1) grid lookups instead of iterating all obstacles.
+func isPositionClearGrid(x, y float64, grid *SpatialGrid, radius float64) bool {
+	nearby := grid.QueryRadius(x, y, radius+60) // 60 = max obstacle size margin
+	rSq := radius * radius
+	for _, e := range nearby {
+		o := e.Data.(*Obstacle)
+		if o.Destroyed {
+			continue
+		}
+		closestX := math.Max(o.X, math.Min(x, o.X+o.Size))
+		closestY := math.Max(o.Y, math.Min(y, o.Y+o.Size))
+		dx := x - closestX
+		dy := y - closestY
+		if dx*dx+dy*dy < rSq {
 			return false
 		}
 	}

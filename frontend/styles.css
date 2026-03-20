@@ -245,7 +245,7 @@ canvas {
   left: 0;
   bottom: 0;
   z-index: 800;
-  pointer-events: auto;
+  pointer-events: none;
   animation: screenFadeIn 0.3s ease-out;
 }
 
@@ -253,25 +253,33 @@ canvas {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
   font-family: 'Share Tech Mono', monospace;
-  background: rgba(10, 15, 10, 0.55);
-  border-right: 1px solid rgba(74, 106, 74, 0.3);
+  background: rgba(10, 15, 10, 0.45);
+  border-right: 1px solid rgba(74, 106, 74, 0.2);
   border-radius: 0;
-  backdrop-filter: blur(8px);
-  padding: 10px 8px;
-  width: 140px;
+  backdrop-filter: blur(6px);
+  padding: 8px 4px;
+  width: 52px;
   height: 100%;
   box-sizing: border-box;
+  pointer-events: auto;
+  overflow: hidden;
 }
 
 .hud-section {
-  padding: 3px 4px;
+  padding: 2px 2px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 1px;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   white-space: nowrap;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hud-section:last-child {
@@ -284,11 +292,11 @@ canvas {
 }
 
 #timerDisplay {
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 700;
   color: #aaddaa;
   font-family: 'Share Tech Mono', monospace;
-  letter-spacing: 1px;
+  letter-spacing: 0;
 }
 
 #timerDisplay.timer-warning {
@@ -299,21 +307,22 @@ canvas {
 /* Kills/Score section */
 .hud-kills #killsDisplay {
   color: #ffaa44;
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
   text-shadow: 0 0 10px rgba(255, 170, 68, 0.4);
+  text-align: center;
 }
 
 /* HP section */
 .hud-health {
-  padding: 4px 4px;
+  padding: 2px 2px;
 }
 
 .hud-hp-bar-container {
   position: relative;
   width: 100%;
-  height: 18px;
+  height: 14px;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 3px;
   border: 1px solid #3a5a3a;
@@ -354,38 +363,39 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6);
   z-index: 1;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
 }
 
 /* Weapon section */
 .hud-weapon #shotsDisplay {
   color: #eef0ee;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
   text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
+  text-align: center;
 }
 
 /* Status section (cooldown, reload, speed) */
 .hud-status {
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 1px;
 }
 
 .hud-status #cooldownDisplay {
   color: #ffbb55;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
 }
 
 .hud-status #reloadDisplay {
   color: #ff6b35;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   animation: reloadBlink 0.6s ease-in-out infinite;
 }
@@ -397,10 +407,11 @@ canvas {
 
 .hud-status #speedBoostDisplay {
   color: #44bbff;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
   animation: speedGlow 0.5s ease-in-out infinite;
+  text-align: center;
 }
 
 @keyframes speedGlow {

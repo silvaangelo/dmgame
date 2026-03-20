@@ -131,7 +131,7 @@ var GameConfig = struct {
 	LMSPlayerHP:     20,
 	PlayerSpeed:     5,
 	PlayerRadius:    20,
-	ShotsPerMag:     25,
+	ShotsPerMag:     35,
 	ShotCooldown:    55,
 	ReloadTime:      1950,
 	MachinegunReloadTime: 2000,
