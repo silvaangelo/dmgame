@@ -49,6 +49,11 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
 		killer.KillStreak++
 		killer.Score += GameConfig.KillScore
 
+		// Track max streak for MVP
+		if killer.KillStreak > killer.MaxStreak {
+			killer.MaxStreak = killer.KillStreak
+		}
+
 		// Heal on kill — restore half of max HP
 		maxHP := GameConfig.PlayerHP
 		killer.HP = min(maxHP, killer.HP+(maxHP+1)/2)
@@ -155,6 +160,27 @@ func updateGame(game *Game) []playerStateSnapshot {
 	}
 
 	now := unixMs()
+
+	// ── Comeback mechanic: mark the player with the lowest score as underdog ──
+	{
+		var lowestScore int = math.MaxInt32
+		var alivePlayers int
+		for _, p := range game.Players {
+			if p.HP > 0 {
+				alivePlayers++
+				if p.Score < lowestScore {
+					lowestScore = p.Score
+				}
+			}
+		}
+		for _, p := range game.Players {
+			if alivePlayers >= 3 && p.HP > 0 && p.Score == lowestScore {
+				p.IsUnderdog = true
+			} else {
+				p.IsUnderdog = false
+			}
+		}
+	}
 
 	// ── Check spawn timers ──
 	checkSpawnTimers(game, now)
@@ -357,19 +383,36 @@ func updateGame(game *Game) []playerStateSnapshot {
 		if enemy != nil {
 			bulletsToRemove[bullet.ID] = true
 
+			// Comeback mechanic: underdog damage boost (+1)
+			effectiveDamage := bullet.Damage
+			for _, p := range game.Players {
+				if p.ID == bullet.PlayerID && p.IsUnderdog {
+					effectiveDamage++
+					break
+				}
+			}
+
 			// Shield absorption
 			shieldActive := now < enemy.ShieldUntil
 			if shieldActive {
 				enemy.ShieldUntil -= 1500
 			} else if enemy.Armor > 0 {
-				armorAbsorb := min(enemy.Armor, bullet.Damage)
+				armorAbsorb := min(enemy.Armor, effectiveDamage)
 				enemy.Armor -= armorAbsorb
-				remaining := bullet.Damage - armorAbsorb
+				remaining := effectiveDamage - armorAbsorb
 				if remaining > 0 {
 					enemy.HP -= remaining
 				}
 			} else {
-				enemy.HP -= bullet.Damage
+				enemy.HP -= effectiveDamage
+			}
+
+			// Track damage for MVP
+			for _, p := range game.Players {
+				if p.ID == bullet.PlayerID {
+					p.TotalDamage += effectiveDamage
+					break
+				}
 			}
 
 			// Knockback
@@ -481,6 +524,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			if dx*dx+dy*dy < orbCollDistSq {
 				orbsToRemove[orb.ID] = true
 				player.Score += GameConfig.OrbScore
+				player.OrbsCollected++
 				broadcast(game, map[string]interface{}{
 					"type":     "orbCollected",
 					"orbId":    orb.ID,
@@ -859,11 +903,16 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 
 // startReload begins a timed reload using a goroutine.
 func startReload(player *Player, reloadTimeMs int64, refillAmount int) {
+	// Comeback mechanic: underdog gets 20% faster reload
+	actualReload := reloadTimeMs
+	if player.IsUnderdog {
+		actualReload = int64(float64(reloadTimeMs) * 0.8)
+	}
 	player.Reloading = true
 	if player.ReloadTimer != nil {
 		player.ReloadTimer.Stop()
 	}
-	player.ReloadTimer = time.AfterFunc(time.Duration(reloadTimeMs)*time.Millisecond, func() {
+	player.ReloadTimer = time.AfterFunc(time.Duration(actualReload)*time.Millisecond, func() {
 		game := getPersistentGame()
 		if game == nil {
 			return
@@ -945,7 +994,7 @@ func spawnPickup(game *Game) {
 		return
 	}
 
-	types := []PickupType{PickupHealth, PickupAmmo, PickupSpeed, PickupMinigun, PickupShield, PickupInvisibility, PickupRegen, PickupArmor}
+	types := []PickupType{PickupHealth, PickupAmmo, PickupSpeed, PickupShield, PickupInvisibility, PickupRegen, PickupArmor}
 	ptype := types[rand.Intn(len(types))]
 
 	var pickupX, pickupY float64
@@ -1046,7 +1095,7 @@ func destroyLootCrate(crate *LootCrate, game *Game) {
 	game.LootCrates = filtered
 
 	// Drop a random pickup
-	types := []PickupType{PickupHealth, PickupAmmo, PickupSpeed, PickupMinigun, PickupShield, PickupInvisibility, PickupRegen, PickupArmor}
+	types := []PickupType{PickupHealth, PickupAmmo, PickupSpeed, PickupShield, PickupInvisibility, PickupRegen, PickupArmor}
 	ptype := types[rand.Intn(len(types))]
 	pickup := &Pickup{
 		ID:        uuid.New().String(),
@@ -1658,6 +1707,43 @@ func endRound(game *Game) {
 		WinnerName: winnerName,
 	})
 
+	// Compute MVP awards
+	type mvpAward struct {
+		Category string `msgpack:"category"`
+		Label    string `msgpack:"label"`
+		Player   string `msgpack:"player"`
+		Value    int    `msgpack:"value"`
+	}
+	mvpAwards := make([]mvpAward, 0, 4)
+
+	var mostKillsP, mostOrbsP, longestStreakP, mostDamageP *Player
+	for _, p := range game.Players {
+		if mostKillsP == nil || p.Kills > mostKillsP.Kills {
+			mostKillsP = p
+		}
+		if mostOrbsP == nil || p.OrbsCollected > mostOrbsP.OrbsCollected {
+			mostOrbsP = p
+		}
+		if longestStreakP == nil || p.MaxStreak > longestStreakP.MaxStreak {
+			longestStreakP = p
+		}
+		if mostDamageP == nil || p.TotalDamage > mostDamageP.TotalDamage {
+			mostDamageP = p
+		}
+	}
+	if mostKillsP != nil && mostKillsP.Kills > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostKills", "Most Kills", mostKillsP.Username, mostKillsP.Kills})
+	}
+	if mostOrbsP != nil && mostOrbsP.OrbsCollected > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostOrbs", "Most Orbs", mostOrbsP.Username, mostOrbsP.OrbsCollected})
+	}
+	if longestStreakP != nil && longestStreakP.MaxStreak >= 2 {
+		mvpAwards = append(mvpAwards, mvpAward{"longestStreak", "Longest Streak", longestStreakP.Username, longestStreakP.MaxStreak})
+	}
+	if mostDamageP != nil && mostDamageP.TotalDamage > 0 {
+		mvpAwards = append(mvpAwards, mvpAward{"mostDamage", "Most Damage", mostDamageP.Username, mostDamageP.TotalDamage})
+	}
+
 	// Collect per-player roundEnd messages inside the lock, send after unlocking.
 	type pendingMsg struct {
 		player *Player
@@ -1686,6 +1772,7 @@ func endRound(game *Game) {
 			"scoreboard":   scoreboard,
 			"audioIndex":   audioIndex,
 			"restartDelay": GameConfig.RoundRestartDelay,
+			"mvpAwards":    mvpAwards,
 		})
 		pendingMsgs = append(pendingMsgs, pendingMsg{player: p, data: msg})
 	}
@@ -1751,6 +1838,12 @@ func resetPersistentRound(game *Game) {
 		p.DashCooldownUntil = 0
 		p.DashUntil = 0
 		p.Keys = Keys{}
+
+		// Reset MVP tracking
+		p.TotalDamage = 0
+		p.MaxStreak = 0
+		p.OrbsCollected = 0
+		p.IsUnderdog = false
 	}
 
 	// Respawn all players

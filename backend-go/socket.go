@@ -360,6 +360,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				"message":  chatMsg,
 			})
 
+		case "emote":
+			emoteIdx := safeInt(m, "emote", -1)
+			if emoteIdx < 0 || emoteIdx > 4 {
+				continue
+			}
+			broadcast(game, map[string]interface{}{
+				"type":     "emote",
+				"playerId": p.ID,
+				"emote":    emoteIdx,
+			})
+
 		case "reload":
 			game.mu.Lock()
 			reloadWeapon(p)

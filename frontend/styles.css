@@ -238,12 +238,12 @@ canvas {
   color: #6a8a6a;
 }
 
-/* ===== HUD (in-game overlay — left side slim bar) ===== */
+/* ===== HUD (in-game overlay — left waybar, top to bottom) ===== */
 #gameUI {
   position: fixed;
-  top: 50%;
+  top: 0;
   left: 0;
-  transform: translateY(-50%);
+  bottom: 0;
   z-index: 800;
   pointer-events: auto;
   animation: screenFadeIn 0.3s ease-out;
@@ -252,21 +252,24 @@ canvas {
 .hud-panel {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  justify-content: center;
+  gap: 2px;
   font-family: 'Share Tech Mono', monospace;
-  background: rgba(10, 15, 10, 0.72);
-  border: 1px solid rgba(74, 106, 74, 0.3);
-  border-radius: 0 6px 6px 0;
+  background: rgba(10, 15, 10, 0.55);
+  border-right: 1px solid rgba(74, 106, 74, 0.3);
+  border-radius: 0;
   backdrop-filter: blur(8px);
-  padding: 8px 10px 8px 8px;
-  width: 180px;
+  padding: 10px 8px;
+  width: 140px;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .hud-section {
-  padding: 4px 4px;
+  padding: 3px 4px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   white-space: nowrap;
 }
@@ -281,7 +284,7 @@ canvas {
 }
 
 #timerDisplay {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: #aaddaa;
   font-family: 'Share Tech Mono', monospace;
@@ -296,7 +299,7 @@ canvas {
 /* Kills/Score section */
 .hud-kills #killsDisplay {
   color: #ffaa44;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.5px;
   text-shadow: 0 0 10px rgba(255, 170, 68, 0.4);
@@ -304,13 +307,13 @@ canvas {
 
 /* HP section */
 .hud-health {
-  padding: 6px 4px;
+  padding: 4px 4px;
 }
 
 .hud-hp-bar-container {
   position: relative;
   width: 100%;
-  height: 22px;
+  height: 18px;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 3px;
   border: 1px solid #3a5a3a;
@@ -351,7 +354,7 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6);
   z-index: 1;
@@ -361,7 +364,7 @@ canvas {
 /* Weapon section */
 .hud-weapon #shotsDisplay {
   color: #eef0ee;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
   text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
@@ -376,13 +379,13 @@ canvas {
 
 .hud-status #cooldownDisplay {
   color: #ffbb55;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .hud-status #reloadDisplay {
   color: #ff6b35;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   animation: reloadBlink 0.6s ease-in-out infinite;
 }
@@ -394,7 +397,7 @@ canvas {
 
 .hud-status #speedBoostDisplay {
   color: #44bbff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
   animation: speedGlow 0.5s ease-in-out infinite;
@@ -411,27 +414,30 @@ canvas {
   top: 12px;
   right: 12px;
   z-index: 850;
-  background: rgba(12, 18, 12, 0.75);
-  border: 1px solid rgba(74, 106, 74, 0.3);
-  border-radius: 4px;
-  padding: 10px 14px;
-  min-width: 200px;
-  max-width: 260px;
-  backdrop-filter: blur(8px);
+  background: rgba(8, 12, 8, 0.88);
+  border: 1px solid rgba(74, 106, 74, 0.45);
+  border-radius: 6px;
+  padding: 12px 16px;
+  min-width: 220px;
+  max-width: 280px;
+  backdrop-filter: blur(10px);
   pointer-events: none;
   animation: screenFadeIn 0.4s ease-out;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 }
 
 #leaderboardTitle {
-  font-size: 14px;
+  font-size: 16px;
   color: #66cc66;
   font-family: 'Share Tech Mono', monospace;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(74, 106, 74, 0.3);
+  letter-spacing: 3px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(74, 106, 74, 0.4);
   text-align: center;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(102, 204, 102, 0.3);
 }
 
 #leaderboardList {
@@ -443,22 +449,22 @@ canvas {
 .lb-row {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.03);
+  padding: 5px 10px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
   transition: background 0.2s;
 }
 
 .lb-row.lb-me {
-  background: rgba(255, 107, 53, 0.15);
-  border-left: 2px solid #ff6b35;
+  background: rgba(255, 107, 53, 0.2);
+  border-left: 3px solid #ff6b35;
 }
 
 .lb-rank {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: #6a8a6a;
-  min-width: 24px;
+  min-width: 26px;
   font-family: 'Share Tech Mono', monospace;
 }
 
@@ -476,7 +482,7 @@ canvas {
 
 .lb-name {
   flex: 1;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: #d0e0d0;
   font-family: 'Rajdhani', sans-serif;
@@ -487,10 +493,11 @@ canvas {
 }
 
 .lb-score {
-  font-size: 14px;
+  font-size: 15px;
   color: #ffaa44;
   font-family: 'Share Tech Mono', monospace;
   font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 170, 68, 0.3);
 }
 
 /* ===== SCOREBOARD (TAB held) ===== */
@@ -741,9 +748,9 @@ canvas {
   border: 1px solid rgba(255, 204, 0, 0.2);
   border-radius: 12px;
   padding: 16px 24px;
-  max-height: 300px;
+  max-height: 420px;
   overflow-y: auto;
-  min-width: 320px;
+  min-width: 340px;
 }
 
 .round-end-row {
@@ -763,6 +770,93 @@ canvas {
 
 .round-end-row.me {
   color: #44ff44;
+}
+
+/* ===== MVP AWARDS ===== */
+.mvp-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 204, 0, 0.2);
+}
+
+.mvp-title {
+  font-size: 18px;
+  font-weight: 900;
+  color: #ffcc00;
+  text-align: center;
+  letter-spacing: 3px;
+  margin-bottom: 10px;
+  font-family: 'Rajdhani', sans-serif;
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(255, 204, 0, 0.4);
+  animation: mvpTitleGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes mvpTitleGlow {
+  0%, 100% { text-shadow: 0 0 12px rgba(255, 204, 0, 0.4); }
+  50% { text-shadow: 0 0 24px rgba(255, 204, 0, 0.7), 0 0 40px rgba(255, 204, 0, 0.2); }
+}
+
+.mvp-award {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  background: rgba(255, 204, 0, 0.06);
+  border-radius: 6px;
+  border-left: 3px solid rgba(255, 204, 0, 0.3);
+  animation: mvpSlideIn 0.4s ease-out both;
+}
+
+.mvp-award:nth-child(2) { animation-delay: 0.1s; }
+.mvp-award:nth-child(3) { animation-delay: 0.2s; }
+.mvp-award:nth-child(4) { animation-delay: 0.3s; }
+.mvp-award:nth-child(5) { animation-delay: 0.4s; }
+
+.mvp-award.mvp-me {
+  background: rgba(68, 255, 68, 0.1);
+  border-left-color: #44ff44;
+}
+
+@keyframes mvpSlideIn {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.mvp-icon {
+  font-size: 22px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.mvp-label {
+  font-size: 12px;
+  color: #8aaa8a;
+  font-family: 'Share Tech Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  min-width: 110px;
+}
+
+.mvp-player {
+  font-size: 15px;
+  color: #ffcc00;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  flex: 1;
+}
+
+.mvp-value {
+  font-size: 16px;
+  color: #ffaa44;
+  font-family: 'Share Tech Mono', monospace;
+  font-weight: 700;
+}
+
+.round-end-scores {
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 #roundEndCountdown {
@@ -1138,4 +1232,24 @@ canvas {
   #deathMessage {
     font-size: 32px;
   }
+}
+
+/* ===== REVENGE ANIMATION ===== */
+@keyframes revengeFlash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes revengeSlam {
+  0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+  50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@keyframes revengeShake {
+  0%, 100% { transform: translate(-50%, -50%) scale(1) rotate(0); }
+  20% { transform: translate(-50%, -50%) scale(1) rotate(-3deg); }
+  40% { transform: translate(-50%, -50%) scale(1) rotate(3deg); }
+  60% { transform: translate(-50%, -50%) scale(1) rotate(-2deg); }
+  80% { transform: translate(-50%, -50%) scale(1) rotate(1deg); }
 }

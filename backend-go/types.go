@@ -89,6 +89,14 @@ type Player struct {
 
 	// Reload timer
 	ReloadTimer *time.Timer `msgpack:"-"`
+
+	// Comeback mechanic (hidden underdog buff)
+	IsUnderdog bool `msgpack:"-"`
+
+	// MVP tracking
+	TotalDamage int `msgpack:"-"`
+	MaxStreak   int `msgpack:"-"`
+	OrbsCollected int `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.

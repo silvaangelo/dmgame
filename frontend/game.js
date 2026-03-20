@@ -2211,7 +2211,7 @@ function connect() {
       if (localPlayer) {
         if (data.killer === localPlayer.username) {
           if (data.isRevenge) {
-            showToast("🔥 REVENGE! 🔥", "#ff4400");
+            showRevengeAnimation();
           } else {
             const phrase = SELF_KILL_PHRASES[Math.floor(Math.random() * SELF_KILL_PHRASES.length)]
               .replace("{victim}", data.victim);
@@ -2349,6 +2349,15 @@ function connect() {
     // ===== CHAT =====
     if (data.type === "chatMessage") {
       addKillFeedEntry(data.username, data.message, "chat");
+      return;
+    }
+
+    // ===== EMOTE =====
+    if (data.type === "emote") {
+      var emIdx = data.emote;
+      if (emIdx >= 0 && emIdx < EMOTE_LIST.length) {
+        playerEmotes[data.playerId] = { emoji: EMOTE_LIST[emIdx], time: Date.now() };
+      }
       return;
     }
 
@@ -2596,13 +2605,37 @@ function connect() {
         var sbEl = document.getElementById("roundEndScoreboard");
         if (sbEl && data.scoreboard) {
           var medals = ["\ud83e\udd47", "\ud83e\udd48", "\ud83e\udd49"];
-          sbEl.innerHTML = data.scoreboard.map(function(s, i) {
+          var html = "";
+
+          // MVP Awards section
+          if (data.mvpAwards && data.mvpAwards.length > 0) {
+            var mvpIcons = { mostKills: "\ud83d\udde1\ufe0f", mostOrbs: "\ud83d\udd2e", longestStreak: "\ud83d\udd25", mostDamage: "\ud83d\udca5" };
+            html += '<div class="mvp-section">';
+            html += '<div class="mvp-title">\u2b50 MVP AWARDS \u2b50</div>';
+            data.mvpAwards.forEach(function(award) {
+              var icon = mvpIcons[award.category] || "\ud83c\udfc6";
+              var isMe = award.player === loggedInUsername;
+              html += '<div class="mvp-award' + (isMe ? ' mvp-me' : '') + '">';
+              html += '<span class="mvp-icon">' + icon + '</span>';
+              html += '<span class="mvp-label">' + esc(award.label) + '</span>';
+              html += '<span class="mvp-player">' + esc(award.player) + '</span>';
+              html += '<span class="mvp-value">' + award.value + '</span>';
+              html += '</div>';
+            });
+            html += '</div>';
+          }
+
+          // Scoreboard
+          html += '<div class="round-end-scores">';
+          html += data.scoreboard.map(function(s, i) {
             var isMe = s.username === loggedInUsername;
             var isWinner = i === 0;
             var cls = "round-end-row" + (isWinner ? " winner" : "") + (isMe ? " me" : "");
             var medal = i < 3 ? medals[i] : (i + 1) + ".";
             return '<div class="' + cls + '"><span>' + medal + " " + esc(s.username) + '</span><span>\u2b50' + s.score + ' | ' + s.kills + 'K/' + s.deaths + 'D</span></div>';
           }).join("");
+          html += '</div>';
+          sbEl.innerHTML = html;
         }
 
         var countdownEl = document.getElementById("roundEndCountdown");
@@ -2676,6 +2709,7 @@ function connect() {
       lowHPPulseTime = 0;
       arenaZone = null;
       roundTimeRemaining = 300;
+      playerEmotes = {};
 
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -2891,7 +2925,7 @@ function updateShotUI() {
     if (dashRemaining > 0) {
       parts.push(`💨 ${(dashRemaining / 1000).toFixed(1)}s`);
     } else {
-      parts.push("💨 DASH [Shift]");
+      parts.push("💨 DASH [Shift/Z]");
     }
     speedBoostDisplay.textContent = parts.join(" ");
   }
@@ -2954,8 +2988,14 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Shift key to dash
-  if (e.key === "Shift") {
+  // T key for emote wheel
+  if (mappedKey === "t") {
+    showEmoteWheel();
+    return;
+  }
+
+  // Shift or Z key to dash
+  if (e.key === "Shift" || e.code === "KeyZ") {
     e.preventDefault();
     if (Date.now() >= dashCooldownUntil) {
       ws.send(serialize({ type: "dash" }));
@@ -3533,6 +3573,137 @@ function showToast(text, color) {
       activeToasts = activeToasts.filter((t) => t !== toast);
     }, 500);
   }, 2200);
+}
+
+// ===== REVENGE ANIMATION =====
+function showRevengeAnimation() {
+  // Screen flash
+  var flash = document.createElement("div");
+  flash.style.cssText = "position:fixed;inset:0;background:rgba(255,68,0,0.3);z-index:1100;pointer-events:none;animation:revengeFlash 0.6s ease-out forwards;";
+  document.body.appendChild(flash);
+  setTimeout(function() { flash.remove(); }, 700);
+
+  // Big centered text
+  var revenge = document.createElement("div");
+  revenge.innerHTML = "\ud83d\udd25 REVENGE! \ud83d\udd25";
+  revenge.style.cssText = [
+    "position:fixed;top:50%;left:50%;z-index:1150;pointer-events:none;",
+    "transform:translate(-50%,-50%) scale(0);",
+    "font-family:'Rajdhani',sans-serif;font-size:72px;font-weight:900;",
+    "color:#ff4400;text-transform:uppercase;letter-spacing:6px;",
+    "text-shadow:0 0 40px rgba(255,68,0,0.8),0 0 80px rgba(255,68,0,0.4),0 4px 12px rgba(0,0,0,0.8);",
+    "animation:revengeSlam 0.6s cubic-bezier(0.16,1,0.3,1) forwards;",
+    "white-space:nowrap;"
+  ].join("");
+  document.body.appendChild(revenge);
+
+  // Shake effect
+  setTimeout(function() {
+    if (revenge.parentNode) {
+      revenge.style.animation = "revengeShake 0.5s ease-out";
+      revenge.style.transform = "translate(-50%,-50%) scale(1)";
+      revenge.style.opacity = "1";
+    }
+  }, 650);
+
+  // Fade out
+  setTimeout(function() {
+    if (revenge.parentNode) {
+      revenge.style.transition = "opacity 0.5s ease-out, transform 0.5s ease-out";
+      revenge.style.opacity = "0";
+      revenge.style.transform = "translate(-50%,-50%) scale(1.3)";
+    }
+    setTimeout(function() { revenge.remove(); }, 600);
+  }, 2000);
+
+  // Trigger screen shake
+  if (typeof triggerScreenShake === "function") {
+    triggerScreenShake(12);
+  }
+}
+
+// ===== EMOTE SYSTEM =====
+var playerEmotes = {}; // { playerId: { emoji, time } }
+var EMOTE_LIST = ["\ud83d\ude02", "\ud83d\udc4f", "\ud83d\udc80", "\ud83d\udd25", "\ud83d\udcaa"];
+var EMOTE_DURATION = 2500;
+
+function showEmoteWheel() {
+  var existing = document.getElementById("emoteWheel");
+  if (existing) { existing.remove(); return; }
+
+  var wheel = document.createElement("div");
+  wheel.id = "emoteWheel";
+  wheel.style.cssText = [
+    "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:1050;",
+    "display:flex;gap:8px;padding:10px 16px;",
+    "background:rgba(10,15,10,0.9);border:1px solid rgba(74,106,74,0.5);border-radius:8px;",
+    "backdrop-filter:blur(8px);animation:screenFadeIn 0.2s ease-out;"
+  ].join("");
+
+  EMOTE_LIST.forEach(function(emoji, i) {
+    var btn = document.createElement("div");
+    btn.textContent = emoji;
+    btn.style.cssText = "font-size:32px;cursor:pointer;padding:6px 10px;border-radius:6px;transition:all 0.15s;user-select:none;";
+    btn.onmouseenter = function() { btn.style.background = "rgba(255,107,53,0.3)"; btn.style.transform = "scale(1.2)"; };
+    btn.onmouseleave = function() { btn.style.background = "transparent"; btn.style.transform = "scale(1)"; };
+    btn.onclick = function() {
+      if (ws && ws.readyState === 1) {
+        ws.send(serialize({ type: "emote", emote: i }));
+        // Show locally immediately
+        var lp = players.find(function(p) { return p.id === playerId; });
+        if (lp) playerEmotes[playerId] = { emoji: emoji, time: Date.now() };
+      }
+      wheel.remove();
+    };
+    wheel.appendChild(btn);
+  });
+
+  document.body.appendChild(wheel);
+  // Auto-close after 3 seconds
+  setTimeout(function() { if (wheel.parentNode) wheel.remove(); }, 3000);
+}
+
+function renderEmotes(ctx) {
+  var now = Date.now();
+  for (var pid in playerEmotes) {
+    var em = playerEmotes[pid];
+    if (now - em.time > EMOTE_DURATION) { delete playerEmotes[pid]; continue; }
+    var p = players.find(function(pl) { return pl.id === pid; });
+    if (!p || p.hp <= 0) continue;
+
+    var elapsed = now - em.time;
+    var alpha = elapsed < 300 ? elapsed / 300 : elapsed > EMOTE_DURATION - 500 ? (EMOTE_DURATION - elapsed) / 500 : 1;
+    var bobY = Math.sin(elapsed * 0.003) * 3;
+    var sx = p.x;
+    var sy = p.y - 45 + bobY;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Bubble background
+    ctx.fillStyle = "rgba(10,15,10,0.75)";
+    var bx = sx - 20, by = sy - 18, bw = 40, bh = 36, br = 10;
+    ctx.beginPath();
+    ctx.moveTo(bx + br, by);
+    ctx.lineTo(bx + bw - br, by);
+    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + br);
+    ctx.lineTo(bx + bw, by + bh - br);
+    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - br, by + bh);
+    ctx.lineTo(bx + br, by + bh);
+    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - br);
+    ctx.lineTo(bx, by + br);
+    ctx.quadraticCurveTo(bx, by, bx + br, by);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(74,106,74,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Emoji
+    ctx.font = "24px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(em.emoji, sx, sy);
+    ctx.restore();
+  }
 }
 
 // ===== VOLUME CONTROL =====
@@ -4362,6 +4533,16 @@ function renderMinimap() {
     ctx.fill();
   }
 
+  // Find crown leader for minimap
+  let minimapCrownId = null;
+  let minimapMaxScore = 9;
+  for (let i = 0; i < players.length; i++) {
+    if (players[i].hp > 0 && (players[i].score || 0) > minimapMaxScore) {
+      minimapMaxScore = players[i].score;
+      minimapCrownId = players[i].id;
+    }
+  }
+
   // Draw other players as colored dots
   for (let i = 0; i < players.length; i++) {
     const p = players[i];
@@ -4369,22 +4550,41 @@ function renderMinimap() {
     if (p.hp <= 0) continue;
     if (p.invisible) {
       ctx.fillStyle = "rgba(170,102,255,0.4)";
+    } else if (minimapCrownId === p.id) {
+      ctx.fillStyle = "#ffd700";
     } else {
       ctx.fillStyle = "#ff4444";
     }
+    const dotSize = (minimapCrownId === p.id) ? 4 : 2.5;
     ctx.beginPath();
-    ctx.arc(mx + p.x * scaleX, my + p.y * scaleY, 2.5, 0, Math.PI * 2);
+    ctx.arc(mx + p.x * scaleX, my + p.y * scaleY, dotSize, 0, Math.PI * 2);
     ctx.fill();
+    // Crown marker on minimap for #1 player
+    if (minimapCrownId === p.id) {
+      ctx.fillStyle = "#ffd700";
+      ctx.font = "10px serif";
+      ctx.textAlign = "center";
+      ctx.fillText("👑", mx + p.x * scaleX, my + p.y * scaleY - 5);
+      ctx.textAlign = "start";
+    }
   }
 
-  // Draw local player as white dot with glow
-  ctx.fillStyle = "#ffffff";
-  ctx.shadowColor = "#ffffff";
-  ctx.shadowBlur = 4;
+  // Draw local player as white dot with glow (golden if crown leader)
+  const isLocalCrown = (minimapCrownId === playerId);
+  ctx.fillStyle = isLocalCrown ? "#ffd700" : "#ffffff";
+  ctx.shadowColor = isLocalCrown ? "#ffd700" : "#ffffff";
+  ctx.shadowBlur = isLocalCrown ? 6 : 4;
   ctx.beginPath();
-  ctx.arc(mx + predictedX * scaleX, my + predictedY * scaleY, 3, 0, Math.PI * 2);
+  ctx.arc(mx + predictedX * scaleX, my + predictedY * scaleY, isLocalCrown ? 4 : 3, 0, Math.PI * 2);
   ctx.fill();
   ctx.shadowBlur = 0;
+  if (isLocalCrown) {
+    ctx.fillStyle = "#ffd700";
+    ctx.font = "10px serif";
+    ctx.textAlign = "center";
+    ctx.fillText("👑", mx + predictedX * scaleX, my + predictedY * scaleY - 5);
+    ctx.textAlign = "start";
+  }
 
   // Draw viewport rectangle
   ctx.strokeStyle = "rgba(255,255,255,0.5)";
@@ -4542,6 +4742,16 @@ function render() {
     }
   }
 
+  // Find the #1 player by score (crown leader) — minimum 10 pts, must be alive
+  let crownLeaderId = null;
+  let crownMaxScore = 9;
+  for (let i = 0; i < players.length; i++) {
+    if (players[i].hp > 0 && (players[i].score || 0) > crownMaxScore) {
+      crownMaxScore = players[i].score;
+      crownLeaderId = players[i].id;
+    }
+  }
+
   players.forEach((p, index) => {
     // Don't render dead players
     if (p.hp <= 0) return;
@@ -4630,9 +4840,9 @@ function render() {
 
     // Invisibility visual (ghostly fade for others, slight outline for self)
     if (p.invisible && p.id !== playerId) {
-      ctx.globalAlpha = 0.15; // Nearly invisible to others
+      ctx.globalAlpha = 0.05; // Almost fully invisible to others
     } else if (p.invisible && p.id === playerId) {
-      ctx.globalAlpha = 0.5; // Semi-transparent for self
+      ctx.globalAlpha = 0.25; // Semi-transparent for self
     }
 
     // Health regen aura
@@ -4789,6 +4999,53 @@ function render() {
       ctx.textAlign = "start";
     }
 
+    // Golden crown on the #1 player (highest score)
+    if (crownLeaderId === p.id) {
+      const crownY = renderY - 26;
+      const crownBob = Math.sin(Date.now() / 400) * 1.5;
+      ctx.save();
+      ctx.translate(renderX, crownY + crownBob);
+      // Crown body
+      ctx.fillStyle = "#ffd700";
+      ctx.beginPath();
+      ctx.moveTo(-10, 4);
+      ctx.lineTo(-10, -2);
+      ctx.lineTo(-7, 1);
+      ctx.lineTo(-3, -6);
+      ctx.lineTo(0, -1);
+      ctx.lineTo(3, -6);
+      ctx.lineTo(7, 1);
+      ctx.lineTo(10, -2);
+      ctx.lineTo(10, 4);
+      ctx.closePath();
+      ctx.fill();
+      // Crown base
+      ctx.fillStyle = "#daa520";
+      ctx.fillRect(-10, 3, 20, 3);
+      // Gem dots
+      ctx.fillStyle = "#ff4444";
+      ctx.beginPath();
+      ctx.arc(-3, -1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#4488ff";
+      ctx.beginPath();
+      ctx.arc(3, -1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#44ff44";
+      ctx.beginPath();
+      ctx.arc(0, -2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      // Glow effect
+      ctx.shadowColor = "#ffd700";
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = "rgba(255, 215, 0, 0.15)";
+      ctx.beginPath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
     // Restore alpha after invisibility
     if (p.invisible) {
       ctx.globalAlpha = 1.0;
@@ -4887,6 +5144,9 @@ function render() {
 
   // Render death animations (ragdoll particles)
   renderDeathAnimations();
+
+  // Render emotes above players
+  renderEmotes(ctx);
 
   // === End world-space rendering — restore camera transform ===
   ctx.restore(); // Restore camera translate+shake
