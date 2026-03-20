@@ -2,7 +2,7 @@ import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
 import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate, Orb } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
-import { games, allPlayers, rooms } from "./state.js";
+import { games, allPlayers, rooms, setPersistentGame, persistentGame } from "./state.js";
 import {
   broadcast,
   serializePlayersCompact,
@@ -81,9 +81,9 @@ function handleKill(
   checkVictory(game);
 
   // Respawn after delay
-  if (games.has(game.id)) {
+  if (games.has(game.id) || game.id === "persistent") {
     setTimeout(() => {
-      if (games.has(game.id)) {
+      if (games.has(game.id) || game.id === "persistent") {
         respawnPlayer(victim, game);
       }
     }, GAME_CONFIG.RESPAWN_TIME);
@@ -1243,7 +1243,8 @@ function endGame(game: Game, winner: Player) {
 }
 
 export function checkVictory(game: Game) {
-  // Game ends by timer; this is only called if all players disconnect
+  // Persistent game never ends
+  if (game.id === "persistent") return;
   if (!game.started) return;
   if (game.players.length <= 0) {
     endGameByScore(game);
@@ -1431,12 +1432,242 @@ export function spawnRandomObstacle(game: Game) {
 
 export function startGameLoop() {
   setInterval(() => {
+    // Update persistent game
+    if (persistentGame && persistentGame.started) {
+      updateGame(persistentGame);
+    }
+    // Update any other games (legacy, if any)
     games.forEach((game) => {
       if (game.started) {
         updateGame(game);
       }
     });
   }, 1000 / GAME_CONFIG.TICK_RATE);
+}
+
+/* ================= PERSISTENT GAME WORLD ================= */
+
+export function generateObstacles(): import("./types.js").Obstacle[] {
+  const obstacles: import("./types.js").Obstacle[] = [];
+  const wallCount =
+    OBSTACLE_CONFIG.WALL_COUNT_MIN +
+    Math.floor(Math.random() * (OBSTACLE_CONFIG.WALL_COUNT_MAX - OBSTACLE_CONFIG.WALL_COUNT_MIN + 1));
+  const treeCount =
+    OBSTACLE_CONFIG.TREE_COUNT_MIN +
+    Math.floor(Math.random() * (OBSTACLE_CONFIG.TREE_COUNT_MAX - OBSTACLE_CONFIG.TREE_COUNT_MIN + 1));
+
+  const usedAreas: { x: number; y: number; width: number; height: number }[] = [];
+
+  for (let i = 0; i < wallCount; i++) {
+    let attempts = 0;
+    let validPosition = false;
+    let startX = 0, startY = 0, isHorizontal = false, wallLength = 0;
+
+    while (!validPosition && attempts < 20) {
+      isHorizontal = Math.random() > 0.5;
+      wallLength = OBSTACLE_CONFIG.WALL_LENGTH_MIN +
+        Math.floor(Math.random() * (OBSTACLE_CONFIG.WALL_LENGTH_MAX - OBSTACLE_CONFIG.WALL_LENGTH_MIN + 1));
+      startX = 120 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 340);
+      startY = 120 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 340);
+      const wallWidth = isHorizontal ? wallLength * OBSTACLE_CONFIG.WALL_BLOCK_SIZE : OBSTACLE_CONFIG.WALL_BLOCK_SIZE;
+      const wallHeight = isHorizontal ? OBSTACLE_CONFIG.WALL_BLOCK_SIZE : wallLength * OBSTACLE_CONFIG.WALL_BLOCK_SIZE;
+      validPosition = true;
+      for (const area of usedAreas) {
+        if (
+          startX < area.x + area.width + OBSTACLE_CONFIG.WALL_SPACING &&
+          startX + wallWidth + OBSTACLE_CONFIG.WALL_SPACING > area.x &&
+          startY < area.y + area.height + OBSTACLE_CONFIG.WALL_SPACING &&
+          startY + wallHeight + OBSTACLE_CONFIG.WALL_SPACING > area.y
+        ) { validPosition = false; break; }
+      }
+      attempts++;
+    }
+
+    if (validPosition) {
+      const blockSize = OBSTACLE_CONFIG.WALL_BLOCK_SIZE;
+      usedAreas.push({
+        x: startX, y: startY,
+        width: isHorizontal ? wallLength * blockSize : blockSize,
+        height: isHorizontal ? blockSize : wallLength * blockSize,
+      });
+      const gId = uuid();
+      const count = wallLength;
+      for (let j = 0; j < count; j++) {
+        obstacles.push({
+          id: uuid(),
+          x: isHorizontal ? startX + j * blockSize : startX,
+          y: isHorizontal ? startY : startY + j * blockSize,
+          size: blockSize,
+          destroyed: false,
+          type: "wall",
+          groupId: gId,
+        });
+      }
+    }
+  }
+
+  for (let i = 0; i < treeCount; i++) {
+    let attempts = 0;
+    let validPosition = false;
+    let treeX = 0, treeY = 0;
+    const treeSize = OBSTACLE_CONFIG.TREE_SIZE;
+    while (!validPosition && attempts < 20) {
+      treeX = 120 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 240);
+      treeY = 120 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 240);
+      validPosition = true;
+      for (const area of usedAreas) {
+        const dx = treeX - (area.x + area.width / 2);
+        const dy = treeY - (area.y + area.height / 2);
+        if (Math.sqrt(dx * dx + dy * dy) < OBSTACLE_CONFIG.TREE_SPACING) { validPosition = false; break; }
+      }
+      attempts++;
+    }
+    if (validPosition) {
+      usedAreas.push({ x: treeX - treeSize / 2, y: treeY - treeSize / 2, width: treeSize, height: treeSize });
+      obstacles.push({ id: uuid(), x: treeX - treeSize / 2, y: treeY - treeSize / 2, size: treeSize, destroyed: false, type: "tree" });
+    }
+  }
+  return obstacles;
+}
+
+export function initPersistentGame(): Game {
+  const obstacles = generateObstacles();
+
+  const game: Game = {
+    id: "persistent",
+    players: [],
+    bullets: [],
+    obstacles,
+    pickups: [],
+    orbs: [],
+    bombs: [],
+    lightnings: [],
+    lootCrates: [],
+    started: true, // Always running
+    gameMode: "deathmatch",
+    lastBroadcastState: new Map(),
+    stateSequence: 0,
+    matchStartTime: Date.now(),
+    zoneX: 0,
+    zoneY: 0,
+    zoneW: GAME_CONFIG.ARENA_WIDTH,
+    zoneH: GAME_CONFIG.ARENA_HEIGHT,
+    zoneShrinking: false,
+  };
+
+  games.set(game.id, game);
+  setPersistentGame(game);
+
+  // Start continuous spawning intervals
+  game.obstacleSpawnInterval = setInterval(() => {
+    spawnRandomObstacle(game);
+  }, GAME_CONFIG.OBSTACLE_SPAWN_INTERVAL);
+
+  game.pickupSpawnInterval = setInterval(() => {
+    spawnPickup(game);
+  }, GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
+
+  spawnInitialOrbs(game);
+  game.orbSpawnInterval = setInterval(() => {
+    spawnOrb(game);
+  }, GAME_CONFIG.ORB_SPAWN_INTERVAL);
+
+  const scheduleBomb = () => {
+    const delay = GAME_CONFIG.BOMB_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.bombSpawnInterval = setTimeout(() => {
+      spawnBomb(game);
+      scheduleBomb();
+    }, delay);
+  };
+  scheduleBomb();
+
+  const scheduleLightning = () => {
+    const delay = GAME_CONFIG.LIGHTNING_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.lightningSpawnInterval = setTimeout(() => {
+      spawnLightning(game);
+      scheduleLightning();
+    }, delay);
+  };
+  scheduleLightning();
+
+  spawnInitialLootCrates(game);
+  game.lootCrateSpawnInterval = setInterval(() => {
+    spawnLootCrate(game);
+  }, GAME_CONFIG.LOOT_CRATE_RESPAWN_INTERVAL);
+
+  console.log(`🌍 Persistent game world initialized (${obstacles.length} obstacles, arena ${GAME_CONFIG.ARENA_WIDTH}x${GAME_CONFIG.ARENA_HEIGHT})`);
+
+  return game;
+}
+
+/** Add a player to the persistent game world */
+export function addPlayerToGame(player: Player, game: Game) {
+  // Find a clear spawn position
+  let bestX = GAME_CONFIG.ARENA_WIDTH / 2;
+  let bestY = GAME_CONFIG.ARENA_HEIGHT / 2;
+  let bestDistance = 0;
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const testX = 50 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 100);
+    const testY = 50 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 100);
+    if (!isPositionClear(testX, testY, game.obstacles, GAME_CONFIG.PLAYER_RADIUS)) continue;
+
+    let minDist = Infinity;
+    for (const other of game.players) {
+      if (other.hp <= 0) continue;
+      const dist = Math.sqrt((testX - other.x) ** 2 + (testY - other.y) ** 2);
+      minDist = Math.min(minDist, dist);
+    }
+    if (game.players.length === 0) minDist = 1000;
+
+    if (minDist > bestDistance) {
+      bestDistance = minDist;
+      bestX = testX;
+      bestY = testY;
+    }
+  }
+
+  player.x = bestX;
+  player.y = bestY;
+  player.hp = GAME_CONFIG.PLAYER_HP;
+  player.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
+  player.reloading = false;
+  player.kills = 0;
+  player.deaths = 0;
+  player.score = 0;
+  player.weapon = "machinegun";
+  player.keys = { w: false, a: false, s: false, d: false };
+  player.lastProcessedInput = 0;
+  player.aimAngle = 0;
+  player.lastKilledBy = "";
+  player.shieldUntil = 0;
+  player.invisibleUntil = 0;
+  player.regenUntil = 0;
+  player.lastRegenTick = 0;
+  player.armor = 0;
+  player.dashCooldownUntil = 0;
+  player.dashUntil = 0;
+  player.dashDirX = 0;
+  player.dashDirY = 0;
+  player.killStreak = 0;
+  player.ready = true;
+
+  game.players.push(player);
+
+  console.log(`➕ ${player.username} joined the arena (${game.players.length} players)`);
+}
+
+/** Remove a player from the persistent game world */
+export function removePlayerFromGame(playerId: string, game: Game) {
+  const player = game.players.find((p) => p.id === playerId);
+  if (player) {
+    // Save stats
+    updatePlayerStats(player.username, player.kills, player.deaths, false);
+    console.log(`➖ ${player.username} left the arena (score: ${player.score})`);
+  }
+  game.players = game.players.filter((p) => p.id !== playerId);
+  // Remove their bullets too
+  game.bullets = game.bullets.filter((b) => b.playerId !== playerId);
 }
 
 /* ================= DYNAMIC ARENA SHRINKING ================= */

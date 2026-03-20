@@ -78,24 +78,24 @@ export const GAME_CONFIG = {
   LIGHTNING_FUSE_TIME: 250,
   LIGHTNING_DAMAGE: 2,
   LIGHTNING_RADIUS: 150,
-  KILLS_TO_WIN: 999,          // Not used — game ends by timer
-  GAME_DURATION: 600000,       // 10 minutes in ms
+  KILLS_TO_WIN: 999,          // Not used — persistent world
+  GAME_DURATION: 0,            // No timer — persistent world
   KILL_SCORE: 10,              // Points per kill
   ORB_SCORE: 1,                // Points per orb collected
   // Orbs (slither-style collectible points)
-  ORB_SPAWN_INTERVAL: 2000,    // Spawn new orbs every 2s
+  ORB_SPAWN_INTERVAL: 1500,    // Spawn new orbs every 1.5s
   ORB_RADIUS: 10,
-  ORB_MAX: 80,                 // Max orbs on map at once
-  ORB_LIFETIME: 60000,         // Orbs last 60s
-  RESPAWN_TIME: 1500,
+  ORB_MAX: 150,                // Max orbs on map at once
+  ORB_LIFETIME: 45000,         // Orbs last 45s
+  RESPAWN_TIME: 2000,
   OBSTACLE_SPAWN_INTERVAL: 8000,
-  // Dynamic arena shrinking
-  ZONE_SHRINK_START: 60000,     // 60s after match start
-  ZONE_SHRINK_INTERVAL: 100,    // Tick every 100ms
-  ZONE_SHRINK_RATE: 0.3,        // Pixels per tick to shrink each edge
-  ZONE_DAMAGE_INTERVAL: 1000,   // Damage every 1s
-  ZONE_DAMAGE: 1,               // 1 HP per tick outside zone
-  ZONE_MIN_SIZE: 200,           // Minimum zone size (width/height)
+  // Dynamic arena shrinking — disabled in persistent mode
+  ZONE_SHRINK_START: 999999999,  // Effectively never
+  ZONE_SHRINK_INTERVAL: 100,
+  ZONE_SHRINK_RATE: 0.3,
+  ZONE_DAMAGE_INTERVAL: 1000,
+  ZONE_DAMAGE: 1,
+  ZONE_MIN_SIZE: 200,
   // Loot crates
   LOOT_CRATE_HP: 3,             // hits to destroy a crate
   LOOT_CRATE_SIZE: 28,          // collision size

@@ -1,36 +1,25 @@
 import { randomUUID as uuid } from "crypto";
 import type { Player } from "./types.js";
 import { GAME_CONFIG, WEAPON_CYCLE } from "./config.js";
-import { games, allPlayers, rooms } from "./state.js";
+import { allPlayers, persistentGame } from "./state.js";
 import { wss } from "./server.js";
 import {
   broadcast,
-  findGameByPlayer,
   debouncedBroadcastOnlineList,
+  serializePlayers,
 } from "./utils.js";
-import { shoot, checkVictory, reloadWeapon, performDash } from "./game.js";
-import { checkAllReady } from "./matchmaking.js";
-import {
-  createRoom,
-  joinRoom,
-  leaveRoom,
-  markRoomReady,
-  removePlayerFromRooms,
-  findRoomByPlayer,
-} from "./room.js";
+import { shoot, reloadWeapon, performDash, addPlayerToGame, removePlayerFromGame } from "./game.js";
 import { WebSocket } from "ws";
 import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
 import { serialize, deserialize } from "./protocol.js";
 
 export function setupSocket() {
-  // Ping/pong heartbeat to detect dead connections
-  const HEARTBEAT_INTERVAL = 15_000; // 15 seconds
+  const HEARTBEAT_INTERVAL = 15_000;
 
   const heartbeat = setInterval(() => {
     wss.clients.forEach((ws) => {
       const ext = ws as WebSocket & { isAlive?: boolean };
       if (ext.isAlive === false) {
-        // Did not respond to last ping — terminate
         ext.terminate();
         return;
       }
@@ -44,24 +33,17 @@ export function setupSocket() {
   wss.on("connection", (ws) => {
     let player: Player | null = null;
 
-    // Mark alive on connect and on every pong
     const ext = ws as WebSocket & { isAlive?: boolean };
     ext.isAlive = true;
     ws.on("pong", () => { ext.isAlive = true; });
 
-    // Reject if too many concurrent connections
     if (wss.clients.size > 200) {
       ws.close(1013, "Server is full");
       return;
     }
 
-    // Send online list on connection
-    const onlineList = Array.from(allPlayers.values()).map((p) => ({
-      id: p.id,
-      username: p.username,
-      status: p.status,
-    }));
-    ws.send(serialize({ type: "onlineList", players: onlineList }));
+    // Send online player count
+    ws.send(serialize({ type: "onlineCount", count: allPlayers.size }));
 
     ws.on("message", (msg) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,7 +51,7 @@ export function setupSocket() {
       try {
         data = deserialize(msg as Buffer);
       } catch {
-        return; // Ignore malformed messages
+        return;
       }
       if (!data || typeof data.type !== "string") return;
 
@@ -81,40 +63,33 @@ export function setupSocket() {
           player.msgWindowStart = now;
         }
         player.msgCount++;
-        // Allow max 120 messages/second (generous for rapid-fire + movement)
         if (player.msgCount > 120) {
           player.violations++;
           if (player.violations >= 5) {
-            console.log(`🚫 Kicked ${player.username} for message flooding (${player.violations} violations)`);
+            console.log(`🚫 Kicked ${player.username} for message flooding`);
             ws.close(4001, "Rate limit exceeded");
             return;
           }
-          return; // Silently drop excess messages
+          return;
         }
       }
 
-      /* ================= LOGIN ================= */
+      /* ================= JOIN (enter game immediately) ================= */
 
-      if (data.type === "login") {
+      if (data.type === "join") {
         if (player !== null) return;
 
         let trimmed: string | undefined;
 
-        // Token-based login (returning user)
         if (data.token && typeof data.token === "string") {
           const user = getUserByToken(data.token);
-          if (user) {
-            trimmed = user.username;
-          } else {
-            ws.send(serialize({
-              type: "error",
-              message: "Sessão expirada. Faça login novamente.",
-            }));
+          if (user) trimmed = user.username;
+          else {
+            ws.send(serialize({ type: "error", message: "Session expired." }));
             return;
           }
         }
 
-        // Username-based login (new session — already registered via /api/register)
         if (!trimmed) {
           if (!data.username || typeof data.username !== "string") return;
           trimmed = data.username.trim();
@@ -129,20 +104,21 @@ export function setupSocket() {
         ) {
           ws.send(serialize({
             type: "error",
-            message: `Username must be ${GAME_CONFIG.USERNAME_MIN_LENGTH}-${GAME_CONFIG.USERNAME_MAX_LENGTH} characters (letters, numbers, underscores only).`,
+            message: `Username must be ${GAME_CONFIG.USERNAME_MIN_LENGTH}-${GAME_CONFIG.USERNAME_MAX_LENGTH} characters (letters, numbers, _).`,
           }));
           return;
         }
 
-        // Check for duplicate username (already online)
         const usernameTaken = Array.from(allPlayers.values()).some(
           (p) => p.username.toLowerCase() === username.toLowerCase()
         );
         if (usernameTaken) {
-          ws.send(serialize({
-            type: "error",
-            message: "Este nome já está em uso. Escolha outro.",
-          }));
+          ws.send(serialize({ type: "error", message: "Name already in use." }));
+          return;
+        }
+
+        if (!persistentGame) {
+          ws.send(serialize({ type: "error", message: "Server starting up..." }));
           return;
         }
 
@@ -162,27 +138,23 @@ export function setupSocket() {
           kills: 0,
           deaths: 0,
           score: 0,
-          ready: false,
+          ready: true,
           aimAngle: 0,
           weapon: "machinegun",
-          skin: 0,
+          skin: Number(data.skin) || 0,
           speedBoostUntil: 0,
           minigunUntil: 0,
           killStreak: 0,
           lastKilledBy: "",
-          // Powerup states
           shieldUntil: 0,
           invisibleUntil: 0,
           regenUntil: 0,
           lastRegenTick: 0,
-          // Armor
           armor: 0,
-          // Dash
           dashCooldownUntil: 0,
           dashUntil: 0,
           dashDirX: 0,
           dashDirY: 0,
-          // Anti-cheat
           msgCount: 0,
           msgWindowStart: Date.now(),
           violations: 0,
@@ -192,32 +164,42 @@ export function setupSocket() {
         allPlayers.set(player.id, {
           id: player.id,
           username: player.username,
-          status: "online",
+          status: "in-game",
           ws: player.ws,
         });
         debouncedBroadcastOnlineList();
 
-        console.log(`👤 ${username} logged in`);
+        addPlayerToGame(player, persistentGame);
 
-        // Send login success + room list
+        // Send full game state to joining player
         ws.send(serialize({
-          type: "loginSuccess",
+          type: "gameJoined",
           playerId: player.id,
           username,
+          players: serializePlayers(persistentGame),
+          obstacles: persistentGame.obstacles,
+          orbs: persistentGame.orbs.map((o) => [o.id, o.x, o.y]),
+          arenaWidth: GAME_CONFIG.ARENA_WIDTH,
+          arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
+          maxHp: GAME_CONFIG.PLAYER_HP,
         }));
 
-        const roomList = Array.from(rooms.values()).map((r) => ({
-          id: r.id,
-          name: r.name,
-          playerCount: r.players.length,
-          maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-        }));
-        ws.send(serialize({ type: "roomList", rooms: roomList }));
+        // Notify others
+        broadcast(persistentGame, {
+          type: "playerJoined",
+          username: player.username,
+          playerId: player.id,
+        });
+
+        // Broadcast updated count
+        const countMsg = serialize({ type: "onlineCount", count: allPlayers.size });
+        wss.clients.forEach((c) => {
+          try { if (c.readyState === WebSocket.OPEN) c.send(countMsg); } catch { /* ignore */ }
+        });
 
         return;
       }
 
-      // Allow leaderboard requests before login
       if (data.type === "getLeaderboard") {
         const stats = getLeaderboard(10);
         ws.send(serialize({ type: "leaderboard", stats }));
@@ -226,91 +208,21 @@ export function setupSocket() {
 
       if (!player) return;
 
-      /* ================= ROOM ACTIONS ================= */
+      /* ================= IN-GAME ACTIONS ================= */
 
-      if (data.type === "createRoom") {
-        createRoom(player);
+      const game = persistentGame;
+      if (!game) return;
+      if (!game.players.some((p) => p.id === player!.id)) return;
+
+      if (data.type === "chat") {
+        const chatMsg = String(data.message || "").trim().slice(0, 100);
+        if (!chatMsg) return;
+        broadcast(game, { type: "chatMessage", username: player.username, message: chatMsg });
         return;
       }
 
-      if (data.type === "joinRoom") {
-        if (!data.roomId) return;
-        joinRoom(player, data.roomId);
-        return;
-      }
-
-      if (data.type === "leaveRoom") {
-        leaveRoom(player);
-        // Send room list back to player
-        const roomList = Array.from(rooms.values()).map((r) => ({
-          id: r.id,
-          name: r.name,
-          playerCount: r.players.length,
-          maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-        }));
-        ws.send(serialize({ type: "roomList", rooms: roomList }));
-        return;
-      }
-
-      if (data.type === "roomReady") {
-        markRoomReady(player);
-        return;
-      }
-
-      if (data.type === "selectSkin") {
-        const skinIndex = Number(data.skin);
-        if (Number.isInteger(skinIndex) && skinIndex >= 0 && skinIndex <= 7) {
-          // Check if skin is already taken in the room
-          const room = findRoomByPlayer(player.id);
-          if (room) {
-            const skinTaken = room.players.some(
-              (p) => p.id !== player!.id && p.skin === skinIndex
-            );
-            if (skinTaken) {
-              ws.send(serialize({
-                type: "skinTaken",
-                message: "Essa skin já foi escolhida por outro jogador.",
-              }));
-              return;
-            }
-          }
-          player.skin = skinIndex;
-          // Broadcast room update so others see the skin change
-          if (room) {
-            // Build vote data
-            const playerVotes: Record<string, string> = {};
-            for (const [pid, vote] of room.gameModeVotes.entries()) {
-              playerVotes[pid] = vote;
-            }
-            const voteCounts: Record<string, number> = { random: 0, deathmatch: 0, lastManStanding: 0 };
-            for (const vote of room.gameModeVotes.values()) {
-              voteCounts[vote] = (voteCounts[vote] || 0) + 1;
-            }
-
-            const roomData = {
-              id: room.id,
-              name: room.name,
-              players: room.players.map((p) => ({
-                id: p.id,
-                username: p.username,
-                ready: p.ready,
-                skin: p.skin,
-              })),
-              maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-              timeRemaining: room.countdownStarted ? room.timeRemaining : null,
-              gameModeVotes: playerVotes,
-              gameModeCounts: voteCounts,
-            };
-            const msg = serialize({ type: "roomUpdate", room: roomData });
-            room.players.forEach((rp) => {
-              try {
-                if (rp.ws.readyState === WebSocket.OPEN) rp.ws.send(msg);
-              } catch { /* ignore */ }
-            });
-          }
-        }
-        return;
-      }
+      if (data.type === "reload") { reloadWeapon(player); return; }
+      if (data.type === "dash") { performDash(player); return; }
 
       if (data.type === "getMyStats") {
         const stats = getPlayerStats(player.username);
@@ -318,56 +230,22 @@ export function setupSocket() {
         return;
       }
 
-      /* ================= IN-GAME ACTIONS ================= */
-
-      const game = findGameByPlayer(player.id);
-
-      // Chat works in-game
-      if (data.type === "chat") {
-        if (!game) return;
-        const msg = String(data.message || "").trim().slice(0, 100);
-        if (!msg) return;
-        broadcast(game, {
-          type: "chatMessage",
-          username: player.username,
-          message: msg,
-        });
-        return;
-      }
-
-      if (!game) return;
-
-      if (data.type === "reload") {
-        reloadWeapon(player);
-        return;
-      }
-
-      if (data.type === "dash") {
-        performDash(player);
+      if (data.type === "selectSkin") {
+        const skinIndex = Number(data.skin);
+        if (Number.isInteger(skinIndex) && skinIndex >= 0 && skinIndex <= 7) {
+          player.skin = skinIndex;
+        }
         return;
       }
 
       const key = data.key as "w" | "a" | "s" | "d";
-      const type = data.type as
-        | "keydown"
-        | "keyup"
-        | "shoot"
-        | "ready"
-        | "aim"
-        | "switchWeapon";
+      const type = data.type as "keydown" | "keyup" | "shoot" | "aim" | "switchWeapon";
 
-      if (
-        type === "keydown" &&
-        (key === "w" || key === "a" || key === "s" || key === "d")
-      ) {
+      if (type === "keydown" && (key === "w" || key === "a" || key === "s" || key === "d")) {
         player.keys[key] = true;
         player.lastProcessedInput = data.sequence || 0;
       }
-
-      if (
-        type === "keyup" &&
-        (key === "w" || key === "a" || key === "s" || key === "d")
-      ) {
+      if (type === "keyup" && (key === "w" || key === "a" || key === "s" || key === "d")) {
         player.keys[key] = false;
         player.lastProcessedInput = data.sequence || 0;
       }
@@ -375,29 +253,19 @@ export function setupSocket() {
       if (type === "shoot") {
         let dirX = Number(data.dirX) || 0;
         let dirY = Number(data.dirY) || -1;
-        // Normalize direction vector to prevent speed-hacked bullets
         const mag = Math.sqrt(dirX * dirX + dirY * dirY);
-        if (mag > 0.001) {
-          dirX /= mag;
-          dirY /= mag;
-        } else {
-          dirX = 0;
-          dirY = -1;
-        }
+        if (mag > 0.001) { dirX /= mag; dirY /= mag; }
+        else { dirX = 0; dirY = -1; }
         shoot(player, game, dirX, dirY);
       }
 
       if (type === "aim") {
         const angle = Number(data.aimAngle);
-        if (Number.isFinite(angle)) {
-          player.aimAngle = angle;
-        }
+        if (Number.isFinite(angle)) player.aimAngle = angle;
       }
 
       if (type === "switchWeapon") {
-        // Can't switch weapons while minigun powerup is active
         if (player.weapon === "minigun") return;
-        // Cooldown: 250ms between switches
         const now = Date.now();
         if (now - player.lastWeaponSwitch < 250) return;
         player.lastWeaponSwitch = now;
@@ -407,124 +275,38 @@ export function setupSocket() {
           const currentIndex = WEAPON_CYCLE.indexOf(player.weapon);
           player.weapon = WEAPON_CYCLE[(currentIndex + 1) % WEAPON_CYCLE.length];
         }
-        // Cap ammo to the new weapon's magazine size
         const maxAmmo =
           player.weapon === "shotgun" ? GAME_CONFIG.SHOTGUN_AMMO :
           player.weapon === "sniper" ? GAME_CONFIG.SNIPER_AMMO :
           GAME_CONFIG.SHOTS_PER_MAGAZINE;
-        if (player.shots > maxAmmo) {
-          player.shots = maxAmmo;
-        }
-      }
-
-      if (type === "ready") {
-        player.ready = true;
-
-        const readyCount = game.players.filter((p) => p.ready).length;
-        const totalCount = game.players.length;
-
-        broadcast(game, {
-          type: "readyUpdate",
-          readyCount,
-          totalCount,
-        });
-
-        checkAllReady(game);
+        if (player.shots > maxAmmo) player.shots = maxAmmo;
       }
     });
 
     ws.on("error", (err) => {
       console.error(`⚠️ WebSocket error for ${player?.username || "unknown"}:`, err.message);
-      // The close event will fire after this, which handles cleanup
     });
 
     ws.on("close", () => {
       if (!player) return;
-
       console.log(`👋 ${player.username} disconnected`);
 
-      // Remove from room if in one
-      removePlayerFromRooms(player.id);
-
-      // Remove from allPlayers
       allPlayers.delete(player.id);
       debouncedBroadcastOnlineList();
 
-      // Remove from game if in one
-      const game = findGameByPlayer(player.id);
-      if (game) {
-        // Notify remaining players about the disconnect
-        broadcast(game, {
+      if (persistentGame) {
+        removePlayerFromGame(player.id, persistentGame);
+        broadcast(persistentGame, {
           type: "playerDisconnected",
           username: player.username,
           playerId: player.id,
         });
-
-        game.players = game.players.filter((p) => p.id !== player!.id);
-
-        if (game.started) {
-          // If only 1 or 0 players remain, end the game
-          if (game.players.length <= 1) {
-            if (game.players.length === 1) {
-              const lastPlayer = game.players[0];
-              // Award win to the last remaining player
-              broadcast(game, {
-                type: "end",
-                winnerName: lastPlayer.username,
-                scoreboard: game.players.map((p) => ({
-                  username: p.username,
-                  kills: p.kills,
-                  deaths: p.deaths,
-                  isWinner: p.id === lastPlayer.id,
-                })),
-                audioIndex: Math.floor(Math.random() * 8) + 1,
-              });
-
-              const tracked = allPlayers.get(lastPlayer.id);
-              if (tracked) tracked.status = "online";
-              debouncedBroadcastOnlineList();
-
-              // Send room list to remaining player
-              const roomList = Array.from(rooms.values()).map((r) => ({
-                id: r.id,
-                name: r.name,
-                playerCount: r.players.length,
-                maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-              }));
-              try {
-                if (lastPlayer.ws.readyState === WebSocket.OPEN) {
-                  lastPlayer.ws.send(serialize({ type: "roomList", rooms: roomList }));
-                }
-              } catch { /* ignore */ }
-            }
-
-            if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
-            if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
-            if (game.orbSpawnInterval) clearInterval(game.orbSpawnInterval);
-            if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
-            if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
-            if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
-            if (game.gameTimerTimeout) clearTimeout(game.gameTimerTimeout);
-            if (game.gameTimerInterval) clearInterval(game.gameTimerInterval);
-            games.delete(game.id);
-          } else {
-            checkVictory(game);
-          }
-        } else {
-          // Pre-game: if not enough players, clean up
-          if (game.players.length === 0) {
-            if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
-            if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
-            if (game.orbSpawnInterval) clearInterval(game.orbSpawnInterval);
-            if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
-            if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
-            if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
-            if (game.gameTimerTimeout) clearTimeout(game.gameTimerTimeout);
-            if (game.gameTimerInterval) clearInterval(game.gameTimerInterval);
-            games.delete(game.id);
-          }
-        }
       }
+
+      const countMsg = serialize({ type: "onlineCount", count: allPlayers.size });
+      wss.clients.forEach((c) => {
+        try { if (c.readyState === WebSocket.OPEN) c.send(countMsg); } catch { /* ignore */ }
+      });
     });
   });
 }

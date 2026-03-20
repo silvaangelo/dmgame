@@ -3,7 +3,7 @@ import path from "path";
 import compression from "compression";
 import { app, server } from "./server.js";
 import { setupSocket } from "./socket.js";
-import { startGameLoop } from "./game.js";
+import { startGameLoop, initPersistentGame } from "./game.js";
 import { initDatabase, registerUser, getUserByToken } from "./database.js";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -93,6 +93,7 @@ app.get("/{*splat}", (_req, res) => {
 initDatabase();
 setupSocket();
 startGameLoop();
+initPersistentGame();
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend running on http://0.0.0.0:${PORT}`);

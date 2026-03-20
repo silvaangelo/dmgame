@@ -30,8 +30,8 @@ const GAME_CONFIG = {
   KILLS_TO_WIN: 999,
   KNIFE_SPEED_BONUS: 1.5,
   PICKUP_SPEED_MULTIPLIER: 2.0,
-  VIEWPORT_WIDTH: 1400,
-  VIEWPORT_HEIGHT: 900,
+  VIEWPORT_WIDTH: window.innerWidth,
+  VIEWPORT_HEIGHT: window.innerHeight,
 };
 
 // Camera state
@@ -138,8 +138,8 @@ let players = [];
 let bullets = [];
 let obstacles = [];
 let pickups = [];
-let mouseX = 700;
-let mouseY = 450;
+let mouseX = window.innerWidth / 2;
+let mouseY = window.innerHeight / 2;
 let previousBulletCount = 0;
 let wasReloading = false;
 let explosions = [];
@@ -176,11 +176,6 @@ let killEffects = [];
 // Death animation particles (replaces instant despawn)
 let deathAnimations = [];
 
-// Celebration system (match end explosions + audio)
-let celebrationInterval = null;
-let celebrationIsWinner = false;
-let victoryCountdownInterval = null;
-
 // Dynamic arena zone (shrinking safe zone)
 let arenaZone = null; // { x, y, w, h } or null if not active
 let zoneWarningShown = false;
@@ -198,10 +193,6 @@ let dashTrails = [];
 
 // Orbs (slither-style collectible points)
 let orbs = [];
-
-// Game timer
-let gameTimerRemaining = 600; // seconds
-let gameDuration = 600000; // ms
 
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
@@ -237,10 +228,8 @@ const KILL_FEED_MAX = 5;
 
 // Skins
 let selectedSkin = 0;
-let currentRoomData = null;
 let currentGameMode = "deathmatch"; // single mode
-let myGameModeVote = null; // local player's vote
-let maxHp = 4; // updated from server on game start (LMS uses 20)
+let maxHp = 4; // updated from server on game start
 
 // Viral phrases
 const WINNER_PHRASES = [
@@ -303,26 +292,14 @@ let lastShootTime = 0;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// Responsive canvas sizing — canvas is viewport-sized, not arena-sized
+// Responsive canvas sizing — canvas fills the entire screen
 function resizeCanvas() {
-  const hudEl = document.getElementById("gameUI");
-  const hudH = hudEl && hudEl.offsetHeight ? hudEl.offsetHeight : 0;
-  const maxW = window.innerWidth * 0.92;
-  const maxH = (window.innerHeight * 0.92) - hudH;
-  const viewAspect = GAME_CONFIG.VIEWPORT_WIDTH / GAME_CONFIG.VIEWPORT_HEIGHT;
-  let displayW, displayH;
-  if (maxW / maxH > viewAspect) {
-    displayH = maxH;
-    displayW = maxH * viewAspect;
-  } else {
-    displayW = maxW;
-    displayH = maxW / viewAspect;
-  }
-  canvas.style.width = displayW + "px";
-  canvas.style.height = displayH + "px";
-  // Canvas internal resolution = viewport size
+  GAME_CONFIG.VIEWPORT_WIDTH = window.innerWidth;
+  GAME_CONFIG.VIEWPORT_HEIGHT = window.innerHeight;
   canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
   canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
   gridCanvas = null; // Invalidate cached grid
 }
 window.addEventListener("resize", resizeCanvas);
@@ -1513,398 +1490,28 @@ function stopReadyAlarm() {
 
 let previousHP = 3;
 
-// Return to lobby (called from victory countdown or Voltar button)
-function returnToLobby() {
-  if (victoryCountdownInterval) { clearInterval(victoryCountdownInterval); victoryCountdownInterval = null; }
-
-  // Hide victory screen and game UI
-  document.getElementById("victoryScreen").style.display = "none";
-  document.getElementById("gameArea").style.display = "none";
-  document.getElementById("gameUI").style.display = "none";
-  document.getElementById("playerList").style.display = "none";
-  document.getElementById("readyScreen").style.display = "none";
-  document.getElementById("killFeed").style.display = "none";
-
-  // Hide mobile controls
-  const mobileCtrl = document.getElementById("mobileControls");
-  if (mobileCtrl) mobileCtrl.classList.remove("active");
-
-  // Show lobby-only elements again
-  const ghLink = document.querySelector(".github-footer-link");
-  if (ghLink) ghLink.style.display = "";
-
-  // Show room list (player stays logged in)
-  document.getElementById("lobbyLayout").style.display = "";
-  document.getElementById("roomListScreen").style.display = "block";
-  const igcLobby = document.getElementById("inGameControls");
-  if (igcLobby) { igcLobby.style.display = "none"; igcLobby.classList.remove("faded"); clearTimeout(igcLobby._fadeTimer); }
-
-  // Reset game state
-  players = [];
-  bullets = [];
-  pickups = [];
-  explosions = [];
-  bloodParticles = [];
-  bloodStains = [];
-  muzzleFlashes = [];
-  knifeSlashes = [];
-  shellCasings = [];
-  impactSparks = [];
-  dustClouds = [];
-  hitMarkers = [];
-  damageIndicators = [];
-  activeBombs = [];
-  bombExplosions = [];
-  activeLightnings = [];
-  lightningBolts = [];
-  killEffects = [];
-  deathAnimations = [];
-  flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
-  pageFlashIntensity = 0;
-  document.body.style.filter = "";
-  if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
-  previousBulletPositions.clear();
-  screenShake = { intensity: 0, decay: 0.92 };
-  currentRoomData = null;
-  killFeedEntries = [];
-  killFeedDirty = true;
-  obstacleCanvasDirty = true;
-  _cachedDOM = null;
-  previousPlayerStates.clear();
-  gameReady = false;
-  currentGameMode = "deathmatch";
-  myGameModeVote = null;
-  floatingNumbers = [];
-  lowHPPulseTime = 0;
-  lowHPVignetteGradient = null;
-  arenaZone = null;
-  zoneWarningShown = false;
-  zoneClouds = [];
-  lootCrates = [];
-  crateDestroyEffects = [];
-  dashCooldownUntil = 0;
-  dashTrails = [];
-  orbs = [];
-  gameTimerRemaining = 600;
-  stopHeartbeat();
-  stopAllGameSounds();
-  gameEnded = false;
-  lastKilledByUsername = "";
-  pendingDeathWeapon.clear();
-
-  // Remove any active toasts
-  activeToasts.forEach((t) => t.remove());
-  activeToasts = [];
-}
-
-// Skip victory screen instantly (Voltar button)
-function skipVictoryScreen() {
-  returnToLobby();
-}
-
-// Confirm ready button click
-function confirmReady() {
-  if (!ws) return;
-
-  // Stop alarm
-  stopReadyAlarm();
-
-  // Disable button
-  const readyButton = document.getElementById("readyButton");
-  readyButton.disabled = true;
-  readyButton.style.opacity = "0.4";
-  readyButton.style.background = "#2a3a2a";
-  readyButton.textContent = "PRONTO ✓";
-
-  // Send ready to server
-  ws.send(serialize({ type: "ready" }));
-}
-
-// Update ready status display
-function updateReadyStatus(readyCount, totalCount) {
-  const waitingMsg = document.getElementById("waitingForPlayers");
-  if (waitingMsg && readyCount !== undefined && totalCount !== undefined) {
-    const waiting = totalCount - readyCount;
-    if (waiting > 0) {
-      waitingMsg.textContent = `Esperando ${waiting} jogador${waiting > 1 ? "es" : ""}...`;
-      waitingMsg.style.fontSize = "16px";
-      waitingMsg.style.fontWeight = "normal";
-      waitingMsg.style.color = "#7a9a7a";
-    } else {
-      waitingMsg.textContent = "Todos prontos! Iniciando...";
-      waitingMsg.style.fontSize = "16px";
-      waitingMsg.style.fontWeight = "600";
-      waitingMsg.style.color = "#4ad94a";
-    }
-  }
-}
-
-// Update global online list panel (visible on all screens)
-function updateGlobalOnlineList(onlinePlayers) {
-  const content = document.getElementById("globalOnlineContent");
-  const countEl = document.getElementById("globalOnlineCount");
-  if (!content) return;
-
-  if (countEl) countEl.textContent = onlinePlayers ? onlinePlayers.length : 0;
-
-  if (!onlinePlayers || onlinePlayers.length === 0) {
-    content.innerHTML =
-      '<p style="color: #8aaa8a; font-style: italic; font-size: 14px;">Nenhum jogador online</p>';
-    return;
-  }
-
-  const statusColors = {
-    online: "#4ad94a",
-    "in-room": "#d9a04a",
-    "in-game": "#d94a4a",
-  };
-  const statusLabels = {
-    online: "Online",
-    "in-room": "Na Sala",
-    "in-game": "Jogando",
-  };
-
-  const html = onlinePlayers
-    .map((p) => {
-      const color = statusColors[p.status] || "#6a8a6a";
-      const label = statusLabels[p.status] || p.status;
-      const isMe = p.id === playerId;
-      return `
-      <div style="padding: 4px 7px; margin: 2px 0; border-radius: 2px; display: flex; justify-content: space-between; align-items: center; background: ${isMe ? "rgba(74,138,74,0.1)" : "rgba(255,255,255,0.02)"};">
-        <span style="font-weight: ${isMe ? "600" : "400"}; color: ${isMe ? "#bbddbb" : "#a0b8a0"}; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; font-family: 'Rajdhani', sans-serif;">${esc(p.username)}${isMe ? "" : ""}</span>
-        <span style="font-size: 11px; color: ${color}; display: flex; align-items: center; gap: 3px; white-space: nowrap; font-family: 'Share Tech Mono', monospace;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: ${color}; display: inline-block;"></span>
-          ${label}
-        </span>
-      </div>
-    `;
-    })
-    .join("");
-
-  content.innerHTML = html;
-}
-
-// Update player list UI
-let lastPlayerListUpdate = 0;
-function updatePlayerList() {
-  const now = Date.now();
-  if (now - lastPlayerListUpdate < 250) return;
-  lastPlayerListUpdate = now;
-
-  const listContent = getCachedDOM().playerListContent;
-  if (!listContent) return;
-
-  const playerHTML = players
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .map((p, index) => {
-      const isMe = p.id === playerId;
-      const isDead = p.hp <= 0;
-      const isLeading = index === 0 && (p.score || 0) > 0;
-      const score = p.score || 0;
-      // Progress bar — normalize to highest player score or 50, whichever is bigger
-      const maxScore = Math.max(50, ...players.map(pp => pp.score || 0));
-      const scoreProgress = Math.min(100, (score / maxScore) * 100);
-      return `
-        <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px;">
-          <div style="font-weight: ${isMe ? "bold" : "normal"}; color: ${isDead ? "#666" : "#f0f0f0"}; margin-bottom: 5px; font-size: 18px; font-family: 'Rajdhani', sans-serif;">
-            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(You)" : ""} ${isDead ? "💀" : ""}
-          </div>
-          <div style="font-size: 15px; display: flex; gap: 10px; font-family: 'Share Tech Mono', monospace;">
-            <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= Math.ceil(maxHp * 0.5) ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/${maxHp}</span>
-            <span style="color: #ffcc00;">⭐ ${score} pts</span>
-            <span style="color: #ffaa44;">🎯 ${p.kills}</span>
-          </div>
-          <div style="margin-top: 5px; background: #1a1f14; border-radius: 2px; height: 4px; overflow: hidden;">
-            <div style="width: ${scoreProgress}%; height: 100%; background: linear-gradient(90deg, #ff6b35, #ffcc00);"></div>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-
-  listContent.innerHTML = playerHTML;
-}
-
-// ===== MOUSE & SHOOTING =====
-
-// Track mouse position for aiming
-let lastAimSendTime = 0;
-canvas.addEventListener("mousemove", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  // Screen-space mouse position
-  mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-  mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-  // Send aim direction to server (throttled — 33ms = ~30 updates/sec max)
-  const now = Date.now();
-  if (ws && playerId && gameReady && now - lastAimSendTime > 33) {
-    const player = players.find((p) => p.id === playerId);
-    if (player) {
-      // Convert screen mouse to world coordinates for aiming
-      const worldMouseX = mouseX + cameraX;
-      const worldMouseY = mouseY + cameraY;
-      const aimAngle = Math.atan2(worldMouseY - predictedY, worldMouseX - predictedX);
-      ws.send(serialize({ type: "aim", aimAngle }));
-      lastAimSendTime = now;
-    }
-  }
-});
-
-// Hold to shoot - track mouse state
-canvas.addEventListener("mousedown", (e) => {
-  if (e.button === 0) {
-    // Left click only
-    isMouseDown = true;
-  }
-});
-
-canvas.addEventListener("mouseup", (e) => {
-  if (e.button === 0) {
-    isMouseDown = false;
-  }
-});
-
-canvas.addEventListener("mouseleave", () => {
-  isMouseDown = false;
-});
-
-// Shooting function (called from game loop)
-function tryShoot() {
-  if (!ws || !playerId || !gameReady || !isMouseDown) return;
-
-  const player = players.find((p) => p.id === playerId);
-  if (!player) return;
-
-  // Check cooldown based on weapon
-  const now = Date.now();
-  const cooldown = WEAPON_COOLDOWNS[player.weapon] || 200;
-  if (now - lastShootTime < cooldown) return;
-
-  if (
-    player.weapon === "knife" ||
-    player.weapon === "minigun" ||
-    (player.shots > 0 && !player.reloading)
-  ) {
-    // Use predicted position for more accurate shooting
-    const playerX = predictedX;
-    const playerY = predictedY;
-
-    // Calculate direction to mouse (convert screen mouse to world coords)
-    const worldMouseX = mouseX + cameraX;
-    const worldMouseY = mouseY + cameraY;
-    const dx = worldMouseX - playerX;
-    const dy = worldMouseY - playerY;
-    const length = Math.sqrt(dx * dx + dy * dy);
-
-    // Normalize direction
-    let dirX = dx / length;
-    let dirY = dy / length;
-
-    // Apply client-side recoil prediction
-    if (player.weapon === "machinegun" || player.weapon === "minigun") {
-      const recoil = player.weapon === "minigun" ? 0.15 : 0.12;
-      const recoilAngle = (Math.random() - 0.5) * 2 * recoil;
-      const cos = Math.cos(recoilAngle);
-      const sin = Math.sin(recoilAngle);
-      const newDirX = dirX * cos - dirY * sin;
-      const newDirY = dirX * sin + dirY * cos;
-      dirX = newDirX;
-      dirY = newDirY;
-    }
-
-    // Create visual effect based on weapon
-    if (player.weapon === "knife") {
-      const aimAngle = Math.atan2(dirY, dirX);
-      createKnifeSlash(playerX, playerY, aimAngle);
-      playKnifeSound(playerX, playerY);
-    } else {
-      createMuzzleFlash(playerX, playerY, dirX, dirY);
-      if (player.weapon !== "knife") {
-        createShellCasing(playerX, playerY, Math.atan2(dirY, dirX));
-      }
-      // Screen shake on shotgun shot (recoil feel)
-      if (player.weapon === "shotgun") triggerScreenShake(6);
-      if (player.weapon === "minigun") triggerScreenShake(2);
-      if (player.weapon === "sniper") triggerScreenShake(8);
-    }
-
-    // Client-side bullet prediction (instant visual feedback)
-    if (player.weapon !== "knife") {
-      const bulletSpeed =
-        player.weapon === "machinegun" ? 9 :
-        player.weapon === "shotgun" ? 8 :
-        player.weapon === "sniper" ? 16 : 9;
-
-      if (player.weapon === "shotgun") {
-        // Predict 6 pellets
-        for (let i = 0; i < 6; i++) {
-          const spreadAngle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 0.9;
-          const pDirX = Math.cos(spreadAngle);
-          const pDirY = Math.sin(spreadAngle);
-          const pb = {
-            id: "predicted_" + Date.now() + "_" + i,
-            x: playerX, y: playerY,
-            dx: pDirX * bulletSpeed, dy: pDirY * bulletSpeed,
-            weapon: "shotgun", predicted: true,
-          };
-          bullets.push(pb);
-          setTimeout(() => { bullets = bullets.filter((b) => b.id !== pb.id); }, 80);
-        }
-      }  else {
-        const predictedBullet = {
-          id: "predicted_" + Date.now(),
-          x: playerX, y: playerY,
-          dx: dirX * bulletSpeed, dy: dirY * bulletSpeed,
-          weapon: player.weapon, predicted: true,
-        };
-        bullets.push(predictedBullet);
-        setTimeout(() => { bullets = bullets.filter((b) => b.id !== predictedBullet.id); }, 100);
-      }
-    }
-
-    ws.send(serialize({ type: "shoot", dirX, dirY }));
-    lastShootTime = now;
-  }
-}
-
-// ===== NETWORKING =====
+// ===== SESSION MANAGEMENT =====
 
 let loggedInUsername = "";
-let loggedIn = false;
 let sessionToken = "";
-
-// ===== SESSION PERSISTENCE =====
 
 function saveSession(token, username) {
   sessionToken = token;
   loggedInUsername = username;
-
-  // Save to localStorage
   try {
     localStorage.setItem("dm_token", token);
     localStorage.setItem("dm_username", username);
   } catch { /* private browsing */ }
-
-  // Save to cookie (30 days, HttpOnly not possible from JS but use Secure + SameSite)
   document.cookie = `dm_token=${token}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Strict; Secure`;
-
-  // Clear any legacy URL hash
-  if (window.location.hash) {
-    history.replaceState(null, "", window.location.pathname);
-  }
 }
 
 function loadSavedToken() {
-  // Try localStorage first
   try {
     const token = localStorage.getItem("dm_token");
     if (token) return token;
   } catch { /* private browsing */ }
-
-  // Try cookie
   const match = document.cookie.match(/dm_token=([a-f0-9]+)/);
   if (match) return match[1];
-
   return null;
 }
 
@@ -1938,383 +1545,381 @@ async function apiRegister(username) {
   return data;
 }
 
+// ===== SHOW/HIDE SCREENS =====
+
+function showStartScreen() {
+  document.getElementById("startScreen").style.display = "flex";
+  canvas.style.display = "none";
+  document.getElementById("gameUI").style.display = "none";
+  document.getElementById("leaderboard").style.display = "none";
+  document.getElementById("killFeed").style.display = "none";
+  document.getElementById("playerList").style.display = "none";
+  const deathOv = document.getElementById("deathOverlay");
+  if (deathOv) deathOv.style.display = "none";
+  const mobileCtrl = document.getElementById("mobileControls");
+  if (mobileCtrl) mobileCtrl.classList.remove("active");
+
+  // Reset game state
+  players = [];
+  bullets = [];
+  pickups = [];
+  explosions = [];
+  bloodParticles = [];
+  bloodStains = [];
+  muzzleFlashes = [];
+  knifeSlashes = [];
+  shellCasings = [];
+  impactSparks = [];
+  dustClouds = [];
+  hitMarkers = [];
+  damageIndicators = [];
+  activeBombs = [];
+  activeLightnings = [];
+  killEffects = [];
+  deathAnimations = [];
+  flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+  previousBulletPositions.clear();
+  screenShake = { intensity: 0, decay: 0.92 };
+  killFeedEntries = [];
+  killFeedDirty = true;
+  obstacleCanvasDirty = true;
+  _cachedDOM = null;
+  previousPlayerStates.clear();
+  gameReady = false;
+  floatingNumbers = [];
+  lowHPPulseTime = 0;
+  arenaZone = null;
+  zoneWarningShown = false;
+  zoneClouds = [];
+  lootCrates = [];
+  crateDestroyEffects = [];
+  dashCooldownUntil = 0;
+  dashTrails = [];
+  orbs = [];
+  stopHeartbeat();
+  stopAllGameSounds();
+  lastKilledByUsername = "";
+  pendingDeathWeapon.clear();
+}
+
+function enterGame(data) {
+  // Hide start screen, show game
+  document.getElementById("startScreen").style.display = "none";
+  canvas.style.display = "block";
+  document.getElementById("gameUI").style.display = "block";
+  document.getElementById("leaderboard").style.display = "block";
+  document.getElementById("killFeed").style.display = "flex";
+
+  // Set up game state from server
+  playerId = data.playerId;
+  loggedInUsername = data.username;
+  players = data.players || [];
+  obstacles = data.obstacles || [];
+  orbs = (data.orbs || []).map(function(o) {
+    if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
+    return o;
+  });
+
+  if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
+  if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
+  if (data.maxHp) maxHp = data.maxHp;
+
+  obstacleCanvasDirty = true;
+  _cachedDOM = null;
+  gameReady = true;
+
+  resizeCanvas();
+
+  // Initialize audio system on first user interaction
+  initAudio();
+
+  // Find local player and set predicted position
+  const localP = players.find(function(p) { return p.id === playerId; });
+  if (localP) {
+    predictedX = localP.x;
+    predictedY = localP.y;
+  }
+
+  // Initialize mobile controls
+  initMobileControls();
+
+  playSound("matchstart", 0.5);
+  showToast("🔥 ENTERED THE ARENA! 🔥", "#ff6b35");
+}
+
+// ===== SCOREBOARD =====
+
+function updatePlayerList() {
+  const content = document.getElementById("playerListContent");
+  if (!content) return;
+
+  const sorted = [...players]
+    .filter(function(p) { return p.username; })
+    .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+
+  const medals = ["🥇", "🥈", "🥉"];
+  content.innerHTML = sorted
+    .map(function(p, i) {
+      const isMe = p.id === playerId;
+      const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(1) : p.kills.toFixed(1);
+      const hpPct = Math.round((p.hp / maxHp) * 100);
+      const dead = p.hp <= 0;
+      const medal = i < 3 ? medals[i] : (i + 1) + ".";
+      return '<div class="pl-row' + (isMe ? " me" : "") + (dead ? " dead" : "") + '">' +
+        '<span class="pl-rank">' + medal + '</span>' +
+        '<span class="pl-name">' + esc(p.username) + '</span>' +
+        '<span class="pl-stats">⭐' + (p.score || 0) + ' | ' + p.kills + 'K/' + p.deaths + 'D (' + kd + ') | ' + (dead ? '💀' : '❤️' + hpPct + '%') + '</span>' +
+        '</div>';
+    })
+    .join("");
+}
+
+// ===== IN-GAME LEADERBOARD OVERLAY =====
+
+function updateLeaderboardOverlay() {
+  if (!gameReady) return;
+  const list = document.getElementById("leaderboardList");
+  if (!list) return;
+
+  const sorted = [...players]
+    .filter(function(p) { return p.username && p.hp !== undefined; })
+    .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+
+  const top = sorted.slice(0, 10);
+  const localIdx = sorted.findIndex(function(p) { return p.id === playerId; });
+
+  let html = "";
+  top.forEach(function(p, i) {
+    const isMe = p.id === playerId;
+    html += '<div class="lb-row' + (isMe ? " lb-me" : "") + '">' +
+      '<span class="lb-rank">' + (i + 1) + '.</span>' +
+      '<span class="lb-name">' + esc(p.username) + '</span>' +
+      '<span class="lb-score">' + (p.score || 0) + '</span>' +
+      '</div>';
+  });
+
+  // Show local player position if not in top 10
+  if (localIdx >= 10) {
+    const me = sorted[localIdx];
+    html += '<div class="lb-divider">···</div>';
+    html += '<div class="lb-row lb-me">' +
+      '<span class="lb-rank">' + (localIdx + 1) + '.</span>' +
+      '<span class="lb-name">' + esc(me.username) + '</span>' +
+      '<span class="lb-score">' + (me.score || 0) + '</span>' +
+      '</div>';
+  }
+
+  list.innerHTML = html;
+}
+
+// ===== SHOOTING =====
+
+function tryShoot() {
+  if (!isMouseDown || !gameReady) return;
+  const localPlayer = players.find(function(p) { return p.id === playerId; });
+  if (!localPlayer || localPlayer.hp <= 0) return;
+
+  const weapon = localPlayer.weapon || "machinegun";
+  const cooldowns = WEAPON_COOLDOWNS;
+  const cooldown = cooldowns[weapon] || 100;
+  const now = Date.now();
+  if (now - lastShootTime < cooldown) return;
+  lastShootTime = now;
+
+  const worldMouseX = mouseX + cameraX;
+  const worldMouseY = mouseY + cameraY;
+  let dirX = worldMouseX - predictedX;
+  let dirY = worldMouseY - predictedY;
+  const mag = Math.sqrt(dirX * dirX + dirY * dirY);
+  if (mag > 0.001) { dirX /= mag; dirY /= mag; }
+  else { dirX = 0; dirY = -1; }
+
+  // Apply aim assist
+  const rawAngle = Math.atan2(dirY, dirX);
+  const assistedAngle = getAimAssistAngle(rawAngle);
+  dirX = Math.cos(assistedAngle);
+  dirY = Math.sin(assistedAngle);
+
+  ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
+
+  // Client-side muzzle flash and effects
+  if (weapon === "knife") {
+    const knifeAngle = Math.atan2(dirY, dirX);
+    createKnifeSlash(predictedX, predictedY, knifeAngle);
+    playKnifeSound(predictedX, predictedY);
+    triggerScreenShake(2);
+  } else {
+    const flashX = predictedX + dirX * 30;
+    const flashY = predictedY + dirY * 30;
+    createMuzzleFlash(flashX, flashY, dirX, dirY);
+
+    // Shell casing
+    const casingAngle = Math.atan2(dirY, dirX) + Math.PI / 2;
+    createShellCasing(predictedX, predictedY, casingAngle);
+
+    // Client-side predicted bullet (removed on next server state)
+    const speed = weapon === "sniper" ? 30 : 15;
+    bullets.push({
+      id: "predicted-" + Math.random().toString(36).slice(2),
+      x: predictedX + dirX * 20,
+      y: predictedY + dirY * 20,
+      dx: dirX * speed,
+      dy: dirY * speed,
+      weapon: weapon,
+      predicted: true,
+    });
+
+    // Screen shake
+    const shakeAmount = weapon === "shotgun" ? 5 : weapon === "sniper" ? 4 : weapon === "minigun" ? 1.5 : 2;
+    triggerScreenShake(shakeAmount);
+
+    // Shot sound
+    if (weapon === "shotgun") {
+      playPositionalSound("shotgun-shot", predictedX, predictedY, 0.6);
+    } else if (weapon === "sniper") {
+      playPositionalSound("sniper-shot", predictedX, predictedY, 0.6);
+    } else {
+      const shotIdx = Math.floor(Math.random() * 5) + 1;
+      playPositionalSound("machinegun-" + shotIdx, predictedX, predictedY, 0.35);
+    }
+  }
+}
+
 // ===== WEBSOCKET CONNECTION =====
 
-function connectSpectator() {
+function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
 
-  ws.onopen = () => {
-    // If we have a pending login, send it now
-    if (loggedInUsername && !loggedIn) {
-      if (sessionToken) {
-        ws.send(serialize({ type: "login", token: sessionToken }));
-      } else {
-        ws.send(serialize({ type: "login", username: loggedInUsername }));
-      }
-    }
+  ws.onopen = function() {
+    console.log("WebSocket connected");
   };
 
-  ws.onclose = () => {
-    // Reconnect spectator if not logged in
-    if (!loggedIn) {
-      setTimeout(connectSpectator, 3000);
-    }
-  };
-
-  setupWsMessageHandler();
-}
-
-async function login() {
-  const username = document.getElementById("username").value;
-  const loginButton = document.querySelector("#menu button");
-  const errorElement = document.getElementById("usernameError");
-
-  const trimmed = username.trim();
-  const usernamePattern = /^[a-zA-Z0-9_]+$/;
-  const minLen = 2;
-  const maxLen = 16;
-
-  if (!trimmed) {
-    errorElement.textContent = "⚠ Digite um codinome!";
-    errorElement.style.display = "block";
-    return;
-  }
-  if (trimmed.length < minLen || trimmed.length > maxLen) {
-    errorElement.textContent = `⚠ O codinome deve ter ${minLen}-${maxLen} caracteres.`;
-    errorElement.style.display = "block";
-    return;
-  }
-  if (!usernamePattern.test(trimmed)) {
-    errorElement.textContent = "⚠ Só letras, números e underline são permitidos.";
-    errorElement.style.display = "block";
-    return;
-  }
-
-  // Hide error if username is valid
-  errorElement.style.display = "none";
-
-  // Prevent double login
-  if (loggedIn) return;
-
-  // Disable button to prevent double-clicks
-  loginButton.disabled = true;
-  loginButton.style.opacity = "0.6";
-  loginButton.textContent = "Conectando...";
-
-  // Register via API first to get token
-  try {
-    await apiRegister(trimmed);
-  } catch (err) {
-    errorElement.textContent = "⚠ " + err.message;
-    errorElement.style.display = "block";
-    loginButton.disabled = false;
-    loginButton.style.opacity = "1";
-    loginButton.textContent = "ENTRAR";
-    return;
-  }
-
-  loggedInUsername = trimmed;
-
-  // Send WS login with token
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(serialize({ type: "login", token: sessionToken }));
-  } else {
-    connectSpectator();
-  }
-}
-
-function setupWsMessageHandler() {
-  ws.onmessage = (e) => {
+  ws.onmessage = function(e) {
     const data = deserialize(e.data);
+    if (!data || !data.type) return;
 
-    if (data.type === "error") {
-      const errorEl = document.getElementById("usernameError");
-      errorEl.textContent = "⚠ " + data.message;
-      errorEl.style.display = "block";
-      const loginButton = document.querySelector("#menu button");
-      if (loginButton) {
-        loginButton.disabled = false;
-        loginButton.style.opacity = "1";
-        loginButton.textContent = "ENTRAR";
-      }
-      loggedInUsername = "";
+    // ===== ONLINE COUNT =====
+    if (data.type === "onlineCount") {
+      const el = document.getElementById("onlineNumber");
+      if (el) el.textContent = data.count || 0;
       return;
     }
 
-    if (data.type === "onlineList") {
-      updateGlobalOnlineList(data.players);
-    }
-
-    if (data.type === "loginSuccess") {
-      playerId = data.playerId;
-      loggedIn = true;
-      // Show room list screen
-      document.getElementById("menu").style.display = "none";
-      document.getElementById("roomListScreen").style.display = "block";
-      // Fetch leaderboard to populate top 3
-      requestLeaderboard();
-    }
-
-    if (data.type === "roomList") {
-      updateRoomList(data.rooms);
-    }
-
-    if (data.type === "roomJoined") {
-      currentRoomData = data.room;
-      // Sync selectedSkin with the server-assigned skin
-      const localInRoom = data.room.players.find((p) => p.id === playerId);
-      if (localInRoom && localInRoom.skin !== undefined) selectedSkin = localInRoom.skin;
-      showRoomScreen(data.room);
-    }
-
-    if (data.type === "roomUpdate") {
-      currentRoomData = data.room;
-      // Keep selectedSkin in sync with server
-      const localInUpdate = data.room.players.find((p) => p.id === playerId);
-      if (localInUpdate && localInUpdate.skin !== undefined) selectedSkin = localInUpdate.skin;
-      updateRoomScreen(data.room);
-      initSkinSelector();
-    }
-
-    if (data.type === "roomCountdown") {
-      const el = document.getElementById("roomCountdown");
-      if (el) {
-        el.textContent = `⏰ Jogo começa em ${data.timeRemaining}s`;
-        if (data.timeRemaining <= 10) {
-          el.style.color = "#ff6b35";
-        } else {
-          el.style.color = "#d9a04a";
-        }
+    // ===== ERROR =====
+    if (data.type === "error") {
+      const errorEl = document.getElementById("usernameError");
+      if (errorEl) {
+        errorEl.textContent = "⚠ " + data.message;
+        errorEl.style.display = "block";
       }
-    }
-
-    if (data.type === "roomKicked") {
-      // Kicked from room (wasn't ready in time)
-      document.getElementById("roomScreen").style.display = "none";
-      document.getElementById("roomListScreen").style.display = "block";
-    }
-
-    if (data.type === "start") {
-      document.getElementById("roomScreen").style.display = "none";
-      document.getElementById("roomListScreen").style.display = "none";
-      document.getElementById("menu").style.display = "none";
-      document.getElementById("lobbyLayout").style.display = "none";
-      document.getElementById("gameArea").style.display = "flex";
-      document.getElementById("gameUI").style.display = "block";
-      document.getElementById("killFeed").style.display = "flex";
-      document.getElementById("readyScreen").style.display = "block";
-      // Hide lobby-only elements
-      const ghLink = document.querySelector(".github-footer-link");
-      if (ghLink) ghLink.style.display = "none";
-
-      players = data.players;
-      obstacles = data.obstacles || [];
-      const localP = players.find((p) => p.username === loggedInUsername);
-      if (localP) playerId = localP.id;
-      gameReady = false;
-      currentGameMode = data.gameMode || "deathmatch";
-      myGameModeVote = null; // Reset vote for next round
-      if (data.maxHp) maxHp = data.maxHp;
-      obstacleCanvasDirty = true;
-      _cachedDOM = null; // Refresh cached DOM references
-
-      // Update arena dimensions from server
-      if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
-      if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
-      if (data.gameDuration) gameDuration = data.gameDuration;
-      gameTimerRemaining = Math.ceil(gameDuration / 1000);
-      canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
-      canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
-      gridCanvas = null; // Invalidate cached grid
-      resizeCanvas();
-
-      // Initialize audio system
-      initAudio();
-
-      // Hide ready button — match auto-starts
-      const readyButton = document.getElementById("readyButton");
-      readyButton.style.display = "none";
-
-      // Show "preparing" message
-      const waitingMsg = document.getElementById("waitingForPlayers");
-      if (waitingMsg) {
-        waitingMsg.textContent = "Preparando partida...";
-        waitingMsg.style.fontSize = "20px";
-        waitingMsg.style.color = "#d9a04a";
+      const playBtn = document.getElementById("playBtn");
+      if (playBtn) {
+        playBtn.disabled = false;
+        playBtn.style.opacity = "1";
+        playBtn.textContent = "▶ PLAY";
       }
-
-      // Initialize predicted position
-      const player = players.find((p) => p.id === playerId);
-      if (player) {
-        predictedX = player.x;
-        predictedY = player.y;
-      }
-
-      // Update waiting message
-      updateReadyStatus();
+      return;
     }
 
-    if (data.type === "readyUpdate") {
-      updateReadyStatus(data.readyCount, data.totalCount);
+    // ===== GAME JOINED (enter the arena) =====
+    if (data.type === "gameJoined") {
+      enterGame(data);
+      return;
     }
 
-    if (data.type === "preGameCountdown") {
-      const el = document.getElementById("preGameTimer");
-      if (el) {
-        el.textContent = `⏰ Auto-início em ${data.timeRemaining}s`;
-        if (data.timeRemaining <= 5) {
-          el.style.color = "#ff6b35";
-        }
-      }
+    // ===== PLAYER JOINED/LEFT =====
+    if (data.type === "playerJoined") {
+      showToast("➕ " + esc(data.username) + " joined", "#44bbff");
+      return;
     }
 
-    if (data.type === "countdown") {
-      // Show countdown overlay
-      const waitingMsg = document.getElementById("waitingForPlayers");
-      if (waitingMsg) {
-        waitingMsg.textContent = `Começando em ${data.countdown}...`;
-        waitingMsg.style.fontSize = "26px";
-        waitingMsg.style.fontWeight = "700";
-        waitingMsg.style.color = "#ff6b35";
-      }
-      const preGameEl = document.getElementById("preGameTimer");
-      if (preGameEl) preGameEl.textContent = "";
+    if (data.type === "playerDisconnected") {
+      showToast("⚠️ " + esc(data.username) + " left", "#ff6b35");
+      // Remove from players array
+      players = players.filter(function(p) { return p.id !== data.playerId; });
+      playerTargets.delete(data.playerId);
+      previousPlayerStates.delete(data.playerId);
+      return;
     }
 
-    if (data.type === "allReady") {
-      gameReady = true;
-      stopReadyAlarm();
-      document.getElementById("readyScreen").style.display = "none";
-
-      // On large screens, always show the scoreboard
-      if (window.innerWidth > 1200) {
-        const pl = document.getElementById("playerList");
-        if (pl) pl.style.display = "block";
-      }
-
-      // Play match start sound (after 3s countdown finishes)
-      playSound("matchstart", 0.7);
-
-      // Update gamemode from server
-      if (data.gameMode) currentGameMode = data.gameMode;
-      if (data.maxHp) maxHp = data.maxHp;
-
-      // Show dramatic game start toast with mode info
-      showToast("🔥 VAI! Colete pontos e elimine! 🔥", "#ff6b35");
-
-      // Show in-game controls hint (fades after a few seconds)
-      const igc = document.getElementById("inGameControls");
-      if (igc) {
-        igc.style.display = "block";
-        igc.classList.remove("faded");
-        clearTimeout(igc._fadeTimer);
-        igc._fadeTimer = setTimeout(() => igc.classList.add("faded"), 8000);
-      }
-
-      // Update game duration
-      if (data.gameDuration) gameDuration = data.gameDuration;
-      gameTimerRemaining = Math.ceil(gameDuration / 1000);
-
-      // Update arena dimensions if provided
-      if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
-      if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
-      canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
-      canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
-      gridCanvas = null; // Invalidate cached grid
-      resizeCanvas();
-
-      // Initialize mobile touch controls
-      initMobileControls();
-    }
-
+    // ===== RESPAWN =====
     if (data.type === "respawn") {
-      // Handle player respawn
-      const respawnedPlayer = players.find((p) => p.id === data.playerId);
+      const respawnedPlayer = players.find(function(p) { return p.id === data.playerId; });
       if (respawnedPlayer) {
         respawnedPlayer.x = data.x;
         respawnedPlayer.y = data.y;
-        respawnedPlayer.hp = maxHp; // Reset HP
+        respawnedPlayer.hp = maxHp;
 
-        // Update interpolation target for respawned player
         if (data.playerId !== playerId) {
           playerTargets.set(data.playerId, {
-            currentX: data.x,
-            currentY: data.y,
-            targetX: data.x,
-            targetY: data.y,
+            currentX: data.x, currentY: data.y,
+            targetX: data.x, targetY: data.y,
           });
         } else {
-          // Local player respawned — clear all lingering effects
+          // Local player respawned
           predictedX = data.x;
           predictedY = data.y;
           flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
           lightningBolts = [];
           pageFlashIntensity = 0;
           document.body.style.filter = "";
+          // Hide death overlay
+          const deathOv = document.getElementById("deathOverlay");
+          if (deathOv) deathOv.style.display = "none";
+          showToast("🔄 Respawned!", "#44ff44");
         }
-
-        console.log(`🔄 ${respawnedPlayer.username} respawned!`);
       }
+      return;
     }
 
+    // ===== OBSTACLES =====
     if (data.type === "newObstacle") {
-      // Add new obstacle spawned during the game
       if (data.obstacle) {
         obstacles.push(data.obstacle);
         obstacleCanvasDirty = true;
-        console.log("🌳 New obstacle spawned!");
       }
+      return;
     }
 
     if (data.type === "obstacleDestroyed") {
-      // Update obstacle(s) when destroyed — supports group destruction
       const ids = data.destroyedIds || [data.obstacleId];
       for (const oid of ids) {
-        const obstacle = obstacles.find((o) => o.id === oid);
+        const obstacle = obstacles.find(function(o) { return o.id === oid; });
         if (obstacle) {
-          createImpactSparks(
-            obstacle.x + obstacle.size / 2,
-            obstacle.y + obstacle.size / 2,
-          );
+          createImpactSparks(obstacle.x + obstacle.size / 2, obstacle.y + obstacle.size / 2);
           obstacle.destroyed = true;
         }
       }
       obstacleCanvasDirty = true;
+      return;
     }
 
+    // ===== ZONE WARNING =====
     if (data.type === "zoneWarning") {
       zoneWarningShown = true;
-      showToast("⚠️ ZONA ENCOLHENDO!", "#ff4444");
+      showToast("⚠️ ZONE SHRINKING!", "#ff4444");
+      return;
     }
 
-    if (data.type === "gameTimer") {
-      gameTimerRemaining = data.remaining;
-    }
-
-    if (data.type === "timeUp") {
-      showToast("⏰ TEMPO ESGOTADO!", "#ff6b35");
-    }
-
+    // ===== ORB COLLECTED =====
     if (data.type === "orbCollected") {
-      // Could add particle effect at orb position here
+      // Could add particle effect
+      return;
     }
 
+    // ===== KILLS =====
     if (data.type === "kill") {
       addKillFeedEntry(data.killer, data.victim, data.weapon);
-
-      // Track weapon used for weapon-specific death effects
       pendingDeathWeapon.set(data.victim, data.weapon);
 
-      // Show viral toast for local player involvement
-      const localPlayer = players.find((p) => p.id === playerId);
+      const localPlayer = players.find(function(p) { return p.id === playerId; });
       if (localPlayer) {
         if (data.killer === localPlayer.username) {
-          // Revenge check
           if (data.isRevenge) {
-            showToast("🔥 Você se vingou! VINGANÇA! 🔥", "#ff4400");
+            showToast("🔥 REVENGE! 🔥", "#ff4400");
           } else {
             const phrase = SELF_KILL_PHRASES[Math.floor(Math.random() * SELF_KILL_PHRASES.length)]
               .replace("{victim}", data.victim);
@@ -2322,886 +1927,427 @@ function setupWsMessageHandler() {
           }
         } else if (data.victim === localPlayer.username) {
           lastKilledByUsername = data.killer;
+          // Show death overlay
+          const deathOv = document.getElementById("deathOverlay");
+          if (deathOv) {
+            deathOv.style.display = "flex";
+            const killerEl = document.getElementById("deathKiller");
+            if (killerEl) killerEl.textContent = "Killed by " + data.killer;
+          }
           const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)]
             .replace("{killer}", data.killer);
           showToast(phrase, "#d94a4a");
         }
       }
+      return;
     }
 
     if (data.type === "killStreak") {
-      // Show kill streak announcement to everyone
       const streakColors = { 2: "#ffaa00", 3: "#ff6600", 5: "#ff2222", 7: "#ff00ff", 10: "#00ffff" };
       const color = streakColors[data.streak] || "#ffaa00";
-      showToast(`🔥 ${data.player}: ${data.message}`, color);
+      showToast("🔥 " + data.player + ": " + data.message, color);
       addKillFeedEntry(data.player, data.message, "streak");
+      return;
     }
 
-    if (data.type === "skinTaken") {
-      showToast(data.message, "#ff6b35");
-    }
-
-    if (data.type === "playerDisconnected") {
-      showToast(`⚠️ ${data.username} desconectou`, "#ff6b35");
-    }
-
+    // ===== PICKUPS =====
     if (data.type === "pickupCollected") {
       createPickupEffect(data.x, data.y, data.pickupType);
       if (data.playerId === playerId) {
         playPickupSound();
         const pickupMessages = {
-          health: "❤️ Vida restaurada!",
-          ammo: "🎯 Munição cheia!",
-          speed: "⚡ Modo turbo!",
-          minigun: "🔥 MINIGUN ATIVADA!",
+          health: "❤️ Health restored!",
+          ammo: "🎯 Full ammo!",
+          speed: "⚡ Speed boost!",
+          minigun: "🔥 MINIGUN ACTIVATED!",
+          shield: "🛡️ Shield active!",
+          invisibility: "👻 Invisible!",
+          regen: "💚 Regenerating!",
+          armor: "🛡️ Armor up!",
         };
-        showToast(pickupMessages[data.pickupType] || "✨ Bônus!", "#44bbff");
+        showToast(pickupMessages[data.pickupType] || "✨ Bonus!", "#44bbff");
       }
+      return;
     }
 
+    // ===== BOMBS =====
     if (data.type === "bombSpawned") {
-      activeBombs.push({
-        id: data.id,
-        x: data.x,
-        y: data.y,
-        spawnTime: Date.now(),
-      });
+      activeBombs.push({ id: data.id, x: data.x, y: data.y, spawnTime: Date.now() });
+      return;
     }
 
     if (data.type === "bombExploded") {
-      // Remove from active bombs
-      activeBombs = activeBombs.filter((b) => b.id !== data.id);
-      // Create visual explosion
+      activeBombs = activeBombs.filter(function(b) { return b.id !== data.id; });
       createBombExplosion(data.x, data.y, data.radius || 80);
-      // Screen shake
       const dx = data.x - predictedX;
       const dy = data.y - predictedY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const shakeIntensity = Math.max(2, 15 - dist / 50);
-      triggerScreenShake(shakeIntensity);
-      // Mild white flash for very close explosions
+      triggerScreenShake(Math.max(2, 15 - dist / 50));
       if (dist < 120) {
-        const bombFlash = 0.3 * (1 - dist / 120);
-        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, bombFlash);
+        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, 0.3 * (1 - dist / 120));
       }
-      // Explosion sound
       playExplosionSound(data.x, data.y);
+      return;
     }
 
-    // ===== LIGHTNING STRIKE SYSTEM =====
+    // ===== LIGHTNING =====
     if (data.type === "lightningWarning") {
       activeLightnings.push({
-        id: data.id,
-        x: data.x,
-        y: data.y,
-        radius: data.radius || 100,
-        spawnTime: Date.now(),
-        fuseTime: 250,
+        id: data.id, x: data.x, y: data.y,
+        radius: data.radius || 100, spawnTime: Date.now(), fuseTime: 250,
       });
+      return;
     }
 
     if (data.type === "lightningStruck") {
-      // Remove from active warnings
-      activeLightnings = activeLightnings.filter((l) => l.id !== data.id);
-      const lx = data.x;
-      const ly = data.y;
-      const lRadius = data.radius || 100;
-
-      // Calculate distance from player to lightning center
-      const ldx = lx - predictedX;
-      const ldy = ly - predictedY;
+      activeLightnings = activeLightnings.filter(function(l) { return l.id !== data.id; });
+      const lx = data.x, ly = data.y, lRadius = data.radius || 100;
+      const ldx = lx - predictedX, ldy = ly - predictedY;
       const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
-
-      // Players INSIDE the lightning radius — full effect
       if (ldist < lRadius) {
         const proximity = 1.0 - ldist / lRadius;
-        const volume = 0.3 + proximity * 0.35;
-        playSound("lightning", volume, 0.9 + Math.random() * 0.2);
-
-        // Screen shake: stronger at center
-        const lShake = 5 + proximity * 13;
-        triggerScreenShake(lShake);
-
-        // Full white screen at center, fades over 3s (chaotic mode)
+        playSound("lightning", 0.3 + proximity * 0.35, 0.9 + Math.random() * 0.2);
+        triggerScreenShake(5 + proximity * 13);
         flashbangOverlay.alpha = 0.9 + proximity * 0.1;
         flashbangOverlay.flicker = 1;
-        // Full-page brightness/blur effect on the entire website
         applyPageFlash(0.8 + proximity * 0.2);
       } else if (ldist < lRadius * 2.5) {
-        // Nearby but outside — rumble + distant thunder + mild page flash
         const nearFactor = 1.0 - (ldist - lRadius) / (lRadius * 1.5);
         triggerScreenShake(2 + nearFactor * 5);
         playSound("lightning", nearFactor * 0.2, 0.7 + Math.random() * 0.2);
-        // Mild page flash for nearby players
-        if (nearFactor > 0.3) {
-          applyPageFlash(nearFactor * 0.4);
-        }
+        if (nearFactor > 0.3) applyPageFlash(nearFactor * 0.4);
       }
-
-      // Always create the visual bolt on the map (visible if on screen)
       createLightningStrike(lx, ly, lRadius);
+      return;
     }
 
-    // Loot crate events
+    // ===== LOOT CRATES =====
     if (data.type === "crateSpawned") {
       const c = data.crate;
-      // Only add if not already tracked (state sync covers it)
-      if (!lootCrates.find((lc) => lc.id === c.id)) {
+      if (!lootCrates.find(function(lc) { return lc.id === c.id; })) {
         lootCrates.push({ id: c.id, x: c.x, y: c.y, hp: c.hp });
       }
+      return;
     }
 
     if (data.type === "crateHit") {
-      const crate = lootCrates.find((c) => c.id === data.crateId);
-      if (crate) {
-        crate.hp = data.hp;
-        crate.hitFlash = Date.now();
-      }
+      const crate = lootCrates.find(function(c) { return c.id === data.crateId; });
+      if (crate) { crate.hp = data.hp; crate.hitFlash = Date.now(); }
+      return;
     }
 
     if (data.type === "crateDestroyed") {
-      lootCrates = lootCrates.filter((c) => c.id !== data.crateId);
-      // Create destruction effect
-      crateDestroyEffects.push({
-        x: data.pickup.x,
-        y: data.pickup.y,
-        time: Date.now(),
-      });
+      lootCrates = lootCrates.filter(function(c) { return c.id !== data.crateId; });
+      crateDestroyEffects.push({ x: data.pickup.x, y: data.pickup.y, time: Date.now() });
+      return;
     }
 
-    if (data.type === "leaderboard") {
-      showLeaderboard(data.stats);
+    // ===== CHAT =====
+    if (data.type === "chatMessage") {
+      addKillFeedEntry(data.username, data.message, "chat");
+      return;
     }
 
-    if (data.type === "myStats") {
-      // Could display stats somewhere — for now just log
-      console.log("My stats:", data.stats);
-    }
-
+    // ===== STATE UPDATE (35 Hz) =====
     if (data.type === "state") {
-      // Parse compact format: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weapon, kills, skin, speedBoosted, shielded, invisible, regen]
       const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
-      // Build username lookup map for O(1) access instead of O(n) per player
       const usernameMap = new Map();
-      players.forEach((pl) => usernameMap.set(pl.id, pl.username));
+      players.forEach(function(pl) { usernameMap.set(pl.id, pl.username); });
 
-      // Delta compression: server may send only changed players (df=1)
-      // Build lookup of previous player state for merging
       const prevPlayerMap = new Map();
-      players.forEach((pl) => prevPlayerMap.set(pl.id, pl));
+      players.forEach(function(pl) { prevPlayerMap.set(pl.id, pl); });
 
       function parseCompactPlayer(p) {
         return {
-          id: p[0],
-          x: p[1],
-          y: p[2],
-          hp: p[3],
-          shots: p[4],
-          reloading: p[5] === 1,
-          lastProcessedInput: p[6],
-          aimAngle: p[7],
-          weapon: weaponCodeMap[p[8]] || "machinegun",
-          kills: p[9],
-          skin: p[10] || 0,
-          speedBoosted: p[11] === 1,
-          shielded: p[12] === 1,
-          invisible: p[13] === 1,
-          regen: p[14] === 1,
-          armor: p[15] || 0,
-          dashing: p[16] === 1,
-          score: p[17] || 0,
-          username: usernameMap.get(p[0]) || "Jogador",
+          id: p[0], x: p[1], y: p[2], hp: p[3], shots: p[4],
+          reloading: p[5] === 1, lastProcessedInput: p[6],
+          aimAngle: p[7], weapon: weaponCodeMap[p[8]] || "machinegun",
+          kills: p[9], skin: p[10] || 0,
+          speedBoosted: p[11] === 1, shielded: p[12] === 1,
+          invisible: p[13] === 1, regen: p[14] === 1,
+          armor: p[15] || 0, dashing: p[16] === 1, score: p[17] || 0,
+          username: usernameMap.get(p[0]) || "Player",
         };
       }
 
-      const incoming = (data.p || data.players || []).map((p) => {
+      const incoming = (data.p || data.players || []).map(function(p) {
         if (Array.isArray(p)) return parseCompactPlayer(p);
         return p;
       });
 
       let parsedPlayers;
       if (data.df) {
-        // Delta frame: merge changed players into previous state
         const updatedMap = new Map(prevPlayerMap);
-        for (const pl of incoming) {
-          updatedMap.set(pl.id, pl);
-        }
+        for (const pl of incoming) updatedMap.set(pl.id, pl);
         parsedPlayers = Array.from(updatedMap.values());
       } else {
-        // Full frame: use incoming as-is
         parsedPlayers = incoming;
       }
 
-      // Parse compact bullets: [id, x, y, weapon]
-      const parsedBullets = (data.b || data.bullets || []).map((b) => {
-        if (Array.isArray(b)) {
-          return {
-            id: b[0],
-            x: b[1],
-            y: b[2],
-            weapon: weaponCodeMap[b[3]] || "machinegun",
-          };
-        }
+      // Parse bullets
+      const parsedBullets = (data.b || data.bullets || []).map(function(b) {
+        if (Array.isArray(b)) return { id: b[0], x: b[1], y: b[2], weapon: weaponCodeMap[b[3]] || "machinegun" };
         return b;
       });
 
-      // Parse compact pickups: [id, x, y, typeCode]
+      // Parse pickups
       const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen", 7: "armor" };
-      const parsedPickups = (data.pk || []).map((pk) => {
-        if (Array.isArray(pk)) {
-          return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
-        }
+      pickups = (data.pk || []).map(function(pk) {
+        if (Array.isArray(pk)) return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
         return pk;
       });
-      pickups = parsedPickups;
 
       // Update orbs
       if (data.orbs) {
-        orbs = data.orbs.map((o) => {
-          if (Array.isArray(o)) {
-            return { id: o[0], x: o[1], y: o[2] };
-          }
+        orbs = data.orbs.map(function(o) {
+          if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
           return o;
         });
       }
 
-      // Update zone shrinking state
+      // Zone
       if (data.z) {
         arenaZone = { x: data.z[0], y: data.z[1], w: data.z[2], h: data.z[3] };
       }
 
-      // Update loot crates
+      // Loot crates
       if (data.cr) {
-        lootCrates = data.cr.map((c) => {
-          if (Array.isArray(c)) {
-            return { id: c[0], x: c[1], y: c[2], hp: c[3] };
-          }
+        lootCrates = data.cr.map(function(c) {
+          if (Array.isArray(c)) return { id: c[0], x: c[1], y: c[2], hp: c[3] };
           return c;
         });
       }
 
-      // Check for deaths before updating players
-      parsedPlayers.forEach((p) => {
+      // Death/damage detection
+      parsedPlayers.forEach(function(p) {
         const prevState = previousPlayerStates.get(p.id);
         if (prevState && prevState.hp > 0 && p.hp <= 0) {
-          // Player just died - create death animation (ragdoll particles)
           createDeathAnimation(p.x, p.y, p.skin || 0);
-
-          // Weapon-specific death effects
           const deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
           pendingDeathWeapon.delete(p.username);
 
           if (deathWeapon === "knife") {
-            // Knife kills: extra blood splatter + ice effect
-            createBlood(p.x, p.y);
-            createBlood(p.x, p.y);
-            createBlood(p.x, p.y);
-            createBloodStain(p.x, p.y);
-            createBloodStain(p.x, p.y);
-            createBloodStain(p.x, p.y);
+            createBlood(p.x, p.y); createBlood(p.x, p.y); createBlood(p.x, p.y);
+            createBloodStain(p.x, p.y); createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
             createKillEffect(p.x, p.y, "ice");
           } else if (deathWeapon === "shotgun") {
-            // Shotgun kills: body flying effect + fire effect
             for (let i = 0; i < 12; i++) {
               const angle = Math.random() * Math.PI * 2;
               const speed = 3 + Math.random() * 4;
               bloodParticles.push({
-                particles: [{
-                  x: p.x, y: p.y,
-                  vx: Math.cos(angle) * speed,
-                  vy: Math.sin(angle) * speed - 2,
-                  life: 1.0,
-                  size: 3 + Math.random() * 4,
-                  color: `rgb(${139 + Math.floor(Math.random() * 116)}, 0, 0)`,
-                }],
+                particles: [{ x: p.x, y: p.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 1.0, size: 3 + Math.random() * 4, color: "rgb(" + (139 + Math.floor(Math.random() * 116)) + ", 0, 0)" }],
                 frame: 0,
               });
             }
-            createBloodStain(p.x, p.y);
-            createBloodStain(p.x, p.y);
+            createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
             createKillEffect(p.x, p.y, "fire");
           } else if (deathWeapon === "sniper") {
-            // Sniper kills: lightning effect (disintegration)
-            createKillEffect(p.x, p.y, "lightning");
-            createBlood(p.x, p.y);
+            createKillEffect(p.x, p.y, "lightning"); createBlood(p.x, p.y);
           } else if (deathWeapon === "minigun") {
-            // Minigun kills: fire + lightning
-            createKillEffect(p.x, p.y, "fire");
-            createKillEffect(p.x, p.y, "lightning");
+            createKillEffect(p.x, p.y, "fire"); createKillEffect(p.x, p.y, "lightning");
           } else {
-            // Default death (machinegun): lightning sparks
-            createBlood(p.x, p.y);
-            createBloodStain(p.x, p.y);
-            createKillEffect(p.x, p.y, "lightning");
+            createBlood(p.x, p.y); createBloodStain(p.x, p.y); createKillEffect(p.x, p.y, "lightning");
           }
 
-          // Floating damage number for kill
           createFloatingNumber(p.x, p.y, prevState.hp);
-
-          // Screen shake on explosions (stronger if it's us dying)
-          if (p.id === playerId) {
-            triggerScreenShake(12);
-            stopHeartbeat();
-          } else {
-            triggerScreenShake(5);
-          }
-          // Play death sound with positional audio
-          if (!gameEnded) playPositionalSound("died", p.x, p.y, 0.3);
-          // Hit marker for the killer (us)
+          if (p.id === playerId) { triggerScreenShake(12); stopHeartbeat(); }
+          else { triggerScreenShake(5); }
+          playPositionalSound("died", p.x, p.y, 0.3);
           if (p.id !== playerId) createHitMarker();
         } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
-          // Player took damage but still alive - create blood
-          const dmg = prevState.hp - p.hp;
           createBlood(p.x, p.y);
-          // Create permanent blood stain
           createBloodStain(p.x, p.y);
-          // Floating damage number
-          createFloatingNumber(p.x, p.y, dmg);
-          // Hit marker if it's an enemy (we likely shot them)
+          createFloatingNumber(p.x, p.y, prevState.hp - p.hp);
           if (p.id !== playerId) createHitMarker();
-          // Damage indicator + screen shake if it's us taking damage
           if (p.id === playerId) {
             createDamageIndicator(p.x, p.y);
             triggerScreenShake(6);
-            // Start heartbeat if at 1 HP
-            if (p.hp === 1) {
-              startHeartbeat();
-            }
+            if (p.hp === 1) startHeartbeat();
           }
         } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
-          // Healed — stop heartbeat if above 1 HP
           if (p.hp > 1) stopHeartbeat();
         }
         previousPlayerStates.set(p.id, { hp: p.hp, x: p.x, y: p.y });
 
-        // Set interpolation targets for other players
         if (p.id !== playerId) {
           const current = playerTargets.get(p.id);
           if (current) {
-            // Update target, keep current interpolated position
-            playerTargets.set(p.id, {
-              currentX: current.currentX,
-              currentY: current.currentY,
-              targetX: p.x,
-              targetY: p.y,
-            });
+            playerTargets.set(p.id, { currentX: current.currentX, currentY: current.currentY, targetX: p.x, targetY: p.y });
           } else {
-            // First time seeing this player
-            playerTargets.set(p.id, {
-              currentX: p.x,
-              currentY: p.y,
-              targetX: p.x,
-              targetY: p.y,
-            });
+            playerTargets.set(p.id, { currentX: p.x, currentY: p.y, targetX: p.x, targetY: p.y });
           }
         }
       });
 
-      // Detect bullet-wall/obstacle impacts (disappeared bullets)
-      const currentBulletIdSet = new Set(parsedBullets.map((b) => b.id));
-      previousBulletPositions.forEach((pos, id) => {
-        if (!currentBulletIdSet.has(id)) {
-          const margin = 25;
-          const nearWall =
-            pos.x < margin ||
-            pos.x > GAME_CONFIG.ARENA_WIDTH - margin ||
-            pos.y < margin ||
-            pos.y > GAME_CONFIG.ARENA_HEIGHT - margin;
-          let nearObstacle = false;
-          for (const obs of obstacles) {
-            if (obs.destroyed) continue;
-            if (
-              pos.x > obs.x - 10 &&
-              pos.x < obs.x + obs.size + 10 &&
-              pos.y > obs.y - 10 &&
-              pos.y < obs.y + obs.size + 10
-            ) {
-              nearObstacle = true;
-              break;
+      // Bullet impact detection
+      const newBulletPositions = new Map();
+      parsedBullets.forEach(function(b) { newBulletPositions.set(b.id, { x: b.x, y: b.y }); });
+      previousBulletPositions.forEach(function(prev, id) {
+        if (!newBulletPositions.has(id)) {
+          createImpactSparks(prev.x, prev.y);
+        }
+      });
+
+      const currentBulletCount = parsedBullets.length;
+      if (currentBulletCount > previousBulletCount) {
+        const newBullets = parsedBullets.filter(function(b) { return !previousBulletPositions.has(b.id); });
+        newBullets.forEach(function(b) {
+          const shooter = players.find(function(p) { return p.id !== playerId; });
+          if (shooter) {
+            if (b.weapon === "shotgun") {
+              playPositionalSound("shotgun-shot", b.x, b.y, 0.25);
+            } else if (b.weapon === "sniper") {
+              playPositionalSound("sniper-shot", b.x, b.y, 0.25);
+            } else {
+              const idx = Math.floor(Math.random() * 5) + 1;
+              playPositionalSound("machinegun-" + idx, b.x, b.y, 0.12);
             }
           }
-          if (nearWall || nearObstacle) {
-            createImpactSparks(pos.x, pos.y);
-          }
-        }
-      });
-
-      // Detect new bullets for weapon-specific positional audio
-      parsedBullets.forEach((b) => {
-        if (!previousBulletPositions.has(b.id)) {
-          if (b.weapon === "shotgun") {
-            playPositionalSound("shotgun-shot", b.x, b.y, 0.45, 0.8 + Math.random() * 0.15);
-          } else if (b.weapon === "sniper") {
-            playPositionalSound("sniper-shot", b.x, b.y, 0.5, 0.95 + Math.random() * 0.1);
-          } else {
-            // Machinegun / minigun: rotate through machinegun-1..5
-            machinegunSoundIndex = (machinegunSoundIndex % 5) + 1;
-            playPositionalSound(`machinegun-${machinegunSoundIndex}`, b.x, b.y, 0.25, 1.1 + Math.random() * 0.3);
-          }
-        }
-      });
-
-      // Update bullet position tracking
-      previousBulletPositions.clear();
-      parsedBullets.forEach((b) =>
-        previousBulletPositions.set(b.id, { x: b.x, y: b.y }),
-      );
+        });
+      }
+      previousBulletCount = currentBulletCount;
+      previousBulletPositions = newBulletPositions;
 
       players = parsedPlayers;
-      bullets = parsedBullets;
-      lastStateTime = Date.now();
-      // Obstacles are only sent at game start, not in every state update
-
-      // Update player list
-      updatePlayerList();
-
-      // Play reload sound when current player starts reloading
-      const currentPlayer = players.find((p) => p.id === playerId);
-      if (currentPlayer && currentPlayer.reloading && !wasReloading) {
-        playSound("reload", 0.5);
-      }
-      wasReloading = currentPlayer ? currentPlayer.reloading : false;
-
-      // Play scream sound when current player takes damage
-      if (currentPlayer && currentPlayer.hp < previousHP && !gameEnded) {
-        playPositionalSound("scream", predictedX, predictedY, 0.3);
-      }
-      previousHP = currentPlayer ? currentPlayer.hp : 3;
+      bullets = parsedBullets.concat(bullets.filter(function(b) { return b.predicted; }));
+      bullets = bullets.filter(function(b) {
+        if (!b.predicted) return true;
+        return !parsedBullets.some(function(sb) {
+          const dx = sb.x - b.x, dy = sb.y - b.y;
+          return dx * dx + dy * dy < 2500;
+        });
+      });
 
       // Client-side prediction reconciliation
+      const currentPlayer = players.find(function(p) { return p.id === playerId; });
       if (currentPlayer) {
-        const serverLastProcessed = currentPlayer.lastProcessedInput;
+        // Update HUD HP tracking
+        if (currentPlayer.hp < previousHP) {
+          playPositionalSound("scream", predictedX, predictedY, 0.25);
+        }
+        previousHP = currentPlayer.hp;
 
-        // Remove acknowledged inputs
-        pendingInputs = pendingInputs.filter(
-          (input) => input.sequence > serverLastProcessed,
-        );
+        // Dash cooldown from server
+        if (currentPlayer.dashing) dashCooldownUntil = Date.now() + 1000;
 
-        // Start from server position
+        const lastProcessed = currentPlayer.lastProcessedInput || 0;
+        pendingInputs = pendingInputs.filter(function(i) { return i.sequence > lastProcessed; });
+
         let reconciledX = currentPlayer.x;
         let reconciledY = currentPlayer.y;
-
-        // Replay unacknowledged inputs
-        pendingInputs.forEach((input) => {
-          const result = applyInput(
-            reconciledX,
-            reconciledY,
-            input.keys,
-            currentPlayer.weapon,
-            currentPlayer.speedBoosted,
-          );
+        pendingInputs.forEach(function(input) {
+          const result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon, currentPlayer.speedBoosted);
           reconciledX = result.x;
           reconciledY = result.y;
         });
-
-        // Update predicted position
         predictedX = reconciledX;
         predictedY = reconciledY;
 
-        // Clean old inputs (older than 1 second)
         const now = Date.now();
-        pendingInputs = pendingInputs.filter((i) => now - i.timestamp < 1000);
+        pendingInputs = pendingInputs.filter(function(i) { return now - i.timestamp < 1000; });
       }
-    }
 
-    if (data.type === "end") {
-      console.log("Game over! Winner:", data.winnerName);
-
-      // Prevent any further in-game sounds (scream, died, etc.)
-      gameEnded = true;
-
-      // Clear any previous celebration (e.g. from a race condition)
-      if (celebrationInterval) { clearInterval(celebrationInterval); celebrationInterval = null; }
-      if (victoryCountdownInterval) { clearInterval(victoryCountdownInterval); victoryCountdownInterval = null; }
-
-      // Stop all in-game sounds (shots, bombs, etc.)
-      stopAllGameSounds();
-      stopHeartbeat();
-
-      // Small delay so the stopAllGameSounds fully clears before we play the end sound
-      // Hide ready screen if showing
-      document.getElementById("readyScreen").style.display = "none";
-
-      // Determine if local player won
-      const localPlayer = data.scoreboard.find((p) => p.username === loggedInUsername);
-      const isLocalWinner = localPlayer && localPlayer.isWinner;
-
-      // Play ONE win/lose sound (lowered volume)
-      const audioIdx = data.audioIndex || 1;
-      const firstSound = isLocalWinner ? `win-${audioIdx}` : `lose-${audioIdx}`;
-      playSound(firstSound, 0.5);
-
-      // Start celebration: periodic bomb explosions (visual + one bomb sound each)
-      celebrationIsWinner = isLocalWinner;
-      let celebrationCount = 0;
-      celebrationInterval = setInterval(() => {
-        celebrationCount++;
-        if (celebrationCount > 4) {
-          clearInterval(celebrationInterval);
-          celebrationInterval = null;
-          return;
-        }
-        // Random position near the player view
-        const cx = predictedX + (Math.random() - 0.5) * canvas.width * 0.7;
-        const cy = predictedY + (Math.random() - 0.5) * canvas.height * 0.7;
-        createBombExplosion(cx, cy, 50 + Math.random() * 40);
-        triggerScreenShake(3 + Math.random() * 4);
-        // One bomb sound per explosion
-        const bIdx = Math.floor(Math.random() * 5) + 1;
-        playSound(`bomb-${bIdx}`, 0.25, 0.9 + Math.random() * 0.2);
-      }, 1100);
-
-      // Sort scoreboard by score descending
-      const sorted = [...data.scoreboard].sort((a, b) => (b.score || 0) - (a.score || 0));
-      const endMedals = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"];
-
-      // Winner showcase (top 3)
-      const top3 = sorted.slice(0, 3);
-      const showcaseHTML = top3.map((p, i) => {
-        const initial = p.username.charAt(0).toUpperCase();
-        const rank = i + 1;
-        return `<div class="showcase-player rank-${rank}">
-          <div class="showcase-avatar">
-            ${initial}
-            <span class="showcase-medal">${endMedals[i] || ""}</span>
-          </div>
-          <div class="showcase-name">${esc(p.username)}</div>
-          <div class="showcase-kills">⭐${p.score || 0} | ${p.kills}K / ${p.deaths}D</div>
-        </div>`;
-      }).join("");
-
-      // Full scoreboard
-      const scoreboardHTML = sorted.map((p, i) => {
-        const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(1) : p.kills.toFixed(1);
-        const isW = p.isWinner;
-        return `<div class="vs-row ${isW ? "winner" : ""}">
-          <span class="vs-rank">${isW ? "\uD83D\uDC51" : (i + 1) + "."}</span>
-          <span class="vs-name">${esc(p.username)}</span>
-          <span class="vs-stats">⭐${p.score || 0} | ${p.kills}K / ${p.deaths}D (${kd})</span>
-        </div>`;
-      }).join("");
-
-      // Update gameMode from end message
-      const endGameMode = data.gameMode || currentGameMode;
-
-      // Pick a random viral phrase
-      const viralPhrase = isLocalWinner
-        ? WINNER_PHRASES[Math.floor(Math.random() * WINNER_PHRASES.length)].replace("{winner}", "Você")
-        : LOSER_PHRASES[Math.floor(Math.random() * LOSER_PHRASES.length)].replace("{winner}", esc(data.winnerName));
-
-      // Banner
-      document.getElementById("victoryBanner").innerHTML =
-        isLocalWinner ? "\uD83C\uDF89 \uD83C\uDF86 \uD83C\uDF89" : "\u2694\uFE0F \uD83D\uDC80 \u2694\uFE0F";
-      document.getElementById("victoryMessage").innerHTML =
-        isLocalWinner ? "\uD83C\uDFC6 VICTORY! \uD83C\uDFC6" : esc(data.winnerName) + " WINS!";
-      document.getElementById("victorySubtext").innerHTML = viralPhrase;
-      document.getElementById("victoryShowcase").innerHTML = showcaseHTML;
-      document.getElementById("victoryScoreboard").innerHTML = scoreboardHTML;
-      document.getElementById("victoryFooter").innerHTML = `
-        <button id="voltarBtn" onclick="skipVictoryScreen()" style="padding: 14px 44px; font-size: 22px; font-weight: 700; background: linear-gradient(180deg, #3a5a3a 0%, #2a4a2a 100%); color: #f0f0f0; border: 1px solid #4a6a4a; border-radius: 2px; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; font-family: 'Rajdhani', sans-serif;">\u21A9 Voltar</button>
-        <p style="margin-top: 10px; font-size: 15px; color: #8aaa8a;">Voltando em <span id="countdownTimer" style="color: #ff6b35; font-weight: bold;">10</span>s...</p>
-        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 13px; color: #8aaa8a; line-height: 1.3;">
-          <div style="color: #88ccff; font-weight: 600; margin-bottom: 4px;">\uD83C\uDFAE Controles</div>
-          <div><kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;display:none;">WASD</kbd> Mover \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;display:none;">Click / Espaço</kbd> Atirar \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">Q</kbd> Trocar Arma \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">Tab</kbd> Placar</div> <div><kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">1</kbd> Metralhadora \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">2</kbd> Shotgun \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">3</kbd> Faca \u00b7 <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#bbddbb;border:1px solid #3a5a3a;">4</kbd> Sniper</div>
-        </div>
-      `;
-      document.getElementById("victoryScreen").style.display = "block";
-
-      // Countdown from 10 to 1
-      let countdown = 10;
-
-      if (victoryCountdownInterval) clearInterval(victoryCountdownInterval);
-      victoryCountdownInterval = setInterval(() => {
-        countdown--;
-        if (countdown > 0) {
-          const timerElement = document.getElementById("countdownTimer");
-          if (timerElement) {
-            timerElement.textContent = countdown.toString();
-          }
-        } else {
-          returnToLobby();
-        }
-      }, 1000);
+      // Update leaderboard overlay
+      updateLeaderboardOverlay();
+      return;
     }
   };
 
-  ws.onerror = (error) => {
+  ws.onerror = function(error) {
     console.error("WebSocket error:", error);
-    const loginButton = document.querySelector("#menu button");
-    if (loginButton) {
-      loginButton.disabled = false;
-      loginButton.style.opacity = "1";
-      loginButton.style.background = "";
-      loginButton.textContent = "ENTRAR";
-    }
   };
 
-  ws.onclose = () => {
+  ws.onclose = function() {
     console.log("WebSocket closed");
     ws = null;
-    loggedIn = false;
-
-    // Clear online panel when disconnected
-    const content = document.getElementById("globalOnlineContent");
-    if (content) {
-      content.innerHTML =
-        '<p style="color: #8aaa8a; font-style: italic; font-size: 14px;">Conecte para ver jogadores</p>';
-    }
-    const countEl = document.getElementById("globalOnlineCount");
-    if (countEl) countEl.textContent = "0";
-
-    // Go back to login screen
-    document.getElementById("roomListScreen").style.display = "none";
-    document.getElementById("roomScreen").style.display = "none";
-    document.getElementById("gameArea").style.display = "none";
-    document.getElementById("gameUI").style.display = "none";
-    document.getElementById("playerList").style.display = "none";
-    document.getElementById("readyScreen").style.display = "none";
-    document.getElementById("killFeed").style.display = "none";
-    document.getElementById("victoryScreen").style.display = "none";
-    document.getElementById("lobbyLayout").style.display = "";
-    document.getElementById("menu").style.display = "block";
-    const igcClose = document.getElementById("inGameControls");
-    if (igcClose) { igcClose.style.display = "none"; igcClose.classList.remove("faded"); clearTimeout(igcClose._fadeTimer); }
-    // Restore lobby-only elements
-    const ghLinkClose = document.querySelector(".github-footer-link");
-    if (ghLinkClose) ghLinkClose.style.display = "";
-    const mobileCtrlClose = document.getElementById("mobileControls");
-    if (mobileCtrlClose) mobileCtrlClose.classList.remove("active");
-
-    const loginBtn = document.querySelector("#menu button");
-    if (loginBtn) {
-      loginBtn.disabled = false;
-      loginBtn.style.opacity = "1";
-      loginBtn.textContent = "ENTRAR";
-    }
-
-    // Keep session token but reset login state for reconnection
-    loggedInUsername = "";
-    loggedIn = false;
-
-    // If we have a saved session, restore username for auto-reconnect
-    const savedToken = loadSavedToken();
-    if (savedToken && savedToken === sessionToken) {
-      try {
-        const savedName = localStorage.getItem("dm_username");
-        if (savedName) loggedInUsername = savedName;
-      } catch { /* ignore */ }
-    }
-
-    // Reconnect spectator after a delay
-    setTimeout(connectSpectator, 3000);
+    // Show start screen again
+    showStartScreen();
+    // Reconnect after delay
+    setTimeout(connect, 3000);
   };
 }
 
-// On page load: check for existing session, then connect
-(async function init() {
-  // Connect spectator WebSocket first for online list
-  connectSpectator();
+// ===== JOIN GAME =====
 
-  // Check for saved session (token in localStorage/cookie or IP match)
+async function doJoin() {
+  const usernameInput = document.getElementById("username");
+  const playBtn = document.getElementById("playBtn");
+  const errorEl = document.getElementById("usernameError");
+
+  const trimmed = (usernameInput.value || "").trim();
+  const usernamePattern = /^[a-zA-Z0-9_]+$/;
+
+  if (!trimmed) {
+    errorEl.textContent = "⚠ Enter a name!";
+    errorEl.style.display = "block";
+    return;
+  }
+  if (trimmed.length < 2 || trimmed.length > 16) {
+    errorEl.textContent = "⚠ Name must be 2-16 characters.";
+    errorEl.style.display = "block";
+    return;
+  }
+  if (!usernamePattern.test(trimmed)) {
+    errorEl.textContent = "⚠ Only letters, numbers and underscore allowed.";
+    errorEl.style.display = "block";
+    return;
+  }
+  errorEl.style.display = "none";
+
+  playBtn.disabled = true;
+  playBtn.style.opacity = "0.6";
+  playBtn.textContent = "Connecting...";
+
+  // Register via API to get token
+  try {
+    await apiRegister(trimmed);
+  } catch (err) {
+    errorEl.textContent = "⚠ " + err.message;
+    errorEl.style.display = "block";
+    playBtn.disabled = false;
+    playBtn.style.opacity = "1";
+    playBtn.textContent = "▶ PLAY";
+    return;
+  }
+
+  loggedInUsername = trimmed;
+
+  // Send join via WebSocket
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(serialize({ type: "join", token: sessionToken, skin: selectedSkin }));
+  } else {
+    // Connect and join
+    connect();
+    const waitForOpen = setInterval(function() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        clearInterval(waitForOpen);
+        ws.send(serialize({ type: "join", token: sessionToken, skin: selectedSkin }));
+      }
+    }, 100);
+    setTimeout(function() { clearInterval(waitForOpen); }, 10000);
+  }
+}
+
+// On page load: connect WebSocket + check saved session
+(async function init() {
+  connect();
+
   const session = await checkExistingSession();
   if (session) {
     loggedInUsername = session.username;
     sessionToken = session.token;
-
-    // Pre-fill username input
     const usernameInput = document.getElementById("username");
     if (usernameInput) usernameInput.value = session.username;
-
-    // Auto-login via WebSocket
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(serialize({ type: "login", token: session.token }));
-    }
-    // If WS isn't open yet, the onopen handler will send the login
-  }
-})();
-
-// ===== ROOM UI FUNCTIONS =====
-
-function renderTop3(stats) {
-  const container = document.getElementById("top3Content");
-  if (!container) return;
-
-  if (!stats || stats.length === 0) {
-    container.innerHTML = '<p style="color: #6a8a6a; font-style: italic; font-size: 14px;">Nenhum jogador ainda. Seja o primeiro!</p>';
-    return;
   }
 
-  const medals = ["🥇", "🥈", "🥉"];
-  container.innerHTML = stats.slice(0, 3).map((s, i) => {
-    const kde = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
-    const mmr = s.mmr != null ? s.mmr : 1000;
-    return `<div class="top3-entry">
-      <span class="top3-medal">${medals[i]}</span>
-      <span class="top3-name">${esc(s.username)}</span>
-      <span class="top3-stats">⭐${mmr} · K/D ${kde} · ${s.wins}V</span>
-    </div>`;
-  }).join("");
-}
-
-function updateRoomList(rooms) {
-  const content = document.getElementById("roomListContent");
-  if (!content) return;
-
-  if (!rooms || rooms.length === 0) {
-    content.innerHTML =
-      '<p style="color: #8aaa8a; font-style: italic; font-size: 14px;">Nenhuma sala disponível. Crie uma!</p>';
-    return;
-  }
-
-  content.innerHTML = rooms
-    .map(
-      (r) => {
-        const safeId = String(r.id).replace(/[^a-f0-9-]/gi, "");
-        return `
-    <div class="room-item">
-      <div class="room-info">
-        <div class="room-name">⚔ ${esc(r.name)}</div>
-        <div class="room-count">${r.playerCount}/${r.maxPlayers} jogadores</div>
-      </div>
-      <button onclick="doJoinRoom('${safeId}')">Entrar</button>
-    </div>
-  `;
-      }
-    )
-    .join("");
-}
-
-function showRoomScreen(room) {
-  document.getElementById("roomListScreen").style.display = "none";
-  document.getElementById("roomScreen").style.display = "block";
-  initSkinSelector();
-  updateRoomScreen(room);
-}
-
-function updateRoomScreen(room) {
-  const nameEl = document.getElementById("roomName");
-  if (nameEl) nameEl.textContent = "⚔ " + room.name;
-
-  const countdownEl = document.getElementById("roomCountdown");
-  if (countdownEl) {
-    if (room.timeRemaining !== null && room.timeRemaining !== undefined) {
-      countdownEl.textContent = `⏰ Jogo começa em ${room.timeRemaining}s`;
-    } else if (room.players.length < 2) {
-      countdownEl.textContent = "Esperando mais jogadores...";
-      countdownEl.style.color = "#8aaa8a";
-    } else {
-      countdownEl.textContent = "";
-    }
-  }
-
-  const listEl = document.getElementById("roomPlayerList");
-  if (listEl) {
-    listEl.innerHTML = room.players
-      .map(
-        (p) => {
-          const skinColor = SKINS[p.skin || 0] ? SKINS[p.skin || 0].primary : SKINS[0].primary;
-          return `
-      <div class="room-player">
-        <span class="player-name"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${skinColor};margin-right:8px;vertical-align:middle;border:1px solid rgba(255,255,255,0.2);"></span>${esc(p.username)}${p.id === playerId ? " (Você)" : ""}</span>
-        <span class="player-status ${p.ready ? "ready" : "waiting"}">${p.ready ? "✓ Pronto" : "⏳ Esperando"}</span>
-      </div>
-    `;
-        }
-      )
-      .join("");
-  }
-
-  // Check if local player is already ready → disable button
-  const localPlayer = room.players.find((p) => p.id === playerId);
-  const readyBtn = document.getElementById("roomReadyBtn");
-  if (readyBtn && localPlayer) {
-    if (localPlayer.ready) {
-      readyBtn.disabled = true;
-      readyBtn.textContent = "✓ PRONTO!";
-    } else {
-      readyBtn.disabled = false;
-      readyBtn.textContent = "⚔ ESTOU PRONTO! ⚔";
-    }
-  }
-
-  // Sync local vote from server data (e.g. after reconnect)
-  if (room.gameModeVotes && room.gameModeVotes[playerId] && !myGameModeVote) {
-    myGameModeVote = room.gameModeVotes[playerId];
-  }
-
-  // Update gamemode vote buttons
-  updateGameModeButtons();
-}
-
-function doCreateRoom() {
-  if (!ws) return;
-  ws.send(serialize({ type: "createRoom" }));
-}
-
-function doJoinRoom(roomId) {
-  if (!ws) return;
-  ws.send(serialize({ type: "joinRoom", roomId }));
-}
-
-function doLeaveRoom() {
-  if (!ws) return;
-
-  // Reset room ready button
-  const readyBtn = document.getElementById("roomReadyBtn");
-  if (readyBtn) {
-    readyBtn.disabled = false;
-    readyBtn.textContent = "⚔ ESTOU PRONTO! ⚔";
-  }
-
-  ws.send(serialize({ type: "leaveRoom" }));
-  currentRoomData = null;
-  myGameModeVote = null;
-  document.getElementById("roomScreen").style.display = "none";
-  document.getElementById("roomListScreen").style.display = "block";
-}
-
-function doRoomReady() {
-  if (!ws) return;
-
-  const readyBtn = document.getElementById("roomReadyBtn");
-  if (readyBtn) {
-    readyBtn.disabled = true;
-    readyBtn.textContent = "✓ PRONTO!";
-  }
-
-  // Initialize audio on first user interaction
-  initAudio();
-
-  ws.send(serialize({ type: "roomReady" }));
-}
-
-function doVoteGameMode(mode) {
-  if (!ws) return;
-  myGameModeVote = mode;
-  ws.send(serialize({ type: "voteGameMode", vote: mode }));
-  // Update button highlights immediately (optimistic)
-  updateGameModeButtons();
-}
-
-function updateGameModeButtons() {
-  const btns = document.querySelectorAll(".gamemode-btn");
-  btns.forEach((btn) => {
-    if (btn.dataset.mode === myGameModeVote) {
-      btn.classList.add("selected");
-    } else {
-      btn.classList.remove("selected");
-    }
-  });
-
-  // Update vote counts if we have room data
-  if (currentRoomData && currentRoomData.gameModeCounts) {
-    const counts = currentRoomData.gameModeCounts;
-    btns.forEach((btn) => {
-      const countEl = btn.querySelector(".vote-count");
-      if (countEl) {
-        const c = counts[btn.dataset.mode] || 0;
-        countEl.textContent = c > 0 ? `(${c})` : "";
-      }
+  // Listen for Enter key on username input
+  const usernameInput = document.getElementById("username");
+  if (usernameInput) {
+    usernameInput.addEventListener("keydown", function(e) {
+      if (e.key === "Enter") doJoin();
     });
   }
-}
+})();
 
 // ===== HUD DISPLAY =====
 
@@ -4010,19 +3156,9 @@ function syncVolumeControls() {
 function initSkinSelector() {
   const container = document.getElementById("skinOptions");
   if (!container) return;
-  // Determine which skins are taken by other players in the room
-  const takenSkins = new Set();
-  if (currentRoomData && currentRoomData.players) {
-    currentRoomData.players.forEach((p) => {
-      if (p.id !== playerId && p.skin !== undefined) {
-        takenSkins.add(p.skin);
-      }
-    });
-  }
   container.innerHTML = SKINS.map((skin, i) => {
-    const isTaken = takenSkins.has(i);
     const isSelected = i === selectedSkin;
-    return `<div class="skin-option ${isSelected ? "selected" : ""} ${isTaken ? "taken" : ""}" style="background: ${skin.primary};${isTaken ? "opacity:0.35;cursor:not-allowed;" : ""}" onclick="${isTaken ? "" : `selectSkin(${i})`}" title="${skin.name}${isTaken ? " (em uso)" : ""}"></div>`;
+    return `<div class="skin-option ${isSelected ? "selected" : ""}" style="background: ${skin.primary};" onclick="selectSkin(${i})" title="${skin.name}"></div>`;
   }).join("");
 }
 
@@ -4033,42 +3169,7 @@ function selectSkin(index) {
 }
 
 // ===== LEADERBOARD =====
-
-let leaderboardModalRequested = false;
-
-function requestLeaderboard(openModal) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  leaderboardModalRequested = !!openModal;
-  ws.send(serialize({ type: "getLeaderboard" }));
-}
-
-function showLeaderboard(stats) {
-  const container = document.getElementById("leaderboardContent");
-  if (!container) return;
-
-  if (!stats || stats.length === 0) {
-    container.innerHTML = '<p style="color: #8aaa8a; font-style: italic;">Nenhuma estatística ainda. Jogue uma partida!</p>';
-  } else {
-    container.innerHTML = stats.map((s, i) => {
-      const kde = s.deaths > 0 ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2);
-      const mmr = s.mmr != null ? s.mmr : 1000;
-      return `<div class="lb-row ${i === 0 ? "top" : ""}">
-        <span class="lb-rank">${i + 1}.</span>
-        <span class="lb-name">${i === 0 ? "👑 " : ""}${esc(s.username)}</span>
-        <span class="lb-stats">⭐${mmr} | K/D ${kde} | ${s.wins}V/${s.losses || 0}D | ${s.kills}K</span>
-      </div>`;
-    }).join("");
-  }
-
-  // Always update the inline top 3 section
-  renderTop3(stats);
-
-  // Only open the modal if the user explicitly clicked the ranking button
-  if (leaderboardModalRequested) {
-    leaderboardModalRequested = false;
-    document.getElementById("leaderboardModal").style.display = "block";
-  }
-}
+// Leaderboard overlay is handled by updateLeaderboardOverlay() in the game loop
 
 // ===== EXPLOSION & PICKUP EFFECTS =====
 
@@ -4840,32 +3941,7 @@ function renderMinimap() {
   ctx.restore();
 }
 
-// ============ GAME TIMER OVERLAY ============
-function renderGameTimer() {
-  if (!gameReady || gameTimerRemaining <= 0) return;
-  const minutes = Math.floor(gameTimerRemaining / 60);
-  const seconds = gameTimerRemaining % 60;
-  const timeStr = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
 
-  ctx.save();
-  ctx.font = "bold 22px 'Segoe UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-
-  // Background pill
-  const tx = canvas.width / 2;
-  const ty = 10;
-  const tw = ctx.measureText(timeStr).width + 24;
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.beginPath();
-  ctx.roundRect(tx - tw / 2, ty, tw, 32, 8);
-  ctx.fill();
-
-  // Timer text — red when under 60s
-  ctx.fillStyle = gameTimerRemaining <= 60 ? "#ff4444" : "#ffffff";
-  ctx.fillText(timeStr, tx, ty + 5);
-  ctx.restore();
-}
 
 function render() {
   const frameNow = Date.now();
@@ -5426,9 +4502,6 @@ function render() {
 
   // Render minimap
   renderMinimap();
-
-  // Render game timer
-  renderGameTimer();
 
   // Flashbang overlay (must be last — covers entire screen)
   renderFlashbang();
