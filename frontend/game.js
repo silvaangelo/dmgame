@@ -160,11 +160,7 @@ function handleBinaryState(buf) {
       var deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
       pendingDeathWeapon.delete(p.username);
 
-      if (deathWeapon === "knife") {
-        createBlood(p.x, p.y); createBlood(p.x, p.y); createBlood(p.x, p.y);
-        createBloodStain(p.x, p.y); createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
-        createKillEffect(p.x, p.y, "ice");
-      } else if (deathWeapon === "shotgun") {
+      if (deathWeapon === "shotgun") {
         for (var i = 0; i < 12; i++) {
           var angle = Math.random() * Math.PI * 2;
           var speed = 3 + Math.random() * 4;
@@ -177,8 +173,6 @@ function handleBinaryState(buf) {
         createKillEffect(p.x, p.y, "fire");
       } else if (deathWeapon === "sniper") {
         createKillEffect(p.x, p.y, "lightning"); createBlood(p.x, p.y);
-      } else if (deathWeapon === "minigun") {
-        createKillEffect(p.x, p.y, "fire"); createKillEffect(p.x, p.y, "lightning");
       } else {
         createBlood(p.x, p.y); createBloodStain(p.x, p.y); createKillEffect(p.x, p.y, "lightning");
       }
@@ -396,26 +390,20 @@ const SKINS = [
 ];
 
 // Weapon definitions
-const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper"];
+const WEAPON_CYCLE = ["machinegun", "shotgun", "sniper"];
 const WEAPON_NAMES = {
   machinegun: "🔫 Metralhadora",
   shotgun: "🔫 Shotgun",
-  knife: "🔪 Faca",
-  minigun: "🔥 Minigun",
   sniper: "🎯 Sniper",
 };
 const WEAPON_COOLDOWNS = {
   machinegun: 60,
   shotgun: 500,
-  knife: 200,
-  minigun: 18,
   sniper: 1200,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
   shotgun: "🔫",
-  knife: "🔪",
-  minigun: "🔥",
   sniper: "🎯"
 };
 
@@ -1604,9 +1592,8 @@ function renderExplosions() {
 
 // Movement prediction function (matches server logic)
 function applyInput(x, y, keys, weapon, speedBoosted) {
-  const knifeBonus = weapon === "knife" ? GAME_CONFIG.KNIFE_SPEED_BONUS : 1;
   const boostMultiplier = speedBoosted ? GAME_CONFIG.PICKUP_SPEED_MULTIPLIER : 1;
-  const speed = GAME_CONFIG.PLAYER_SPEED * knifeBonus * boostMultiplier;
+  const speed = GAME_CONFIG.PLAYER_SPEED * boostMultiplier;
   const playerRadius = GAME_CONFIG.PLAYER_RADIUS;
   const radiusSq = playerRadius * playerRadius;
   const margin = playerRadius;
@@ -2045,45 +2032,38 @@ function tryShoot() {
   ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
 
   // Client-side muzzle flash and effects
-  if (weapon === "knife") {
-    const knifeAngle = Math.atan2(dirY, dirX);
-    createKnifeSlash(predictedX, predictedY, knifeAngle);
-    playKnifeSound(predictedX, predictedY);
-    triggerScreenShake(2);
+  const flashX = predictedX + dirX * 30;
+  const flashY = predictedY + dirY * 30;
+  createMuzzleFlash(flashX, flashY, dirX, dirY);
+
+  // Shell casing
+  const casingAngle = Math.atan2(dirY, dirX) + Math.PI / 2;
+  createShellCasing(predictedX, predictedY, casingAngle);
+
+  // Client-side predicted bullet (removed on next server state)
+  const bulletSpeed = weapon === "sniper" ? 30 : 15;
+  bullets.push({
+    id: "predicted-" + Math.random().toString(36).slice(2),
+    x: predictedX + dirX * 20,
+    y: predictedY + dirY * 20,
+    dx: dirX * bulletSpeed,
+    dy: dirY * bulletSpeed,
+    weapon: weapon,
+    predicted: true,
+  });
+
+  // Screen shake
+  const shakeAmount = weapon === "shotgun" ? 5 : weapon === "sniper" ? 4 : 2;
+  triggerScreenShake(shakeAmount);
+
+  // Shot sound
+  if (weapon === "shotgun") {
+    playPositionalSound("shotgun-shot", predictedX, predictedY, 0.6);
+  } else if (weapon === "sniper") {
+    playPositionalSound("sniper-shot", predictedX, predictedY, 0.6);
   } else {
-    const flashX = predictedX + dirX * 30;
-    const flashY = predictedY + dirY * 30;
-    createMuzzleFlash(flashX, flashY, dirX, dirY);
-
-    // Shell casing
-    const casingAngle = Math.atan2(dirY, dirX) + Math.PI / 2;
-    createShellCasing(predictedX, predictedY, casingAngle);
-
-    // Client-side predicted bullet (removed on next server state)
-    const speed = weapon === "sniper" ? 30 : 15;
-    bullets.push({
-      id: "predicted-" + Math.random().toString(36).slice(2),
-      x: predictedX + dirX * 20,
-      y: predictedY + dirY * 20,
-      dx: dirX * speed,
-      dy: dirY * speed,
-      weapon: weapon,
-      predicted: true,
-    });
-
-    // Screen shake
-    const shakeAmount = weapon === "shotgun" ? 5 : weapon === "sniper" ? 4 : weapon === "minigun" ? 1.5 : 2;
-    triggerScreenShake(shakeAmount);
-
-    // Shot sound
-    if (weapon === "shotgun") {
-      playPositionalSound("shotgun-shot", predictedX, predictedY, 0.6);
-    } else if (weapon === "sniper") {
-      playPositionalSound("sniper-shot", predictedX, predictedY, 0.6);
-    } else {
-      const shotIdx = Math.floor(Math.random() * 5) + 1;
-      playPositionalSound("machinegun-" + shotIdx, predictedX, predictedY, 0.35);
-    }
+    const shotIdx = Math.floor(Math.random() * 5) + 1;
+    playPositionalSound("machinegun-" + shotIdx, predictedX, predictedY, 0.35);
   }
 }
 
@@ -2280,7 +2260,6 @@ function connect() {
           health: "❤️ Health restored!",
           ammo: "🎯 Full ammo!",
           speed: "⚡ Speed boost!",
-          minigun: "🔥 MINIGUN ACTIVATED!",
           shield: "🛡️ Shield active!",
           invisibility: "👻 Invisible!",
           regen: "💚 Regenerating!",
@@ -2451,11 +2430,7 @@ function connect() {
           const deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
           pendingDeathWeapon.delete(p.username);
 
-          if (deathWeapon === "knife") {
-            createBlood(p.x, p.y); createBlood(p.x, p.y); createBlood(p.x, p.y);
-            createBloodStain(p.x, p.y); createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
-            createKillEffect(p.x, p.y, "ice");
-          } else if (deathWeapon === "shotgun") {
+          if (deathWeapon === "shotgun") {
             for (let i = 0; i < 12; i++) {
               const angle = Math.random() * Math.PI * 2;
               const speed = 3 + Math.random() * 4;
@@ -2468,8 +2443,6 @@ function connect() {
             createKillEffect(p.x, p.y, "fire");
           } else if (deathWeapon === "sniper") {
             createKillEffect(p.x, p.y, "lightning"); createBlood(p.x, p.y);
-          } else if (deathWeapon === "minigun") {
-            createKillEffect(p.x, p.y, "fire"); createKillEffect(p.x, p.y, "lightning");
           } else {
             createBlood(p.x, p.y); createBloodStain(p.x, p.y); createKillEffect(p.x, p.y, "lightning");
           }
@@ -2854,14 +2827,10 @@ function updateShotUI() {
   }
 
   const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
-  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", knife: "3", sniper: "4" };
+  const WEAPON_SHORTCUTS = { machinegun: "1", shotgun: "2", sniper: "3" };
   const shortcut = WEAPON_SHORTCUTS[player.weapon] || "";
   const shortcutTag = shortcut ? `[${shortcut}] ` : "";
-  if (player.weapon === "knife") {
-    shotsDisplay.textContent = `${shortcutTag}${weaponName} | Corpo a corpo`;
-  } else if (player.weapon === "minigun") {
-    shotsDisplay.textContent = `${weaponName} | ∞`;
-  } else {
+  {
     const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 25;
     shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/${weaponMaxAmmo}`;
   }
@@ -2896,7 +2865,7 @@ function updateShotUI() {
   // Show cooldown based on weapon
   if (
     timeSinceLastShot < weaponCooldown &&
-    (player.weapon === "knife" || player.shots > 0) &&
+    player.shots > 0 &&
     !player.reloading
   ) {
     const remaining = (weaponCooldown - timeSinceLastShot) / 1000;
@@ -2917,7 +2886,6 @@ function updateShotUI() {
   if (speedBoostDisplay) {
     const parts = [];
     if (player.speedBoosted) parts.push("⚡ TURBO!");
-    if (player.weapon === "minigun") parts.push("🔥 MINIGUN!");
     if (player.armor > 0) parts.push(`🛡 ARMOR x${player.armor}`);
     const dashRemaining = Math.max(0, dashCooldownUntil - Date.now());
     if (dashRemaining > 0) {
@@ -2947,39 +2915,41 @@ document.addEventListener("keydown", (e) => {
   }
 
   // Spacebar to shoot (same as mouse click)
-  if (e.key === " ") {
+  if (e.key === " " || e.code === "Space") {
     e.preventDefault();
     isMouseDown = true;
     return;
   }
 
-  // Prevent duplicate events
-  if (keysPressed.has(e.key)) return;
-  keysPressed.add(e.key);
+  // Prevent duplicate events — use e.code (Shift-invariant) to avoid stuck keys
+  const keyCode = e.code || e.key;
+  if (keysPressed.has(keyCode)) return;
+  keysPressed.add(keyCode);
 
   // Map arrow keys to WASD (and prevent default to stop page scrolling in-game)
-  let mappedKey = e.key;
-  if (e.key === "ArrowUp") { mappedKey = "w"; e.preventDefault(); }
-  if (e.key === "ArrowDown") { mappedKey = "s"; e.preventDefault(); }
-  if (e.key === "ArrowLeft") { mappedKey = "a"; e.preventDefault(); }
-  if (e.key === "ArrowRight") { mappedKey = "d"; e.preventDefault(); }
+  // Normalize to lowercase so Shift+D ("D") still maps to "d"
+  let mappedKey = e.key.toLowerCase();
+  if (e.code === "ArrowUp" || e.key === "ArrowUp") { mappedKey = "w"; e.preventDefault(); }
+  if (e.code === "ArrowDown" || e.key === "ArrowDown") { mappedKey = "s"; e.preventDefault(); }
+  if (e.code === "ArrowLeft" || e.key === "ArrowLeft") { mappedKey = "a"; e.preventDefault(); }
+  if (e.code === "ArrowRight" || e.key === "ArrowRight") { mappedKey = "d"; e.preventDefault(); }
 
   // Q key to cycle weapons
-  if (e.key === "q" || e.key === "Q") {
+  if (mappedKey === "q") {
     ws.send(serialize({ type: "switchWeapon" }));
     return;
   }
 
-  // Number keys 1-4 to select weapon directly
-  if (e.key >= "1" && e.key <= "4") {
-    const weapons = ["machinegun", "shotgun", "knife", "sniper"];
+  // Number keys 1-3 to select weapon directly
+  if (e.key >= "1" && e.key <= "3") {
+    const weapons = ["machinegun", "shotgun", "sniper"];
     const weaponIndex = parseInt(e.key) - 1;
     ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
     return;
   }
 
   // R key to manually reload
-  if (e.key === "r" || e.key === "R") {
+  if (mappedKey === "r") {
     ws.send(serialize({ type: "reload" }));
     return;
   }
@@ -3048,10 +3018,6 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
-  if (e.key === " ") {
-    e.preventDefault(); // Prevent page scroll on space
-    isMouseDown = true; // Let tryShoot() handle cooldowns and effects
-  }
 });
 
 document.addEventListener("keyup", (e) => {
@@ -3065,19 +3031,21 @@ document.addEventListener("keyup", (e) => {
     return;
   }
 
-  if (e.key === " ") {
+  if (e.key === " " || e.code === "Space") {
     isMouseDown = false;
     return;
   }
 
-  keysPressed.delete(e.key);
+  // Use e.code (Shift-invariant) to match the keydown entry
+  const keyCode = e.code || e.key;
+  keysPressed.delete(keyCode);
 
-  // Map arrow keys to WASD
-  let mappedKey = e.key;
-  if (e.key === "ArrowUp") mappedKey = "w";
-  if (e.key === "ArrowDown") mappedKey = "s";
-  if (e.key === "ArrowLeft") mappedKey = "a";
-  if (e.key === "ArrowRight") mappedKey = "d";
+  // Map arrow keys to WASD, normalize to lowercase
+  let mappedKey = e.key.toLowerCase();
+  if (e.code === "ArrowUp" || e.key === "ArrowUp") mappedKey = "w";
+  if (e.code === "ArrowDown" || e.key === "ArrowDown") mappedKey = "s";
+  if (e.code === "ArrowLeft" || e.key === "ArrowLeft") mappedKey = "a";
+  if (e.code === "ArrowRight" || e.key === "ArrowRight") mappedKey = "d";
 
   if (
     mappedKey === "w" ||
@@ -3675,8 +3643,8 @@ function playPickupSound() {
 let pickupEffects = [];
 
 function createPickupEffect(x, y, pickupType) {
-  const colors = { health: "#ff4444", ammo: "#44ff44", speed: "#4488ff", minigun: "#ff8800" };
-  const icons = { health: "❤️", ammo: "📦", speed: "⚡", minigun: "🔥" };
+  const colors = { health: "#ff4444", ammo: "#44ff44", speed: "#4488ff" };
+  const icons = { health: "❤️", ammo: "📦", speed: "⚡" };
   pickupEffects.push({
     x, y,
     color: colors[pickupType] || "#ffffff",
@@ -3752,11 +3720,11 @@ function renderOrbs() {
 
 function renderPickups() {
   const pickupColors = {
-    health: "#ff4444", ammo: "#44bb44", speed: "#4488ff", minigun: "#ff8800",
+    health: "#ff4444", ammo: "#44bb44", speed: "#4488ff",
     shield: "#44ddff", invisibility: "#aa66ff", regen: "#44ff88", armor: "#ddaa22",
   };
   const pickupIcons = {
-    health: "+", ammo: "A", speed: "S", minigun: "M",
+    health: "+", ammo: "A", speed: "S",
     shield: "🛡", invisibility: "👻", regen: "♥", armor: "V",
   };
   const now = Date.now();
@@ -4686,26 +4654,7 @@ function render() {
     ctx.translate(renderX, renderY);
     ctx.rotate(gunAngle);
 
-    if (p.weapon === "knife") {
-      // Knife handle
-      ctx.fillStyle = "#5a3a1a";
-      ctx.fillRect(8, -2, 12, 4);
-      // Blade
-      ctx.fillStyle = "#aab0b0";
-      ctx.beginPath();
-      ctx.moveTo(20, -3);
-      ctx.lineTo(34, 0);
-      ctx.lineTo(20, 3);
-      ctx.closePath();
-      ctx.fill();
-      // Edge highlight
-      ctx.strokeStyle = "#dde0e0";
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(22, -1);
-      ctx.lineTo(31, 0);
-      ctx.stroke();
-    } else if (p.weapon === "machinegun") {
+    if (p.weapon === "machinegun") {
       // Machine gun body
       ctx.fillStyle = "#333";
       ctx.fillRect(4, -2.5, 20, 5);
@@ -4729,18 +4678,6 @@ function render() {
       // Stock
       ctx.fillStyle = "#2a1a0a";
       ctx.fillRect(-4, -2.5, 8, 5);
-    } else if (p.weapon === "minigun") {
-      // Minigun body
-      ctx.fillStyle = "#444";
-      ctx.fillRect(4, -4, 24, 8);
-      // Multiple barrels
-      ctx.fillStyle = "#555";
-      ctx.fillRect(28, -5, 8, 3);
-      ctx.fillRect(28, -1, 8, 3);
-      ctx.fillRect(28, 3, 8, 3);
-      // Handle
-      ctx.fillStyle = "#333";
-      ctx.fillRect(-2, -2, 6, 4);
     } else if (p.weapon === "sniper") {
       // Sniper rifle — long barrel
       ctx.fillStyle = "#2a2a2a";
@@ -4870,16 +4807,6 @@ function render() {
       ctx.fillStyle = "#ffe866";
       ctx.beginPath();
       ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (b.weapon === "minigun") {
-      // Minigun tracer - orange
-      ctx.fillStyle = "#ff8844";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255,136,68,0.3)";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
       ctx.fill();
     } else if (b.weapon === "sniper") {
       // Sniper tracer - bright blue laser line

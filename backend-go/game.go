@@ -132,15 +132,11 @@ func dropScoreOrbs(victim *Player, game *Game) {
 }
 
 func getPlayerSpeed(player *Player) float64 {
-	knifeBonus := 1.0
-	if player.Weapon == WeaponKnife {
-		knifeBonus = GameConfig.KnifeSpeedBonus
-	}
 	speedBoost := 1.0
 	if unixMs() < player.SpeedBoostUntil {
 		speedBoost = GameConfig.PickupSpeedMultiplier
 	}
-	return GameConfig.PlayerSpeed * knifeBonus * speedBoost
+	return GameConfig.PlayerSpeed * speedBoost
 }
 
 /* ================= GAME LOOP ================= */
@@ -184,12 +180,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 			continue
 		}
 
-		// Check minigun expiry
-		if player.Weapon == WeaponMinigun && now >= player.MinigunUntil {
-			player.Weapon = WeaponMachinegun
-			player.Shots = GameConfig.ShotsPerMag
-			player.Reloading = false
-		}
 
 		playerRadius := GameConfig.PlayerRadius
 		margin := playerRadius
@@ -752,95 +742,6 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 
 	now := unixMs()
 
-	// Knife
-	if player.Weapon == WeaponKnife {
-		cooldown := GameConfig.KnifeCooldown
-		if now-player.LastShotTime < cooldown {
-			return
-		}
-		player.LastShotTime = now
-
-		meleeRangeSq := GameConfig.KnifeRange * GameConfig.KnifeRange
-		for _, target := range game.Players {
-			if target.ID == player.ID || target.HP <= 0 {
-				continue
-			}
-			if GameConfig.DashInvincible && now < target.DashUntil {
-				continue
-			}
-			dx := target.X - player.X
-			dy := target.Y - player.Y
-			if dx*dx+dy*dy <= meleeRangeSq {
-				targetAngle := math.Atan2(dy, dx)
-				playerAngle := math.Atan2(dirY, dirX)
-				angleDiff := math.Abs(targetAngle - playerAngle)
-				if angleDiff > math.Pi {
-					angleDiff = 2*math.Pi - angleDiff
-				}
-				if angleDiff < math.Pi/2 {
-					// Apply damage
-					if now < target.ShieldUntil {
-						target.ShieldUntil -= 1500
-					} else if target.Armor > 0 {
-						armorAbsorb := min(target.Armor, GameConfig.KnifeDamage)
-						target.Armor -= armorAbsorb
-						remaining := GameConfig.KnifeDamage - armorAbsorb
-						if remaining > 0 {
-							target.HP -= remaining
-						}
-					} else {
-						target.HP -= GameConfig.KnifeDamage
-					}
-
-					// Knockback
-					knifeKnockback := 5.0
-					dist := math.Sqrt(dx*dx+dy*dy) + 0.001
-					target.X = clamp(target.X+(dx/dist)*knifeKnockback, GameConfig.PlayerRadius, GameConfig.ArenaWidth-GameConfig.PlayerRadius)
-					target.Y = clamp(target.Y+(dy/dist)*knifeKnockback, GameConfig.PlayerRadius, GameConfig.ArenaHeight-GameConfig.PlayerRadius)
-
-					if target.HP <= 0 {
-						target.HP = 0
-						handleKill(player, target, "knife", game)
-					}
-				}
-			}
-		}
-		return
-	}
-
-	// Minigun
-	if player.Weapon == WeaponMinigun {
-		cooldown := GameConfig.MinigunCooldown
-		if now-player.LastShotTime < cooldown {
-			return
-		}
-		player.LastShotTime = now
-
-		recoil := GameConfig.MinigunRecoil
-		recoilAngle := (rand.Float64() - 0.5) * 2 * recoil
-		cos := math.Cos(recoilAngle)
-		sin := math.Sin(recoilAngle)
-		finalDirX := dirX*cos - dirY*sin
-		finalDirY := dirX*sin + dirY*cos
-
-		bullet := &Bullet{
-			ID:        uuid.New().String(),
-			ShortID:   game.NextShortID,
-			X:         player.X,
-			Y:         player.Y,
-			DX:        finalDirX * GameConfig.BulletSpeed,
-			DY:        finalDirY * GameConfig.BulletSpeed,
-			Team:      0,
-			PlayerID:  player.ID,
-			Damage:    GameConfig.MinigunDamage,
-			Weapon:    WeaponMinigun,
-			CreatedAt: now,
-		}
-		game.NextShortID++
-		game.Bullets = append(game.Bullets, bullet)
-		return
-	}
-
 	// Sniper
 	if player.Weapon == WeaponSniper {
 		cooldown := GameConfig.SniperCooldown
@@ -1018,10 +919,6 @@ func applyPickup(player *Player, pickup *Pickup, game *Game) {
 		player.Reloading = false
 	case PickupSpeed:
 		player.SpeedBoostUntil = now + GameConfig.PickupSpeedDuration
-	case PickupMinigun:
-		player.Weapon = WeaponMinigun
-		player.MinigunUntil = now + GameConfig.MinigunDuration
-		player.Reloading = false
 	case PickupShield:
 		player.ShieldUntil = now + GameConfig.ShieldDuration
 	case PickupInvisibility:

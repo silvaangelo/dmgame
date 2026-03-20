@@ -242,7 +242,7 @@ var GameConfig = struct {
 }
 
 // WeaponCycle is the order of weapons when cycling.
-var WeaponCycle = []WeaponType{WeaponMachinegun, WeaponShotgun, WeaponKnife, WeaponSniper}
+var WeaponCycle = []WeaponType{WeaponMachinegun, WeaponShotgun, WeaponSniper}
 
 // ObstacleConfig holds obstacle generation parameters.
 var ObstacleConfig = struct {

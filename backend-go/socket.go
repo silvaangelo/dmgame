@@ -433,9 +433,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "switchWeapon":
-			if p.Weapon == WeaponMinigun {
-				continue
-			}
 			now := unixMs()
 			if now-p.LastWeaponSwitch < 250 {
 				continue
