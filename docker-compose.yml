@@ -1,5 +1,5 @@
 services:
-  # ── Development ─────────────────────────────────────────
+  # ── Development ─────────────────────────────────────────────────────────────
   game-dev:
     build:
       context: .
@@ -8,18 +8,17 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount source for live editing (no rebuild needed)
-      - ./backend:/app/backend
-      - ./frontend:/app/frontend
-      # Avoid overwriting container node_modules
-      - /app/node_modules
+      # Mount Go source for live editing (restart container to recompile)
+      - ./backend-go:/workspace/backend-go
+      # Mount frontend for instant edits without rebuild
+      - ./frontend:/workspace/frontend
     environment:
       - PORT=3000
     restart: unless-stopped
     profiles:
       - dev
 
-  # ── Production ──────────────────────────────────────────
+  # ── Production (local build) ─────────────────────────────────────────────────
   game-prod:
     build:
       context: .
@@ -27,9 +26,13 @@ services:
     container_name: deathmatch-prod
     ports:
       - "3000:3000"
+    volumes:
+      - game-data:/app/data
     environment:
       - PORT=3000
-      - NODE_ENV=production
     restart: unless-stopped
     profiles:
       - prod
+
+volumes:
+  game-data:

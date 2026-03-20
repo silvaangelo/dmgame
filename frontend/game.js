@@ -290,7 +290,7 @@ const GAME_CONFIG = {
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
   PLAYER_RADIUS: 20,
-  PLAYER_SPEED: 8,
+  PLAYER_SPEED: 5,
   SHOTS_PER_MAGAZINE: 25,
   MAX_BLOOD_STAINS: 150,
   MAX_PARTICLES: 100,
@@ -301,8 +301,8 @@ const GAME_CONFIG = {
   EXPLOSION_PARTICLE_COUNT: 12,
   BLOOD_PARTICLE_COUNT: 8,
   KILLS_TO_WIN: 999,
-  KNIFE_SPEED_BONUS: 1.5,
-  PICKUP_SPEED_MULTIPLIER: 2.0,
+  KNIFE_SPEED_BONUS: 1.6,
+  PICKUP_SPEED_MULTIPLIER: 1.5,
   VIEWPORT_WIDTH: window.innerWidth,
   VIEWPORT_HEIGHT: window.innerHeight,
 };
@@ -512,7 +512,7 @@ const KILL_FEED_MAX = 5;
 // Skins
 let selectedSkin = 0;
 let currentGameMode = "deathmatch"; // single mode
-let maxHp = 4; // updated from server on game start
+let maxHp = 8; // updated from server on game start
 
 // Viral phrases
 const WINNER_PHRASES = [
@@ -565,6 +565,7 @@ const currentKeys = { w: false, a: false, s: false, d: false };
 let previousPlayerStates = new Map();
 let gameReady = false;
 let isMouseDown = false;
+let roundEnded = false;
 
 // Interpolation for smooth movement
 const playerTargets = new Map(); // Store target positions for other players
@@ -610,6 +611,9 @@ canvas.addEventListener("mousemove", function(e) {
 
 canvas.addEventListener("mousedown", function(e) {
   if (e.button === 0) {
+    if (!gameReady || roundEnded) return;
+    var lp = players.find(function(p) { return p.id === playerId; });
+    if (!lp || lp.hp <= 0) return;
     isMouseDown = true;
   }
 });
@@ -1806,7 +1810,7 @@ function stopReadyAlarm() {
 
 // ===== UI FUNCTIONS =====
 
-let previousHP = 3;
+let previousHP = 8;
 
 // ===== SHOW/HIDE SCREENS =====
 
@@ -1851,6 +1855,7 @@ function showStartScreen() {
   _cachedDOM = null;
   previousPlayerStates.clear();
   gameReady = false;
+  roundEnded = false;
   floatingNumbers = [];
   lowHPPulseTime = 0;
   arenaZone = null;
@@ -1994,7 +1999,7 @@ function updateLeaderboardOverlay() {
 // ===== SHOOTING =====
 
 function tryShoot() {
-  if (!isMouseDown || !gameReady) return;
+  if (!isMouseDown || !gameReady || roundEnded) return;
   const localPlayer = players.find(function(p) { return p.id === playerId; });
   if (!localPlayer || localPlayer.hp <= 0) return;
   if (localPlayer.reloading) return;
@@ -2572,6 +2577,12 @@ function connect() {
 
     // ===== ROUND END =====
     if (data.type === "roundEnd") {
+      roundEnded = true;
+      isMouseDown = false;
+      // Release all movement keys
+      for (var rk in currentKeys) currentKeys[rk] = false;
+      keysPressed.clear();
+
       var overlay = document.getElementById("roundEndOverlay");
       if (overlay) {
         overlay.style.display = "flex";
@@ -2617,6 +2628,8 @@ function connect() {
 
     // ===== ROUND START (new round) =====
     if (data.type === "roundStart") {
+      roundEnded = false;
+
       // Hide round end overlay
       var roundOv = document.getElementById("roundEndOverlay");
       if (roundOv) roundOv.style.display = "none";
@@ -2890,7 +2903,7 @@ function updateShotUI() {
 const keysPressed = new Set();
 
 document.addEventListener("keydown", (e) => {
-  if (!ws || !gameReady) return;
+  if (!ws || !gameReady || roundEnded) return;
 
   // Tab to show scoreboard (only needed on small screens; large screens always show it)
   if (e.key === "Tab") {
@@ -4341,6 +4354,7 @@ function renderMinimap() {
   for (let i = 0; i < players.length; i++) {
     const p = players[i];
     if (p.id === playerId) continue;
+    if (p.hp <= 0) continue;
     if (p.invisible) {
       ctx.fillStyle = "rgba(170,102,255,0.4)";
     } else {

@@ -1,17 +1,19 @@
-# ─── Dev Dockerfile ───────────────────────────────────────
-# Bun runs TypeScript directly with --watch for hot-reload
-FROM oven/bun:1
+# ─── Dev Dockerfile (Go) ──────────────────────────────────
+# go run recompiles on each start; restart the container to
+# pick up backend changes. Frontend is served directly from
+# the mounted ./frontend volume.
+FROM golang:1.23-alpine
 
-WORKDIR /app
+WORKDIR /workspace
 
-# Install deps first (cache layer)
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
-
-# Copy source (volumes will override in docker-compose)
-COPY . .
+# Pre-download module deps into the image cache.
+# The volume mount at runtime overrides the source files but
+# the module cache in /root/go/pkg/mod is preserved.
+COPY backend-go/go.mod backend-go/go.sum ./backend-go/
+RUN cd backend-go && go mod download
 
 EXPOSE 3000
 
-# Run with Bun's built-in watch mode
-CMD ["bun", "run", "--watch", "backend/index.ts"]
+# CWD is /workspace/backend-go so the server finds frontend
+# at ../frontend (the volume mount at /workspace/frontend).
+CMD ["sh", "-c", "cd /workspace/backend-go && go run ."]

@@ -6,75 +6,88 @@ Project-specific instructions for AI coding assistants working on Deathmatch Are
 
 This is a real-time multiplayer top-down shooter. The backend is server-authoritative — **all game logic runs on the server**. The frontend is a thin client that sends inputs and renders the state it receives.
 
+## Tech Stack Reference
+
+| Layer     | Technology                                          |
+| --------- | --------------------------------------------------- |
+| Runtime   | Go 1.23                                             |
+| Backend   | Go, gorilla/websocket, vmihailenco/msgpack/v5        |
+| Frontend  | Vanilla JS, Canvas 2D, Web Audio API                |
+| Build     | `go build` (backend), esbuild (frontend minify)     |
+| Container | Docker, docker-compose                              |
+| CI/CD     | GitHub Actions → DigitalOcean Droplet               |
+
 ## Critical Rules
 
 ### 1. Movement and Collision Must Stay Synchronized
 
-The client (`frontend/game.js` → `applyInput()`) and server (`backend/game.ts` → `updateGame()`) both implement the same movement and collision logic. **Any change to one must be reflected in the other**, or players will experience desync (rubber-banding, position snapping).
+The client (`frontend/game.js` → `applyInput()`) and server (`backend-go/game.go` → `updateGame()`) both implement the same movement and collision logic. **Any change to one must be reflected in the other**, or players will experience desync (rubber-banding, position snapping).
 
 The collision uses **axis-by-axis resolution** — X movement is resolved first against all obstacles, then Y movement. This is intentional and prevents corner-clipping bugs.
 
-### 2. ESM Module System
+### 2. ESM Is Frontend-Only
 
-The project uses **ES Modules** (`"type": "module"` in package.json). TypeScript is configured with `"module": "ESNext"` and `"moduleResolution": "bundler"`.
+The Go backend uses standard `package main` — no module system quirks. All backend files are in `backend-go/` as a single Go package.
 
-- All backend imports **must use `.js` extensions** (e.g., `import { foo } from "./bar.js"`) even though the source files are `.ts`
-- This is required for compatibility with the TypeScript compiler and ESM resolution
+The frontend (`frontend/game.js`) is served directly as a static file with no build step. It uses vanilla browser JavaScript (no modules, no imports). All functions are global.
 
-### 3. State Mutation Pattern
+### 3. Compact Binary State Format
 
-Backend state in `state.ts` uses `Map` objects for shared state:
-```typescript
-export const rooms: Map<string, Room> = new Map();
-export const games: Map<string, Game> = new Map();
+The 35 Hz state broadcast uses a **custom binary protocol** (not MessagePack) for state frames, handled in `backend-go/protocol.go` → `EncodeBinaryState()`.
+
 ```
-Mutations on Map objects (`rooms.set()`, `rooms.delete()`) work directly.
-
-### 4. Server.ts Type Annotation
-
-The `app` export in `server.ts` must have an explicit `Express` type annotation:
-```typescript
-export const app: Express = express();
+Marker byte: 0x42
+Header:      [marker u8][flags u8][seq u32LE][playerCount u16LE]
+Per player:  [shortId u16LE][x f32LE][y f32LE][hp u8][shots u8]
+             [reloading u8][lastInput u16LE][aimAngle f32LE]
+             [weaponCode u8][kills u16LE][skin u8]
+             [speedBoosted u8][shielded u8][invisible u8][regen u8]
+Per bullet:  [shortId u16LE][x f32LE][y f32LE][weaponCode u8]
+Per pickup:  [shortId u16LE][x f32LE][y f32LE][typeCode u8]
+Per orb:     [shortId u16LE][x f32LE][y f32LE]
+Per crate:   [shortId u16LE][x f32LE][y f32LE]
+Zone:        [x f32LE][y f32LE][w f32LE][h f32LE]  (optional, flags bit 0)
 ```
-Without it, TypeScript error TS2742 occurs because the inferred type references internal Express types that aren't portable across modules.
 
-### 5. Frontend Has No Build Step
-
-`frontend/game.js` is served directly as a static file. It uses vanilla browser JavaScript (no modules, no imports). All functions are global. The `<script>` tag is at the end of the HTML body to ensure DOM elements exist when the script runs.
-
-### 6. Compact State Format
-
-The 35 Hz state broadcast uses **arrays instead of objects** to save bandwidth, serialized with **MessagePack** (`backend/protocol.ts`):
-```
-Player: [id, x, y, hp, shots, reloading, lastInput, aimAngle, weaponCode, kills, skin, speedBoosted, shielded, invisible, regen]
-Bullet: [id, x, y, weaponCode]
-Pickup: [id, x, y, typeCode]
-```
-Weapon codes: `0 = machinegun`, `1 = shotgun`, `2 = knife`, `3 = minigun` (powerup), `4 = sniper`
-Pickup type codes: `0 = health`, `1 = ammo`, `2 = speed`, `3 = minigun`, `4 = shield`, `5 = invisibility`, `6 = regen`
+Weapon codes: `0=machinegun 1=shotgun 2=knife 3=minigun 4=sniper`
+Pickup type codes: `0=health 1=ammo 2=speed 3=minigun 4=shield 5=invisibility 6=regen`
 
 If you add a field to the player state, you must update:
-- `backend/utils.ts` → `serializePlayersCompact()`
-- `frontend/game.js` → the `state` message handler (array index mapping)
+- `backend-go/protocol.go` → `EncodeBinaryState()`
+- `frontend/game.js` → `parseBinaryState()` (byte offset mapping)
+
+### 4. Control/Msgpack Messages Use `map[string]interface{}`
+
+All non-binary messages (join, gameJoined, chat, events, etc.) are encoded with **MessagePack** using `map[string]interface{}` with **string keys**. The Go library `vmihailenco/msgpack/v5` serializes Go string-keyed maps as msgpack str keys, which the frontend JS `MessagePack` library expects.
+
+Never switch to struct-tagged msgpack encoding for these messages — it may encode integer keys.
+
+### 5. Single Lock Per Tick
+
+`game.mu sync.Mutex` is held for the **entire game tick** in `updateGame()`. Any goroutine that touches game state (e.g., reload timers via `time.AfterFunc`) must acquire `game.mu.Lock()` before reading or writing.
+
+Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from the game lock.
+
+### 6. Frontend Has No Build Step
+
+`frontend/game.js` is served directly by the Go HTTP server as a static file. The `<script>` tag is at the end of the HTML body. No imports, no bundler.
 
 ## File Organization
 
-### Backend Modules (`backend/`)
+### Backend Modules (`backend-go/`)
 
-| File              | Responsibility                                   | Key Exports                        |
-| ----------------- | ------------------------------------------------ | ---------------------------------- |
-| `index.ts`        | Entry point, static files, startup               | (none — runs on import)            |
-| `types.ts`        | Type definitions                                 | Player, Bullet, Obstacle, Game, Room |
-| `config.ts`       | Constants                                        | GAME_CONFIG, OBSTACLE_CONFIG       |
-| `database.ts`     | JSON file persistence for stats & match history  | initDatabase, updateStats          |
-| `server.ts`       | Express + HTTP + WSS setup                       | app, server, wss                   |
-| `state.ts`        | Mutable shared state                             | rooms, games, allPlayers           |
-| `utils.ts`        | Broadcast, serialization, lookups                | broadcast, serializePlayersCompact |
-| `protocol.ts`     | MessagePack serialize/deserialize                | serialize, deserialize             |
-| `game.ts`         | Game loop, physics, combat, respawn              | updateGame, shoot, startGameLoop   |
-| `room.ts`         | Room creation, join/leave, room ready            | createRoom, joinRoom, leaveRoom    |
-| `matchmaking.ts`  | Game creation from rooms, pre-game ready         | startGameFromRoom, checkAllReady   |
-| `socket.ts`       | WebSocket message routing                        | setupSocket                        |
+| File          | Responsibility                                        | Key Exports                                   |
+| ------------- | ----------------------------------------------------- | --------------------------------------------- |
+| `main.go`     | HTTP server, static files, WebSocket upgrade, startup | `main()`                                      |
+| `socket.go`   | WebSocket connection handler, message routing         | `handleWebSocket()`, `startHeartbeat()`       |
+| `game.go`     | Game loop, physics, combat, spawning, round system    | `updateGame()`, `shoot()`, `startGameLoop()`  |
+| `types.go`    | All type definitions                                  | `Player`, `Bullet`, `Game`, `Room`, …         |
+| `config.go`   | All game constants                                    | `GameConfig`, `WeaponCycle`, `ObstacleConfig` |
+| `protocol.go` | MessagePack + binary state encoding                   | `Serialize()`, `Deserialize()`, `EncodeBinaryState()` |
+| `state.go`    | Global mutable state                                  | `getPersistentGame()`, `setPersistentGame()`  |
+| `utils.go`    | Broadcast, serialization helpers                      | `broadcast()`, `sendMsg()`, `sendBinary()`    |
+| `database.go` | JSON file persistence for stats & match history       | `initDatabase()`, `updateStats()`             |
+| `spatial.go`  | Spatial hash grid for O(1) collision queries          | `SpatialGrid`, `Insert()`, `QueryRect()`      |
 
 ### Frontend Files (`frontend/`)
 
@@ -90,93 +103,68 @@ If you add a field to the player state, you must update:
 
 ### Adding a New Weapon
 
-1. Add weapon constants to `backend/config.ts` (`GAME_CONFIG`)
-2. Add weapon to `WEAPON_CYCLE` in `backend/config.ts` (unless it's a powerup-only weapon)
-3. Add weapon code to `WEAPON_CODES` in `backend/utils.ts` → `serializePlayersCompact()`
-4. Add weapon handling in `backend/game.ts` → `shoot()` (cooldown, damage, behavior)
-5. Add weapon cycling in `backend/socket.ts` → `switchWeapon` handler
-6. Add weapon code mapping in `frontend/game.js` → `weaponCodeMap` in state handler
-7. Add weapon rendering in `frontend/game.js` → player rendering section (draw the weapon sprite)
+1. Add weapon constants to `backend-go/config.go` (`GameConfig`)
+2. Add weapon to `WeaponCycle` in `backend-go/config.go` (unless powerup-only)
+3. Add weapon code to `weaponCodes` map in `backend-go/protocol.go` → `EncodeBinaryState()`
+4. Add weapon handling in `backend-go/game.go` → `shoot()` (cooldown, damage, behavior)
+5. Add weapon cycling in `backend-go/socket.go` → `switchWeapon` handler
+6. Add weapon code mapping in `frontend/game.js` → `BINARY_WEAPON_MAP` constant
+7. Add weapon rendering in `frontend/game.js` → player draw section
 8. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
 
 ### Adding a New Game Event
 
-1. Define the event in the backend where it occurs (e.g., `game.ts` or `matchmaking.ts`)
-2. `broadcast(game, { type: "myEvent", ...data })` to send it
+1. Define the event in the backend where it occurs (e.g., `game.go`)
+2. Call `broadcast(game, map[string]interface{}{"type": "myEvent", ...})` to send it
 3. Handle in `frontend/game.js` → `ws.onmessage` handler with `if (data.type === "myEvent")`
 
 ### Changing Arena Size
 
-1. Update `GAME_CONFIG.ARENA_WIDTH` and `GAME_CONFIG.ARENA_HEIGHT` in `backend/config.ts`
-2. The server sends these values to clients in the `start` and `allReady` messages
-3. The client updates its local `GAME_CONFIG` and resizes the canvas automatically
-4. No hardcoded arena sizes exist in the frontend (all derived from config)
+1. Update `ArenaWidth` and `ArenaHeight` in `backend-go/config.go` (`GameConfig`)
+2. The server sends these in the `gameJoined` message
+3. The client updates its local `GAME_CONFIG` from the message and resizes canvas
+4. No hardcoded arena sizes exist in the frontend
 
 ### Adding a New Particle Effect
 
-1. Add arrays for the new effect at the top of `frontend/game.js` (e.g., `let myEffects = []`)
+1. Add arrays for the new effect at the top of `frontend/game.js`
 2. Create `createMyEffect(x, y)`, `updateMyEffects()`, `renderMyEffects()` functions
-3. Call `updateMyEffects()` in the render loop (near the other update calls)
+3. Call `updateMyEffects()` in the render loop
 4. Call `renderMyEffects()` at the appropriate z-layer in `render()`
 5. Reset the array in the game-end cleanup block
 
 ## Development Workflow
 
 ```bash
-# Start dev server
-bun run dev
+# Run locally (no Docker)
+export PATH=$PATH:/usr/local/go/bin
+cd backend-go && go run .
 
-# Type-check
-bun run typecheck
+# Or build a binary
+cd backend-go && go build -o ../dmgame-server . && cd .. && ./dmgame-server
 
-# Lint
-bun run lint
+# Docker dev (mounts source, restart container to recompile)
+docker compose --profile dev up --build
 
-# Fix lint issues
-bun run lint:fix
+# Docker prod (full minified build)
+docker compose --profile prod up --build
 
-# Build for production
-bun run build
+# Type-check / vet
+cd backend-go && go vet ./...
 
-# Run tests
-bun test
+# Go tests (if any)
+cd backend-go && go test ./...
 ```
 
-The dev server uses Bun which runs TypeScript directly without a build step. The frontend files are served as-is from the `frontend/` directory.
-
-## Testing Changes
-
-Unit tests exist in the `tests/` directory covering bullet physics, collision detection, pickups, and utilities.
-
-1. Run `bun test` — run unit tests
-2. Run `bun run typecheck` — ensure TypeScript compiles
-3. Run `bun run lint` — ensure no lint errors
-4. Start the server with `bun run dev`
-5. Open `http://localhost:3000` in 2+ browser tabs
-6. Join queue in both tabs, play through a match
-7. Verify: movement feels responsive, bullets hit correctly, kill feed updates, sounds play, scoreboard is accurate
+Open [http://localhost:3000](http://localhost:3000) in 2+ browser tabs to test multiplayer.
 
 ## Pitfalls to Avoid
 
-- **Don't use `require()`** — the project is ESM, use `import`
-- **Don't forget `.js` extensions** in backend imports
-- **Don't add `type: "module"` to individual files** — it's set globally in package.json
-- **Don't use arrow keys for key names** — they're mapped to WASD internally
-- **Don't send full player objects in state updates** — use the compact array format
-- **Don't modify obstacle positions after creation** — they're static until destroyed
-- **Don't use `let` where `const` suffices** — ESLint will flag it
-- **Don't create frontend modules/imports** — game.js runs as a single global script
-- **Don't use JSON for WebSocket messages** — use `serialize()`/`deserialize()` from `protocol.ts` (MessagePack)
-
-## Tech Stack Reference
-
-| Layer     | Technology                            |
-| --------- | ------------------------------------- |
-| Runtime   | Bun ≥ 1.2                             |
-| Backend   | TypeScript, Express 5, ws             |
-| Frontend  | Vanilla JS, Canvas 2D, Web Audio API  |
-| Build     | tsc (typecheck), Bun (runtime)        |
-| Package   | Bun (built-in package manager)        |
-| Lint      | ESLint 10, typescript-eslint          |
-| Container | Docker, docker-compose                |
-| CI/CD     | GitHub Actions → DigitalOcean Droplet |
+- **Don't use `encoding/json` for WebSocket messages** — use `Serialize()`/`Deserialize()` from `protocol.go` (MessagePack)
+- **Don't send full player objects in state updates** — use `EncodeBinaryState()` (compact binary)
+- **Don't modify `GameConfig` at runtime** — it's a read-only global value literal
+- **Don't touch game state outside `game.mu.Lock()`** — data races will corrupt state silently
+- **Don't create frontend modules/imports** — `game.js` runs as a single global script
+- **Don't add a build step to the frontend** — the Go binary serves `frontend/` directly
+- **Don't use arrow keys for key names** — they're mapped to WASD internally in the frontend
+- **Don't use `sync.Map` for per-tick hot paths** — use `game.mu` + plain slice/map instead

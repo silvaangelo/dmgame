@@ -34,3 +34,7 @@ LICENSE
 backend.ts
 index.html
 package-lock.json
+
+# Go build artifacts
+dmgame-server
+backend-go/*.test

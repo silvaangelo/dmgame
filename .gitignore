@@ -27,3 +27,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Go binary
+dmgame-server

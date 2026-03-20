@@ -1,13 +1,12 @@
-# ─── Deploy to DigitalOcean Droplet ────────────────────────
-# Builds a Docker image, pushes to GHCR, then deploys via SSH.
+# ── Deploy to DigitalOcean Droplet ──────────────────────────────────────────
+# Builds a Docker image (Go binary + minified frontend), pushes to GHCR,
+# then deploys to the droplet via SSH.
 #
 # Required GitHub Secrets:
 #   DROPLET_HOST        — Droplet IP address (e.g., 164.90.xxx.xxx)
 #   DROPLET_USERNAME    — SSH user on the droplet (e.g., root or deploy)
 #   DROPLET_SSH_KEY     — Private SSH key for authentication
-#   GHCR_TOKEN          — GitHub Personal Access Token with `write:packages` scope
-#                         (or use the built-in GITHUB_TOKEN if repo packages are enabled)
-# ───────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
 name: Deploy to DigitalOcean
 
@@ -21,29 +20,27 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── 1. Lint & Typecheck ──────────────────────────────────
+  # ── 1. Go Build & Vet ───────────────────────────────────────────────────────
   check:
-    name: Lint & Typecheck
+    name: Go Build & Vet
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          bun-version: latest
+          go-version: '1.23'
+          cache-dependency-path: backend-go/go.sum
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Build
+        run: cd backend-go && go build ./...
 
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Vet
+        run: cd backend-go && go vet ./...
 
-      - name: Lint
-        run: bun run lint
-
-  # ── 2. Build & Push Docker Image ────────────────────────
+  # ── 2. Build & Push Docker Image ────────────────────────────────────────────
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
@@ -87,7 +84,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 3. Deploy to Droplet ────────────────────────────────
+  # ── 3. Deploy to Droplet ────────────────────────────────────────────────────
   deploy:
     name: Deploy to Droplet
     runs-on: ubuntu-latest
