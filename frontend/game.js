@@ -37,6 +37,7 @@ const GAME_CONFIG = {
 // Camera state
 let cameraX = 0;
 let cameraY = 0;
+const CAMERA_SCALE = 0.55; // Zoom out to see more of the arena
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
@@ -299,16 +300,46 @@ const ctx = canvas.getContext("2d");
 
 // Responsive canvas sizing — canvas fills the entire screen
 function resizeCanvas() {
-  GAME_CONFIG.VIEWPORT_WIDTH = window.innerWidth;
-  GAME_CONFIG.VIEWPORT_HEIGHT = window.innerHeight;
-  canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
-  canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
   canvas.style.width = window.innerWidth + "px";
   canvas.style.height = window.innerHeight + "px";
+  // Logical viewport is bigger than screen pixels because we zoom out
+  GAME_CONFIG.VIEWPORT_WIDTH = Math.ceil(window.innerWidth / CAMERA_SCALE);
+  GAME_CONFIG.VIEWPORT_HEIGHT = Math.ceil(window.innerHeight / CAMERA_SCALE);
   gridCanvas = null; // Invalidate cached grid
+  gridPatternCache = null;
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
+
+// ===== MOUSE INPUT — aiming and shooting =====
+canvas.addEventListener("mousemove", function(e) {
+  // Convert screen coords to world coords via camera scale + offset
+  mouseX = e.clientX / CAMERA_SCALE + cameraX;
+  mouseY = e.clientY / CAMERA_SCALE + cameraY;
+  if (ws && gameReady) {
+    const dx = mouseX - predictedX;
+    const dy = mouseY - predictedY;
+    const aimAngle = Math.atan2(dy, dx);
+    ws.send(serialize({ type: "aim", aimAngle: aimAngle }));
+  }
+});
+
+canvas.addEventListener("mousedown", function(e) {
+  if (e.button === 0) {
+    isMouseDown = true;
+  }
+});
+
+canvas.addEventListener("mouseup", function(e) {
+  if (e.button === 0) {
+    isMouseDown = false;
+  }
+});
+
+// Prevent context menu on right-click
+canvas.addEventListener("contextmenu", function(e) { e.preventDefault(); });
 
 // Auto-detect host — works for localhost, ngrok, or any domain
 const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1729,10 +1760,8 @@ function tryShoot() {
   if (now - lastShootTime < cooldown) return;
   lastShootTime = now;
 
-  const worldMouseX = mouseX + cameraX;
-  const worldMouseY = mouseY + cameraY;
-  let dirX = worldMouseX - predictedX;
-  let dirY = worldMouseY - predictedY;
+  let dirX = mouseX - predictedX;
+  let dirY = mouseY - predictedY;
   const mag = Math.sqrt(dirX * dirX + dirY * dirY);
   if (mag > 0.001) { dirX /= mag; dirY /= mag; }
   else { dirX = 0; dirY = -1; }
@@ -3945,6 +3974,8 @@ function renderMinimap() {
 
 
 
+let gridPatternCache = null;
+
 function render() {
   const frameNow = Date.now();
   const framePlayer = players.find((p) => p.id === playerId);
@@ -3961,11 +3992,15 @@ function render() {
   // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw grid background using tile pattern
-  ensureGridCanvas();
+  // Apply camera scale (zoom out to see more)
   ctx.save();
-  const gridPattern = ctx.createPattern(gridCanvas, "repeat");
-  ctx.fillStyle = gridPattern;
+  ctx.scale(CAMERA_SCALE, CAMERA_SCALE);
+
+  // Draw grid background using cached tile pattern
+  ensureGridCanvas();
+  if (!gridPatternCache) gridPatternCache = ctx.createPattern(gridCanvas, "repeat");
+  ctx.save();
+  ctx.fillStyle = gridPatternCache;
   // Offset pattern to align with camera
   ctx.translate(-Math.floor(cameraX) % 40, -Math.floor(cameraY) % 40);
   ctx.fillRect(0, 0, GAME_CONFIG.VIEWPORT_WIDTH + 40, GAME_CONFIG.VIEWPORT_HEIGHT + 40);
@@ -4045,9 +4080,13 @@ function render() {
   // Render dust clouds (ground level)
   renderDustClouds();
 
-  // Render obstacles from cached offscreen canvas
+  // Render obstacles from cached offscreen canvas (clip to viewport for performance)
   ensureObstacleCanvas();
-  ctx.drawImage(obstacleCanvas, 0, 0);
+  const sx = Math.max(0, Math.floor(cameraX));
+  const sy = Math.max(0, Math.floor(cameraY));
+  const sw = Math.min(GAME_CONFIG.VIEWPORT_WIDTH + 1, GAME_CONFIG.ARENA_WIDTH - sx);
+  const sh = Math.min(GAME_CONFIG.VIEWPORT_HEIGHT + 1, GAME_CONFIG.ARENA_HEIGHT - sy);
+  if (sw > 0 && sh > 0) ctx.drawImage(obstacleCanvas, sx, sy, sw, sh, sx, sy, sw, sh);
 
   // Render pickups
   renderPickups();
@@ -4468,10 +4507,15 @@ function render() {
   renderDeathAnimations();
 
   // === End world-space rendering — restore camera transform ===
-  ctx.restore();
+  ctx.restore(); // Restore camera translate+shake
 
-  // Render crosshair
+  // === Restore camera scale — switch to screen-space for HUD overlays ===
+  ctx.restore(); // Restore camera scale
+
+  // Render crosshair (in screen space)
   if (framePlayer) {
+    const crossX = (mouseX - cameraX) * CAMERA_SCALE;
+    const crossY = (mouseY - cameraY) * CAMERA_SCALE;
     // Tactical crosshair
     ctx.strokeStyle = "rgba(255,170,68,0.8)";
     ctx.lineWidth = 1.5;
@@ -4480,20 +4524,20 @@ function render() {
     const gap = 4;
     const len = 10;
     ctx.beginPath();
-    ctx.moveTo(mouseX - len, mouseY);
-    ctx.lineTo(mouseX - gap, mouseY);
-    ctx.moveTo(mouseX + gap, mouseY);
-    ctx.lineTo(mouseX + len, mouseY);
-    ctx.moveTo(mouseX, mouseY - len);
-    ctx.lineTo(mouseX, mouseY - gap);
-    ctx.moveTo(mouseX, mouseY + gap);
-    ctx.lineTo(mouseX, mouseY + len);
+    ctx.moveTo(crossX - len, crossY);
+    ctx.lineTo(crossX - gap, crossY);
+    ctx.moveTo(crossX + gap, crossY);
+    ctx.lineTo(crossX + len, crossY);
+    ctx.moveTo(crossX, crossY - len);
+    ctx.lineTo(crossX, crossY - gap);
+    ctx.moveTo(crossX, crossY + gap);
+    ctx.lineTo(crossX, crossY + len);
     ctx.stroke();
 
     // Center dot
     ctx.fillStyle = "rgba(255,170,68,0.9)";
     ctx.beginPath();
-    ctx.arc(mouseX, mouseY, 1.5, 0, Math.PI * 2);
+    ctx.arc(crossX, crossY, 1.5, 0, Math.PI * 2);
     ctx.fill();
   }
 

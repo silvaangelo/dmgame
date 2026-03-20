@@ -15,8 +15,8 @@ export const GAME_CONFIG = {
   MACHINEGUN_RELOAD_TIME: 1800,
   SHOTGUN_RELOAD_TIME: 2800,
   SNIPER_RELOAD_TIME: 3000,
-  BULLET_SPEED: 15,
-  BULLET_LIFETIME: 2000,
+  BULLET_SPEED: 22,
+  BULLET_LIFETIME: 2500,
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
   // Machine Gun (automatic)
@@ -50,7 +50,7 @@ export const GAME_CONFIG = {
   // Sniper Rifle
   SNIPER_COOLDOWN: 1100,
   SNIPER_DAMAGE: 8,
-  SNIPER_BULLET_SPEED: 30,
+  SNIPER_BULLET_SPEED: 44,
   SNIPER_AMMO: 5,            // rounds per magazine
   // Shield powerup — more powerful
   SHIELD_DURATION: 15000,
