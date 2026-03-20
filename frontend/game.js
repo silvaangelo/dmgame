@@ -6,6 +6,279 @@ function deserialize(raw) {
   return MessagePack.decode(new Uint8Array(raw));
 }
 
+// ===== BINARY STATE PROTOCOL PARSER =====
+// Maps shortId → { id, username } for all known players/entities
+var shortIdMap = {};
+var myShortId = 0;
+
+var BINARY_MARKER = 0x42;
+var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
+var BINARY_PICKUP_MAP = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen", 7: "armor" };
+
+function isBinaryState(buf) {
+  if (!(buf instanceof ArrayBuffer) || buf.byteLength < 8) return false;
+  return new Uint8Array(buf)[0] === BINARY_MARKER;
+}
+
+function parseBinaryState(buf) {
+  var dv = new DataView(buf);
+  var off = 0;
+
+  // Header
+  off += 1; // skip marker
+  var flags = dv.getUint8(off); off += 1;
+  var hasZone = (flags & 2) !== 0;
+  var seq = dv.getUint32(off, true); off += 4;
+  var playerCount = dv.getUint16(off, true); off += 2;
+
+  // Players
+  var parsedPlayers = [];
+  for (var i = 0; i < playerCount; i++) {
+    var sid = dv.getUint16(off, true); off += 2;
+    var px = dv.getFloat32(off, true); off += 4;
+    var py = dv.getFloat32(off, true); off += 4;
+    var hp = dv.getInt8(off); off += 1;
+    var shots = dv.getUint8(off); off += 1;
+    var reloading = dv.getUint8(off) === 1; off += 1;
+    var lastInput = dv.getUint32(off, true); off += 4;
+    var aimAngle = dv.getFloat32(off, true); off += 4;
+    var weaponCode = dv.getUint8(off); off += 1;
+    var kills = dv.getUint16(off, true); off += 2;
+    var skin = dv.getUint8(off); off += 1;
+    var powerFlags = dv.getUint8(off); off += 1;
+    var armor = dv.getUint8(off); off += 1;
+    var score = dv.getUint16(off, true); off += 2;
+
+    var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
+    parsedPlayers.push({
+      id: info.id,
+      username: info.username,
+      x: px, y: py, hp: hp, shots: shots,
+      reloading: reloading,
+      lastProcessedInput: lastInput,
+      aimAngle: aimAngle,
+      weapon: BINARY_WEAPON_MAP[weaponCode] || "machinegun",
+      kills: kills, skin: skin,
+      speedBoosted: (powerFlags & 1) !== 0,
+      shielded: (powerFlags & 2) !== 0,
+      invisible: (powerFlags & 4) !== 0,
+      regen: (powerFlags & 8) !== 0,
+      dashing: (powerFlags & 16) !== 0,
+      armor: armor, score: score,
+    });
+  }
+
+  // Bullets
+  var bulletCount = dv.getUint16(off, true); off += 2;
+  var parsedBullets = [];
+  for (var j = 0; j < bulletCount; j++) {
+    var bsid = dv.getUint16(off, true); off += 2;
+    var bx = dv.getInt16(off, true); off += 2;
+    var by = dv.getInt16(off, true); off += 2;
+    var bw = dv.getUint8(off); off += 1;
+    parsedBullets.push({ id: "b" + bsid, x: bx, y: by, weapon: BINARY_WEAPON_MAP[bw] || "machinegun" });
+  }
+
+  // Pickups
+  var pickupCount = dv.getUint16(off, true); off += 2;
+  var parsedPickups = [];
+  for (var k = 0; k < pickupCount; k++) {
+    var pksid = dv.getUint16(off, true); off += 2;
+    var pkx = dv.getInt16(off, true); off += 2;
+    var pky = dv.getInt16(off, true); off += 2;
+    var pkt = dv.getUint8(off); off += 1;
+    parsedPickups.push({ id: "pk" + pksid, x: pkx, y: pky, type: BINARY_PICKUP_MAP[pkt] || "health" });
+  }
+
+  // Orbs
+  var orbCount = dv.getUint16(off, true); off += 2;
+  var parsedOrbs = [];
+  for (var m = 0; m < orbCount; m++) {
+    var osid = dv.getUint16(off, true); off += 2;
+    var ox = dv.getInt16(off, true); off += 2;
+    var oy = dv.getInt16(off, true); off += 2;
+    parsedOrbs.push({ id: "o" + osid, x: ox, y: oy });
+  }
+
+  // Crates
+  var crateCount = dv.getUint16(off, true); off += 2;
+  var parsedCrates = [];
+  for (var n = 0; n < crateCount; n++) {
+    var csid = dv.getUint16(off, true); off += 2;
+    var cx = dv.getInt16(off, true); off += 2;
+    var cy = dv.getInt16(off, true); off += 2;
+    var chp = dv.getUint8(off); off += 1;
+    parsedCrates.push({ id: "c" + csid, x: cx, y: cy, hp: chp });
+  }
+
+  // Zone
+  var zone = null;
+  if (hasZone) {
+    zone = {
+      x: dv.getInt16(off, true), y: dv.getInt16(off + 2, true),
+      w: dv.getInt16(off + 4, true), h: dv.getInt16(off + 6, true),
+    };
+  }
+
+  return {
+    seq: seq,
+    players: parsedPlayers,
+    bullets: parsedBullets,
+    pickups: parsedPickups,
+    orbs: parsedOrbs,
+    crates: parsedCrates,
+    zone: zone,
+  };
+}
+
+/**
+ * Handle a binary state message — same logic as the msgpack "state" handler
+ * but using the binary-parsed data.
+ */
+function handleBinaryState(buf) {
+  var s = parseBinaryState(buf);
+
+  // Binary state is always a full snapshot (no delta)
+  var parsedPlayers = s.players;
+  var parsedBullets = s.bullets;
+
+  // Pickups, orbs, crates — replace entirely (viewport-culled)
+  pickups = s.pickups;
+  orbs = s.orbs;
+  lootCrates = s.crates;
+
+  // Zone
+  if (s.zone) {
+    arenaZone = s.zone;
+  }
+
+  // Death/damage detection
+  parsedPlayers.forEach(function(p) {
+    var prevState = previousPlayerStates.get(p.id);
+    if (prevState && prevState.hp > 0 && p.hp <= 0) {
+      createDeathAnimation(p.x, p.y, p.skin || 0);
+      var deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
+      pendingDeathWeapon.delete(p.username);
+
+      if (deathWeapon === "knife") {
+        createBlood(p.x, p.y); createBlood(p.x, p.y); createBlood(p.x, p.y);
+        createBloodStain(p.x, p.y); createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
+        createKillEffect(p.x, p.y, "ice");
+      } else if (deathWeapon === "shotgun") {
+        for (var i = 0; i < 12; i++) {
+          var angle = Math.random() * Math.PI * 2;
+          var speed = 3 + Math.random() * 4;
+          bloodParticles.push({
+            particles: [{ x: p.x, y: p.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 1.0, size: 3 + Math.random() * 4, color: "rgb(" + (139 + Math.floor(Math.random() * 116)) + ", 0, 0)" }],
+            frame: 0,
+          });
+        }
+        createBloodStain(p.x, p.y); createBloodStain(p.x, p.y);
+        createKillEffect(p.x, p.y, "fire");
+      } else if (deathWeapon === "sniper") {
+        createKillEffect(p.x, p.y, "lightning"); createBlood(p.x, p.y);
+      } else if (deathWeapon === "minigun") {
+        createKillEffect(p.x, p.y, "fire"); createKillEffect(p.x, p.y, "lightning");
+      } else {
+        createBlood(p.x, p.y); createBloodStain(p.x, p.y); createKillEffect(p.x, p.y, "lightning");
+      }
+
+      createFloatingNumber(p.x, p.y, prevState.hp);
+      if (p.id === playerId) { triggerScreenShake(12); stopHeartbeat(); }
+      else { triggerScreenShake(5); }
+      playPositionalSound("died", p.x, p.y, 0.3);
+      if (p.id !== playerId) createHitMarker();
+    } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
+      createBlood(p.x, p.y);
+      createBloodStain(p.x, p.y);
+      createFloatingNumber(p.x, p.y, prevState.hp - p.hp);
+      if (p.id !== playerId) createHitMarker();
+      if (p.id === playerId) {
+        createDamageIndicator(p.x, p.y);
+        triggerScreenShake(6);
+        if (p.hp === 1) startHeartbeat();
+      }
+    } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
+      if (p.hp > 1) stopHeartbeat();
+    }
+    previousPlayerStates.set(p.id, { hp: p.hp, x: p.x, y: p.y });
+
+    if (p.id !== playerId) {
+      var current = playerTargets.get(p.id);
+      if (current) {
+        playerTargets.set(p.id, { currentX: current.currentX, currentY: current.currentY, targetX: p.x, targetY: p.y });
+      } else {
+        playerTargets.set(p.id, { currentX: p.x, currentY: p.y, targetX: p.x, targetY: p.y });
+      }
+    }
+  });
+
+  // Bullet impact detection
+  var newBulletPositions = new Map();
+  parsedBullets.forEach(function(b) { newBulletPositions.set(b.id, { x: b.x, y: b.y }); });
+  previousBulletPositions.forEach(function(prev, id) {
+    if (!newBulletPositions.has(id)) {
+      createImpactSparks(prev.x, prev.y);
+    }
+  });
+
+  var currentBulletCount = parsedBullets.length;
+  if (currentBulletCount > previousBulletCount) {
+    var newBullets = parsedBullets.filter(function(b) { return !previousBulletPositions.has(b.id); });
+    newBullets.forEach(function(b) {
+      if (b.weapon === "shotgun") {
+        playPositionalSound("shotgun-shot", b.x, b.y, 0.25);
+      } else if (b.weapon === "sniper") {
+        playPositionalSound("sniper-shot", b.x, b.y, 0.25);
+      } else {
+        var idx = Math.floor(Math.random() * 5) + 1;
+        playPositionalSound("machinegun-" + idx, b.x, b.y, 0.12);
+      }
+    });
+  }
+  previousBulletCount = currentBulletCount;
+  previousBulletPositions = newBulletPositions;
+
+  players = parsedPlayers;
+  bullets = parsedBullets.concat(bullets.filter(function(b) { return b.predicted; }));
+  bullets = bullets.filter(function(b) {
+    if (!b.predicted) return true;
+    return !parsedBullets.some(function(sb) {
+      var dx = sb.x - b.x, dy = sb.y - b.y;
+      return dx * dx + dy * dy < 2500;
+    });
+  });
+
+  // Client-side prediction reconciliation
+  var currentPlayer = players.find(function(p) { return p.id === playerId; });
+  if (currentPlayer) {
+    if (currentPlayer.hp < previousHP) {
+      playPositionalSound("scream", predictedX, predictedY, 0.25);
+    }
+    previousHP = currentPlayer.hp;
+
+    if (currentPlayer.dashing) dashCooldownUntil = Date.now() + 1000;
+
+    var lastProcessed = currentPlayer.lastProcessedInput || 0;
+    pendingInputs = pendingInputs.filter(function(inp) { return inp.sequence > lastProcessed; });
+
+    var reconciledX = currentPlayer.x;
+    var reconciledY = currentPlayer.y;
+    pendingInputs.forEach(function(input) {
+      var result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon, currentPlayer.speedBoosted);
+      reconciledX = result.x;
+      reconciledY = result.y;
+    });
+    predictedX = reconciledX;
+    predictedY = reconciledY;
+
+    var now = Date.now();
+    pendingInputs = pendingInputs.filter(function(inp) { return now - inp.timestamp < 1000; });
+  }
+
+  updateLeaderboardOverlay();
+}
+
 // ===== HTML ESCAPING (XSS prevention) =====
 function esc(str) {
   if (!str) return "";
@@ -37,7 +310,7 @@ const GAME_CONFIG = {
 // Camera state
 let cameraX = 0;
 let cameraY = 0;
-const CAMERA_SCALE = 0.55; // Zoom out to see more of the arena
+const CAMERA_SCALE = 0.65; // Zoom out to see more of the arena
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
@@ -136,7 +409,6 @@ const WEAPON_KILL_ICONS = {
 let ws;
 let playerId;
 let loggedInUsername = "";
-let sessionToken = "";
 let players = [];
 let bullets = [];
 let obstacles = [];
@@ -197,6 +469,9 @@ let dashTrails = [];
 // Orbs (slither-style collectible points)
 let orbs = [];
 
+// Round timer
+let roundTimeRemaining = 300; // seconds
+
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
 function getCachedDOM() {
@@ -211,6 +486,7 @@ function getCachedDOM() {
       speedBoostDisplay: document.getElementById("speedBoostDisplay"),
       killFeed: document.getElementById("killFeed"),
       playerListContent: document.getElementById("playerListContent"),
+      timerDisplay: document.getElementById("timerDisplay"),
     };
   }
   return _cachedDOM;
@@ -229,6 +505,7 @@ let killFeedEntries = [];
 
 // Cached grid canvas (used in resizeCanvas and render)
 let gridCanvas = null;
+let gridPatternCache = null;
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
 
@@ -314,15 +591,20 @@ window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 // ===== MOUSE INPUT — aiming and shooting =====
+let lastAimSendTime = 0;
 canvas.addEventListener("mousemove", function(e) {
   // Convert screen coords to world coords via camera scale + offset
   mouseX = e.clientX / CAMERA_SCALE + cameraX;
   mouseY = e.clientY / CAMERA_SCALE + cameraY;
   if (ws && gameReady) {
-    const dx = mouseX - predictedX;
-    const dy = mouseY - predictedY;
-    const aimAngle = Math.atan2(dy, dx);
-    ws.send(serialize({ type: "aim", aimAngle: aimAngle }));
+    const now = performance.now();
+    if (now - lastAimSendTime >= 33) { // Throttle aim to ~30 msg/sec
+      lastAimSendTime = now;
+      const dx = mouseX - predictedX;
+      const dy = mouseY - predictedY;
+      const aimAngle = Math.atan2(dy, dx);
+      ws.send(serialize({ type: "aim", aimAngle: aimAngle }));
+    }
   }
 });
 
@@ -1526,59 +1808,6 @@ function stopReadyAlarm() {
 
 let previousHP = 3;
 
-// ===== SESSION MANAGEMENT =====
-
-
-function saveSession(token, username) {
-  sessionToken = token;
-  loggedInUsername = username;
-  try {
-    localStorage.setItem("dm_token", token);
-    localStorage.setItem("dm_username", username);
-  } catch { /* private browsing */ }
-  document.cookie = `dm_token=${token}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Strict; Secure`;
-}
-
-function loadSavedToken() {
-  try {
-    const token = localStorage.getItem("dm_token");
-    if (token) return token;
-  } catch { /* private browsing */ }
-  const match = document.cookie.match(/dm_token=([a-f0-9]+)/);
-  if (match) return match[1];
-  return null;
-}
-
-async function checkExistingSession() {
-  const savedToken = loadSavedToken();
-  if (!savedToken) return null;
-  try {
-    const res = await fetch("/api/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: savedToken }),
-    });
-    const data = await res.json();
-    if (data.username && data.token) {
-      saveSession(data.token, data.username);
-      return { username: data.username, token: data.token };
-    }
-  } catch { /* offline or error */ }
-  return null;
-}
-
-async function apiRegister(username) {
-  const res = await fetch("/api/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username }),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  saveSession(data.token, data.username);
-  return data;
-}
-
 // ===== SHOW/HIDE SCREENS =====
 
 function showStartScreen() {
@@ -1590,6 +1819,8 @@ function showStartScreen() {
   document.getElementById("playerList").style.display = "none";
   const deathOv = document.getElementById("deathOverlay");
   if (deathOv) deathOv.style.display = "none";
+  const roundOv = document.getElementById("roundEndOverlay");
+  if (roundOv) roundOv.style.display = "none";
   const mobileCtrl = document.getElementById("mobileControls");
   if (mobileCtrl) mobileCtrl.classList.remove("active");
 
@@ -1647,6 +1878,19 @@ function enterGame(data) {
   // Set up game state from server
   playerId = data.playerId;
   loggedInUsername = data.username;
+
+  // Binary state protocol: populate shortId map
+  if (data.shortId) myShortId = data.shortId;
+  if (data.shortIdMap) {
+    shortIdMap = {};
+    for (var key in data.shortIdMap) {
+      shortIdMap[Number(key)] = data.shortIdMap[key];
+    }
+  }
+
+  // Save username for convenience (auto-fill on next visit)
+  try { localStorage.setItem("dm_username", data.username); } catch { /* private browsing */ }
+
   players = data.players || [];
   obstacles = data.obstacles || [];
   orbs = (data.orbs || []).map(function(o) {
@@ -1657,6 +1901,7 @@ function enterGame(data) {
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
   if (data.maxHp) maxHp = data.maxHp;
+  if (data.timerRemaining != null) roundTimeRemaining = data.timerRemaining;
 
   obstacleCanvasDirty = true;
   _cachedDOM = null;
@@ -1752,6 +1997,7 @@ function tryShoot() {
   if (!isMouseDown || !gameReady) return;
   const localPlayer = players.find(function(p) { return p.id === playerId; });
   if (!localPlayer || localPlayer.hp <= 0) return;
+  if (localPlayer.reloading) return;
 
   const weapon = localPlayer.weapon || "machinegun";
   const cooldowns = WEAPON_COOLDOWNS;
@@ -1830,6 +2076,12 @@ function connect() {
   };
 
   ws.onmessage = function(e) {
+    // ===== BINARY STATE MESSAGE (fast path) =====
+    if (isBinaryState(e.data)) {
+      handleBinaryState(e.data);
+      return;
+    }
+
     const data = deserialize(e.data);
     if (!data || !data.type) return;
 
@@ -1865,6 +2117,10 @@ function connect() {
     // ===== PLAYER JOINED/LEFT =====
     if (data.type === "playerJoined") {
       showToast("➕ " + esc(data.username) + " joined", "#44bbff");
+      // Update shortId map for the new player
+      if (data.shortId) {
+        shortIdMap[data.shortId] = { id: data.playerId, username: data.username };
+      }
       return;
     }
 
@@ -1959,12 +2215,21 @@ function connect() {
           }
         } else if (data.victim === localPlayer.username) {
           lastKilledByUsername = data.killer;
-          // Show death overlay
+          // Show death overlay with respawn button
           const deathOv = document.getElementById("deathOverlay");
           if (deathOv) {
             deathOv.style.display = "flex";
             const killerEl = document.getElementById("deathKiller");
             if (killerEl) killerEl.textContent = "Killed by " + data.killer;
+            const droppedEl = document.getElementById("deathDroppedScore");
+            if (droppedEl) {
+              if (data.droppedScore > 0) {
+                droppedEl.textContent = "-" + data.droppedScore + " points dropped!";
+                droppedEl.style.display = "block";
+              } else {
+                droppedEl.style.display = "none";
+              }
+            }
           }
           const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)]
             .replace("{killer}", data.killer);
@@ -2283,6 +2548,135 @@ function connect() {
       updateLeaderboardOverlay();
       return;
     }
+
+    // ===== GAME TIMER =====
+    if (data.type === "gameTimer") {
+      roundTimeRemaining = data.remaining;
+      var timerEl = document.getElementById("timerDisplay");
+      if (timerEl) {
+        var mins = Math.floor(data.remaining / 60);
+        var secs = data.remaining % 60;
+        timerEl.textContent = "\u23f1 " + mins + ":" + (secs < 10 ? "0" : "") + secs;
+        if (data.remaining <= 30) {
+          timerEl.classList.add("timer-warning");
+        } else {
+          timerEl.classList.remove("timer-warning");
+        }
+      }
+      return;
+    }
+
+    // ===== ROUND END =====
+    if (data.type === "roundEnd") {
+      var overlay = document.getElementById("roundEndOverlay");
+      if (overlay) {
+        overlay.style.display = "flex";
+        var winnerEl = document.getElementById("roundEndWinner");
+        if (winnerEl) winnerEl.textContent = "\ud83c\udfc6 " + esc(data.winnerName) + " wins!";
+
+        var sbEl = document.getElementById("roundEndScoreboard");
+        if (sbEl && data.scoreboard) {
+          var medals = ["\ud83e\udd47", "\ud83e\udd48", "\ud83e\udd49"];
+          sbEl.innerHTML = data.scoreboard.map(function(s, i) {
+            var isMe = s.username === loggedInUsername;
+            var isWinner = i === 0;
+            var cls = "round-end-row" + (isWinner ? " winner" : "") + (isMe ? " me" : "");
+            var medal = i < 3 ? medals[i] : (i + 1) + ".";
+            return '<div class="' + cls + '"><span>' + medal + " " + esc(s.username) + '</span><span>\u2b50' + s.score + ' | ' + s.kills + 'K/' + s.deaths + 'D</span></div>';
+          }).join("");
+        }
+
+        var countdownEl = document.getElementById("roundEndCountdown");
+        var restartSec = Math.ceil((data.restartDelay || 10000) / 1000);
+        function tickCountdown() {
+          if (restartSec > 0) {
+            countdownEl.textContent = "Next round in " + restartSec + "s...";
+            restartSec--;
+            setTimeout(tickCountdown, 1000);
+          }
+        }
+        tickCountdown();
+
+        // Play win/lose sound
+        var localP = players.find(function(p) { return p.id === playerId; });
+        if (localP && localP.username === data.winnerName) {
+          playSound("match-win/match-win-" + data.audioIndex, 0.6);
+        } else {
+          playSound("match-lose/match-lose-" + data.audioIndex, 0.6);
+        }
+      }
+      // Hide death overlay if shown
+      var deathOv = document.getElementById("deathOverlay");
+      if (deathOv) deathOv.style.display = "none";
+      return;
+    }
+
+    // ===== ROUND START (new round) =====
+    if (data.type === "roundStart") {
+      // Hide round end overlay
+      var roundOv = document.getElementById("roundEndOverlay");
+      if (roundOv) roundOv.style.display = "none";
+      // Hide death overlay
+      var deathOv2 = document.getElementById("deathOverlay");
+      if (deathOv2) deathOv2.style.display = "none";
+
+      // Reset game state for new round
+      obstacles = data.obstacles || [];
+      orbs = (data.orbs || []).map(function(o) {
+        if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
+        return o;
+      });
+      bullets = [];
+      pickups = [];
+      lootCrates = [];
+      explosions = [];
+      bloodParticles = [];
+      bloodStains = [];
+      muzzleFlashes = [];
+      knifeSlashes = [];
+      shellCasings = [];
+      impactSparks = [];
+      dustClouds = [];
+      hitMarkers = [];
+      damageIndicators = [];
+      activeBombs = [];
+      activeLightnings = [];
+      killEffects = [];
+      deathAnimations = [];
+      flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
+      previousBulletPositions.clear();
+      screenShake = { intensity: 0, decay: 0.92 };
+      killFeedEntries = [];
+      killFeedDirty = true;
+      obstacleCanvasDirty = true;
+      _cachedDOM = null;
+      previousPlayerStates.clear();
+      floatingNumbers = [];
+      lowHPPulseTime = 0;
+      arenaZone = null;
+      roundTimeRemaining = 300;
+
+      if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
+      if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
+      if (data.maxHp) maxHp = data.maxHp;
+
+      // Update shortId map
+      if (data.shortIdMap) {
+        shortIdMap = {};
+        for (var key in data.shortIdMap) {
+          shortIdMap[Number(key)] = data.shortIdMap[key];
+        }
+      }
+
+      // Set local player position
+      predictedX = data.playerX;
+      predictedY = data.playerY;
+
+      resizeCanvas();
+      playSound("matchstart", 0.5);
+      showToast("\ud83d\udd04 NEW ROUND! \ud83d\udd04", "#ffcc00");
+      return;
+    }
   };
 
   ws.onerror = function(error) {
@@ -2301,7 +2695,7 @@ function connect() {
 
 // ===== JOIN GAME =====
 
-async function doJoin() {
+function doJoin() {
   const usernameInput = document.getElementById("username");
   const playBtn = document.getElementById("playBtn");
   const errorEl = document.getElementById("usernameError");
@@ -2330,47 +2724,46 @@ async function doJoin() {
   playBtn.style.opacity = "0.6";
   playBtn.textContent = "Connecting...";
 
-  // Register via API to get token
-  try {
-    await apiRegister(trimmed);
-  } catch (err) {
-    errorEl.textContent = "⚠ " + err.message;
-    errorEl.style.display = "block";
-    playBtn.disabled = false;
-    playBtn.style.opacity = "1";
-    playBtn.textContent = "▶ PLAY";
-    return;
-  }
-
   loggedInUsername = trimmed;
 
-  // Send join via WebSocket
+  // Send join directly via WebSocket (no registration needed)
+  function sendJoin() {
+    ws.send(serialize({ type: "join", username: trimmed, skin: selectedSkin }));
+  }
+
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(serialize({ type: "join", token: sessionToken, skin: selectedSkin }));
+    sendJoin();
   } else {
-    // Connect and join
     connect();
     const waitForOpen = setInterval(function() {
       if (ws && ws.readyState === WebSocket.OPEN) {
         clearInterval(waitForOpen);
-        ws.send(serialize({ type: "join", token: sessionToken, skin: selectedSkin }));
+        sendJoin();
       }
     }, 100);
     setTimeout(function() { clearInterval(waitForOpen); }, 10000);
   }
 }
 
-// On page load: connect WebSocket + check saved session
-(async function init() {
+// ===== RESPAWN =====
+
+function doRespawn() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(serialize({ type: "requestRespawn" }));
+}
+
+// On page load: connect WebSocket + listen for Enter
+(function init() {
   connect();
 
-  const session = await checkExistingSession();
-  if (session) {
-    loggedInUsername = session.username;
-    sessionToken = session.token;
-    const usernameInput = document.getElementById("username");
-    if (usernameInput) usernameInput.value = session.username;
-  }
+  // Restore last used username from localStorage (convenience, not auth)
+  try {
+    const saved = localStorage.getItem("dm_username");
+    if (saved) {
+      const usernameInput = document.getElementById("username");
+      if (usernameInput) usernameInput.value = saved;
+    }
+  } catch { /* private browsing */ }
 
   // Listen for Enter key on username input
   const usernameInput = document.getElementById("username");
@@ -2421,13 +2814,13 @@ function updateShotUI() {
   } else if (player.weapon === "minigun") {
     shotsDisplay.textContent = `${weaponName} | ∞`;
   } else {
-    const weaponMaxAmmo = player.weapon === "shotgun" ? 8 : player.weapon === "sniper" ? 5 : 25;
+    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 35;
     shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/${weaponMaxAmmo}`;
   }
 
   // Show respawn message if dead
   if (player.hp <= 0) {
-    healthDisplay.textContent = RESPAWN_PHRASES[Math.floor(Math.random() * RESPAWN_PHRASES.length)];
+    healthDisplay.textContent = "💀 DEAD — Click RESPAWN";
     if (hpBarFill) {
       hpBarFill.style.width = "0%";
       hpBarFill.className = "hud-hp-bar-fill";
@@ -3268,18 +3661,18 @@ function renderOrbs() {
   const now = Date.now();
   for (let i = 0; i < orbs.length; i++) {
     const orb = orbs[i];
-    if (!isOnScreen(orb.x, orb.y, 20)) continue;
+    if (!isOnScreen(orb.x, orb.y, 30)) continue;
 
     // Pulsating glow effect
     const pulse = 0.7 + 0.3 * Math.sin(now * 0.004 + orb.x * 0.1 + orb.y * 0.1);
-    const radius = 8 * pulse;
+    const radius = 13 * pulse;
 
     // Outer glow
     ctx.save();
     ctx.globalAlpha = 0.3 * pulse;
     ctx.fillStyle = "#00ffcc";
     ctx.beginPath();
-    ctx.arc(orb.x, orb.y, radius + 6, 0, Math.PI * 2);
+    ctx.arc(orb.x, orb.y, radius + 8, 0, Math.PI * 2);
     ctx.fill();
 
     // Inner orb
@@ -3318,26 +3711,26 @@ function renderPickups() {
     ctx.globalAlpha = 0.2 + Math.sin(now / 300) * 0.1;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 18, 0, Math.PI * 2);
+    ctx.arc(pk.x, pk.y + floatY, 24, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1.0;
 
     // Pickup body
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 12, 0, Math.PI * 2);
+    ctx.arc(pk.x, pk.y + floatY, 16, 0, Math.PI * 2);
     ctx.fill();
 
     // Border
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 12, 0, Math.PI * 2);
+    ctx.arc(pk.x, pk.y + floatY, 16, 0, Math.PI * 2);
     ctx.stroke();
 
     // Icon
     ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 14px 'Rajdhani', sans-serif";
+    ctx.font = "bold 17px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(icon, pk.x, pk.y + floatY);
@@ -3971,10 +4364,6 @@ function renderMinimap() {
 
   ctx.restore();
 }
-
-
-
-let gridPatternCache = null;
 
 function render() {
   const frameNow = Date.now();

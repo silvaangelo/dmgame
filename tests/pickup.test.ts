@@ -7,6 +7,7 @@ import type { Player, Pickup } from "../backend/types.js";
 function createTestPlayer(overrides: Partial<Player> = {}): Player {
   return {
     id: "p1",
+    shortId: 1,
     username: "TestPlayer",
     ws: null as unknown as Player["ws"],
     team: 0,
@@ -20,6 +21,7 @@ function createTestPlayer(overrides: Partial<Player> = {}): Player {
     lastProcessedInput: 0,
     kills: 0,
     deaths: 0,
+    score: 0,
     ready: false,
     aimAngle: 0,
     weapon: "machinegun",
@@ -79,7 +81,7 @@ function applyPickup(player: Player, pickup: Pickup) {
 }
 
 function createPickup(type: Pickup["type"]): Pickup {
-  return { id: "pk1", x: 400, y: 400, type, createdAt: Date.now() };
+  return { id: "pk1", shortId: 1, x: 400, y: 400, type, createdAt: Date.now() };
 }
 
 describe("Pickup Application", () => {
@@ -181,7 +183,7 @@ describe("Pickup Collision Detection", () => {
 
   test("pickup collision uses combined radii", () => {
     const combinedRadius = GAME_CONFIG.PLAYER_RADIUS + GAME_CONFIG.PICKUP_RADIUS;
-    expect(combinedRadius).toBe(20 + 30); // 50 pixels
+    expect(combinedRadius).toBe(20 + 40); // 60 pixels
   });
 });
 

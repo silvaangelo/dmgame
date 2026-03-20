@@ -45,6 +45,7 @@ function checkBulletPlayerHit(
 function createTestBullet(overrides: Partial<Bullet> = {}): Bullet {
   return {
     id: "b1",
+    shortId: 1,
     x: 400,
     y: 400,
     dx: GAME_CONFIG.BULLET_SPEED,

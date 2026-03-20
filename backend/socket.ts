@@ -8,9 +8,8 @@ import {
   debouncedBroadcastOnlineList,
   serializePlayers,
 } from "./utils.js";
-import { shoot, reloadWeapon, performDash, addPlayerToGame, removePlayerFromGame } from "./game.js";
+import { shoot, reloadWeapon, performDash, addPlayerToGame, removePlayerFromGame, requestRespawn } from "./game.js";
 import { WebSocket } from "ws";
-import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
 import { serialize, deserialize } from "./protocol.js";
 
 export function setupSocket() {
@@ -63,9 +62,9 @@ export function setupSocket() {
           player.msgWindowStart = now;
         }
         player.msgCount++;
-        if (player.msgCount > 120) {
+        if (player.msgCount > 300) {
           player.violations++;
-          if (player.violations >= 5) {
+          if (player.violations >= 10) {
             console.log(`🚫 Kicked ${player.username} for message flooding`);
             ws.close(4001, "Rate limit exceeded");
             return;
@@ -79,23 +78,8 @@ export function setupSocket() {
       if (data.type === "join") {
         if (player !== null) return;
 
-        let trimmed: string | undefined;
-
-        if (data.token && typeof data.token === "string") {
-          const user = getUserByToken(data.token);
-          if (user) trimmed = user.username;
-          else {
-            ws.send(serialize({ type: "error", message: "Session expired." }));
-            return;
-          }
-        }
-
-        if (!trimmed) {
-          if (!data.username || typeof data.username !== "string") return;
-          trimmed = data.username.trim();
-        }
-
-        const username = trimmed as string;
+        if (!data.username || typeof data.username !== "string") return;
+        const username = data.username.trim();
 
         if (
           username.length < GAME_CONFIG.USERNAME_MIN_LENGTH ||
@@ -124,6 +108,7 @@ export function setupSocket() {
 
         player = {
           id: uuid(),
+          shortId: persistentGame.nextShortId++,
           username,
           ws,
           team: 0,
@@ -155,6 +140,7 @@ export function setupSocket() {
           dashUntil: 0,
           dashDirX: 0,
           dashDirY: 0,
+          waitingForRespawn: false,
           msgCount: 0,
           msgWindowStart: Date.now(),
           violations: 0,
@@ -172,9 +158,17 @@ export function setupSocket() {
         addPlayerToGame(player, persistentGame);
 
         // Send full game state to joining player
+        // Include shortId map so the frontend can decode binary state messages
+        const shortIdMap: Record<number, { id: string; username: string }> = {};
+        for (const p of persistentGame.players) {
+          shortIdMap[p.shortId] = { id: p.id, username: p.username };
+        }
+        const elapsed = Date.now() - persistentGame.matchStartTime;
+        const timerRemaining = Math.max(0, Math.ceil((GAME_CONFIG.ROUND_DURATION - elapsed) / 1000));
         ws.send(serialize({
           type: "gameJoined",
           playerId: player.id,
+          shortId: player.shortId,
           username,
           players: serializePlayers(persistentGame),
           obstacles: persistentGame.obstacles,
@@ -182,6 +176,8 @@ export function setupSocket() {
           arenaWidth: GAME_CONFIG.ARENA_WIDTH,
           arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
           maxHp: GAME_CONFIG.PLAYER_HP,
+          shortIdMap,
+          timerRemaining,
         }));
 
         // Notify others
@@ -189,6 +185,7 @@ export function setupSocket() {
           type: "playerJoined",
           username: player.username,
           playerId: player.id,
+          shortId: player.shortId,
         });
 
         // Broadcast updated count
@@ -197,12 +194,6 @@ export function setupSocket() {
           try { if (c.readyState === WebSocket.OPEN) c.send(countMsg); } catch { /* ignore */ }
         });
 
-        return;
-      }
-
-      if (data.type === "getLeaderboard") {
-        const stats = getLeaderboard(10);
-        ws.send(serialize({ type: "leaderboard", stats }));
         return;
       }
 
@@ -223,10 +214,8 @@ export function setupSocket() {
 
       if (data.type === "reload") { reloadWeapon(player); return; }
       if (data.type === "dash") { performDash(player); return; }
-
-      if (data.type === "getMyStats") {
-        const stats = getPlayerStats(player.username);
-        ws.send(serialize({ type: "myStats", stats }));
+      if (data.type === "requestRespawn") {
+        if (game) requestRespawn(player, game);
         return;
       }
 

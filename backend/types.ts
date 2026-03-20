@@ -7,6 +7,7 @@ export type GameModeVote = "deathmatch";
 
 export type Player = {
   id: string;
+  shortId: number; // Compact numeric ID for binary state protocol
   username: string;
   ws: WebSocket;
   team: number;
@@ -36,6 +37,8 @@ export type Player = {
   lastRegenTick: number;
   // Armor (temporary extra HP above max)
   armor: number;
+  // Respawn
+  waitingForRespawn: boolean;
   // Dash ability
   dashCooldownUntil: number;
   dashUntil: number;
@@ -50,6 +53,7 @@ export type Player = {
 
 export type Bullet = {
   id: string;
+  shortId: number; // Compact numeric ID for binary state protocol
   x: number;
   y: number;
   dx: number;
@@ -87,6 +91,7 @@ export type Lightning = {
 
 export type Pickup = {
   id: string;
+  shortId: number;
   x: number;
   y: number;
   type: "health" | "ammo" | "speed" | "minigun" | "shield" | "invisibility" | "regen" | "armor";
@@ -95,6 +100,7 @@ export type Pickup = {
 
 export type Orb = {
   id: string;
+  shortId: number;
   x: number;
   y: number;
   createdAt: number;
@@ -102,6 +108,7 @@ export type Orb = {
 
 export type LootCrate = {
   id: string;
+  shortId: number;
   x: number;
   y: number;
   hp: number;
@@ -110,6 +117,7 @@ export type LootCrate = {
 
 export type Game = {
   id: string;
+  nextShortId: number; // Counter for binary protocol short IDs
   players: Player[];
   bullets: Bullet[];
   obstacles: Obstacle[];

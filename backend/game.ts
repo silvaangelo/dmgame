@@ -1,18 +1,24 @@
 import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate, Orb } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate, Orb, Obstacle } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
-import { games, allPlayers, rooms, setPersistentGame, persistentGame } from "./state.js";
+import { games, allPlayers, setPersistentGame, persistentGame } from "./state.js";
 import {
   broadcast,
-  serializePlayersCompact,
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
 import { updatePlayerStats, addMatchHistory } from "./database.js";
-import { serialize } from "./protocol.js";
+import { serialize, encodeBinaryState } from "./protocol.js";
+import { SpatialGrid } from "./spatial.js";
 
-const WEAPON_CODE_MAP: Record<string, number> = { machinegun: 0, shotgun: 1, knife: 2, minigun: 3, sniper: 4 };
+/* ================= SPATIAL GRIDS (reused each tick) ================= */
+const CELL_SIZE = 200;
+const obstacleGrid = new SpatialGrid<Obstacle>(CELL_SIZE, GAME_CONFIG.ARENA_WIDTH);
+const playerGrid = new SpatialGrid<Player>(CELL_SIZE, GAME_CONFIG.ARENA_WIDTH);
+
+/** The culling margin beyond each player's viewport in pixels. */
+const CULL_MARGIN = 1400;
 
 /* ================= KILL STREAKS ================= */
 
@@ -33,6 +39,12 @@ function handleKill(
   victim.deaths++;
   victim.killStreak = 0;
 
+  // Drop half of victim's score as orbs on the ground
+  dropScoreOrbs(victim, game);
+
+  // Mark victim as waiting for manual respawn
+  victim.waitingForRespawn = true;
+
   if (killer && killer.id !== victim.id) {
     killer.kills++;
     killer.killStreak++;
@@ -51,6 +63,7 @@ function handleKill(
       victim: victim.username,
       weapon,
       isRevenge,
+      droppedScore: Math.floor(victim.score * GAME_CONFIG.DEATH_ORB_DROP_FRACTION),
     });
 
     // Track who killed this victim
@@ -75,22 +88,44 @@ function handleKill(
       victim: victim.username,
       weapon,
       isRevenge: false,
+      droppedScore: Math.floor(victim.score * GAME_CONFIG.DEATH_ORB_DROP_FRACTION),
     });
   }
 
-  checkVictory(game);
+  // Deduct the dropped score from victim
+  const dropped = Math.floor(victim.score * GAME_CONFIG.DEATH_ORB_DROP_FRACTION);
+  victim.score = Math.max(0, victim.score - dropped);
 
-  // Respawn after delay
-  if (games.has(game.id) || game.id === "persistent") {
-    setTimeout(() => {
-      if (games.has(game.id) || game.id === "persistent") {
-        respawnPlayer(victim, game);
-      }
-    }, GAME_CONFIG.RESPAWN_TIME);
-  }
+  checkVictory(game);
 }
 
 /* ================= HELPERS ================= */
+
+/** Drop a fraction of the victim's score as collectible orbs at their death position */
+function dropScoreOrbs(victim: Player, game: Game) {
+  const scoreToDrop = Math.floor(victim.score * GAME_CONFIG.DEATH_ORB_DROP_FRACTION);
+  if (scoreToDrop <= 0) return;
+
+  // Each orb is worth 1 point, spawn them in a cluster around death position
+  const orbCount = Math.min(scoreToDrop, 30); // Cap at 30 orbs to avoid spam
+  const spread = 60; // pixels spread radius
+
+  for (let i = 0; i < orbCount; i++) {
+    const angle = (i / orbCount) * Math.PI * 2;
+    const dist = 15 + Math.random() * spread;
+    const orbX = Math.max(20, Math.min(GAME_CONFIG.ARENA_WIDTH - 20, victim.x + Math.cos(angle) * dist));
+    const orbY = Math.max(20, Math.min(GAME_CONFIG.ARENA_HEIGHT - 20, victim.y + Math.sin(angle) * dist));
+
+    const orb: Orb = {
+      id: uuid(),
+      shortId: game.nextShortId++,
+      x: orbX,
+      y: orbY,
+      createdAt: Date.now(),
+    };
+    game.orbs.push(orb);
+  }
+}
 
 function getPlayerSpeed(player: Player): number {
   const knifeBonus = player.weapon === "knife" ? GAME_CONFIG.KNIFE_SPEED_BONUS : 1;
@@ -101,6 +136,12 @@ function getPlayerSpeed(player: Player): number {
 /* ================= GAME LOOP ================= */
 
 export function updateGame(game: Game) {
+  // ── Build spatial grids for this tick ──
+  obstacleGrid.clear();
+  for (const obs of game.obstacles) {
+    if (!obs.destroyed) obstacleGrid.insert(obs);
+  }
+
   game.players.forEach((player) => {
     if (player.hp <= 0) return;
 
@@ -122,8 +163,8 @@ export function updateGame(game: Game) {
       // Move in dash direction with push-out collision
       player.x += player.dashDirX * dashSpeed;
       player.x = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x));
-      for (const obstacle of game.obstacles) {
-        if (obstacle.destroyed) continue;
+      const dashNearbyX = obstacleGrid.queryRadius(player.x, player.y, playerRadius + 60);
+      for (const obstacle of dashNearbyX) {
         const closestX = Math.max(obstacle.x, Math.min(player.x, obstacle.x + obstacle.size));
         const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
         const distanceX = player.x - closestX;
@@ -144,8 +185,8 @@ export function updateGame(game: Game) {
 
       player.y += player.dashDirY * dashSpeed;
       player.y = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y));
-      for (const obstacle of game.obstacles) {
-        if (obstacle.destroyed) continue;
+      const dashNearbyY = obstacleGrid.queryRadius(player.x, player.y, playerRadius + 60);
+      for (const obstacle of dashNearbyY) {
         const closestX = Math.max(obstacle.x, Math.min(player.x, obstacle.x + obstacle.size));
         const closestY = Math.max(obstacle.y, Math.min(player.y, obstacle.y + obstacle.size));
         const distanceX = player.x - closestX;
@@ -177,8 +218,8 @@ export function updateGame(game: Game) {
       Math.min(GAME_CONFIG.ARENA_WIDTH - margin, player.x)
     );
 
-    for (const obstacle of game.obstacles) {
-      if (obstacle.destroyed) continue;
+    const nearbyObsX = obstacleGrid.queryRadius(player.x, player.y, playerRadius + 50);
+    for (const obstacle of nearbyObsX) {
       const closestX = Math.max(
         obstacle.x,
         Math.min(player.x, obstacle.x + obstacle.size)
@@ -216,8 +257,8 @@ export function updateGame(game: Game) {
       Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, player.y)
     );
 
-    for (const obstacle of game.obstacles) {
-      if (obstacle.destroyed) continue;
+    const nearbyObsY = obstacleGrid.queryRadius(player.x, player.y, playerRadius + 50);
+    for (const obstacle of nearbyObsY) {
       const closestX = Math.max(
         obstacle.x,
         Math.min(player.x, obstacle.x + obstacle.size)
@@ -247,6 +288,12 @@ export function updateGame(game: Game) {
     );
   });
 
+  // Build player grid after all movement is resolved
+  playerGrid.clear();
+  for (const p of game.players) {
+    if (p.hp > 0) playerGrid.insert(p);
+  }
+
   const bulletsToRemove = new Set<string>();
 
   game.bullets.forEach((bullet) => {
@@ -263,14 +310,29 @@ export function updateGame(game: Game) {
       return;
     }
 
-    const hitObstacle = game.obstacles.find(
-      (o) =>
-        !o.destroyed &&
-        bullet.x >= o.x &&
-        bullet.x <= o.x + o.size &&
-        bullet.y >= o.y &&
-        bullet.y <= o.y + o.size
+    // Swept collision: check the line segment from previous to current position
+    // so fast bullets can't tunnel through small obstacles.
+    const prevBx = bullet.x - bullet.dx;
+    const prevBy = bullet.y - bullet.dy;
+    const sweepMinX = Math.min(prevBx, bullet.x);
+    const sweepMinY = Math.min(prevBy, bullet.y);
+    const sweepMaxX = Math.max(prevBx, bullet.x);
+    const sweepMaxY = Math.max(prevBy, bullet.y);
+    const sweepR = Math.max(Math.abs(bullet.dx), Math.abs(bullet.dy)) + 40;
+    const nearbyObs = obstacleGrid.queryRadius(
+      (prevBx + bullet.x) * 0.5, (prevBy + bullet.y) * 0.5, sweepR
     );
+    let hitObstacle: Obstacle | undefined;
+    for (const o of nearbyObs) {
+      // Broad-phase: AABB overlap between swept bullet rect and obstacle rect
+      if (
+        sweepMaxX >= o.x && sweepMinX <= o.x + o.size &&
+        sweepMaxY >= o.y && sweepMinY <= o.y + o.size
+      ) {
+        hitObstacle = o;
+        break;
+      }
+    }
 
     if (hitObstacle) {
       hitObstacle.destroyed = true;
@@ -325,16 +387,19 @@ export function updateGame(game: Game) {
 
     // Use slightly generous hit detection for bullets
     const hitRadiusSq = (GAME_CONFIG.PLAYER_RADIUS * 1.2) ** 2;
-    const enemy = game.players.find(
-      (p) => {
-        if (p.id === bullet.playerId || p.hp <= 0) return false;
-        // Dash invincibility — can't be hit while dashing
-        if (GAME_CONFIG.DASH_INVINCIBLE && Date.now() < p.dashUntil) return false;
-        const bdx = p.x - bullet.x;
-        const bdy = p.y - bullet.y;
-        return bdx * bdx + bdy * bdy < hitRadiusSq;
+    const nearbyPlayers = playerGrid.queryRadius(bullet.x, bullet.y, GAME_CONFIG.PLAYER_RADIUS * 1.5);
+    let enemy: Player | undefined;
+    for (const p of nearbyPlayers) {
+      if (p.id === bullet.playerId || p.hp <= 0) continue;
+      // Dash invincibility — can't be hit while dashing
+      if (GAME_CONFIG.DASH_INVINCIBLE && Date.now() < p.dashUntil) continue;
+      const bdx = p.x - bullet.x;
+      const bdy = p.y - bullet.y;
+      if (bdx * bdx + bdy * bdy < hitRadiusSq) {
+        enemy = p;
+        break;
       }
-    );
+    }
 
     if (enemy) {
       bulletsToRemove.add(bullet.id);
@@ -537,87 +602,54 @@ export function updateGame(game: Game) {
     }
   });
 
-  // Weapon code mapping (hoisted constant)
-  const weaponCodeMap = WEAPON_CODE_MAP;
-
-  // Delta state compression — only send changed player fields
-  const compactPlayers = serializePlayersCompact(game);
-  const compactBullets = game.bullets.map((b) => [
-    b.id,
-    Math.round(b.x),
-    Math.round(b.y),
-    weaponCodeMap[b.weapon] ?? 0,
-  ]);
-  const compactPickups = game.pickups.map((pk) => {
-    const PICKUP_TYPE_CODES: Record<string, number> = {
-      health: 0, ammo: 1, speed: 2, minigun: 3, shield: 4, invisibility: 5, regen: 6, armor: 7,
-    };
-    return [pk.id, Math.round(pk.x), Math.round(pk.y), PICKUP_TYPE_CODES[pk.type] ?? 0];
-  });
-
-  // Compact loot crates: [id, x, y, hp]
-  const compactCrates = game.lootCrates.map((c) => [c.id, Math.round(c.x), Math.round(c.y), c.hp]);
-
-  // Compact orbs: [id, x, y]
-  const compactOrbs = game.orbs.map((o) => [o.id, Math.round(o.x), Math.round(o.y)]);
-
-  // Delta compression: only send players whose state actually changed
-  if (!game.lastBroadcastState) {
-    game.lastBroadcastState = new Map();
-  }
-  const lastPlayerStates = game.lastBroadcastState.get("players") as Map<string, unknown[]> | undefined;
-  const changedPlayers: unknown[][] = [];
-  const newPlayerStates = new Map<string, unknown[]>();
-
-  for (const compact of compactPlayers) {
-    const arr = compact as unknown[];
-    const pid = arr[0] as string;
-    const prev = lastPlayerStates?.get(pid);
-    newPlayerStates.set(pid, arr);
-
-    if (!prev || prev.length !== arr.length) {
-      changedPlayers.push(arr);
-      continue;
-    }
-    for (let i = 1; i < arr.length; i++) {
-      if (arr[i] !== prev[i]) {
-        changedPlayers.push(arr);
-        break;
-      }
-    }
-  }
-
-  const lastPickupCount = game.lastBroadcastState.get("pickupCount") as number || 0;
-  const lastCrateCount = game.lastBroadcastState.get("crateCount") as number || 0;
-  const lastOrbCount = game.lastBroadcastState.get("orbCount") as number || 0;
-  // Skip broadcast if truly nothing changed
-  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount && compactCrates.length === lastCrateCount && compactOrbs.length === lastOrbCount) {
-    return;
-  }
-
-  // Commit new state only when we actually broadcast
-  game.lastBroadcastState.set("players", newPlayerStates);
-  game.lastBroadcastState.set("pickupCount", compactPickups.length);
-  game.lastBroadcastState.set("crateCount", compactCrates.length);
-  game.lastBroadcastState.set("orbCount", compactOrbs.length);
-
+  // ── Per-player viewport-culled binary state broadcast ──
   game.stateSequence++;
-  broadcast(game, {
-    type: "state",
-    seq: game.stateSequence,
-    p: changedPlayers,
-    df: changedPlayers.length < compactPlayers.length ? 1 : 0,
-    b: compactBullets,
-    pk: compactPickups,
-    cr: compactCrates,
-    orbs: compactOrbs,
-    z: game.zoneShrinking ? [
-      Math.round(game.zoneX),
-      Math.round(game.zoneY),
-      Math.round(game.zoneW),
-      Math.round(game.zoneH),
-    ] : undefined,
-  });
+  const seq = game.stateSequence;
+  const zone = game.zoneShrinking ? {
+    x: game.zoneX, y: game.zoneY, w: game.zoneW, h: game.zoneH,
+  } : null;
+
+  for (const viewer of game.players) {
+    if (viewer.ws.readyState !== WebSocket.OPEN) continue;
+
+    const vx = viewer.x;
+    const vy = viewer.y;
+    const half = CULL_MARGIN;
+
+    // Cull entities to viewer's viewport
+    const visPlayers = game.players.filter((p) => {
+      // Always include the viewer themselves
+      if (p.id === viewer.id) return true;
+      return Math.abs(p.x - vx) < half && Math.abs(p.y - vy) < half;
+    });
+    const visBullets = game.bullets.filter((b) =>
+      Math.abs(b.x - vx) < half && Math.abs(b.y - vy) < half
+    );
+    const visPickups = game.pickups.filter((pk) =>
+      Math.abs(pk.x - vx) < half && Math.abs(pk.y - vy) < half
+    );
+    const visOrbs = game.orbs.filter((o) =>
+      Math.abs(o.x - vx) < half && Math.abs(o.y - vy) < half
+    );
+    const visCrates = game.lootCrates.filter((c) =>
+      Math.abs(c.x - vx) < half && Math.abs(c.y - vy) < half
+    );
+
+    const buf = encodeBinaryState({
+      seq,
+      isDelta: false,
+      players: visPlayers,
+      bullets: visBullets,
+      pickups: visPickups,
+      orbs: visOrbs,
+      crates: visCrates,
+      zone,
+    });
+
+    try {
+      viewer.ws.send(buf);
+    } catch { /* socket closed between readyState check and send */ }
+  }
 }
 
 /* ================= COMBAT ================= */
@@ -695,6 +727,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
 
     const bullet: Bullet = {
       id: uuid(),
+      shortId: game.nextShortId++,
       x: player.x,
       y: player.y,
       dx: finalDirX * GAME_CONFIG.BULLET_SPEED,
@@ -721,7 +754,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
       setTimeout(() => { player.shots = GAME_CONFIG.SNIPER_AMMO; player.reloading = false; }, GAME_CONFIG.SNIPER_RELOAD_TIME);
     }
     const bullet: Bullet = {
-      id: uuid(), x: player.x, y: player.y,
+      id: uuid(), shortId: game.nextShortId++, x: player.x, y: player.y,
       dx: dirX * GAME_CONFIG.SNIPER_BULLET_SPEED,
       dy: dirY * GAME_CONFIG.SNIPER_BULLET_SPEED,
       team: 0, playerId: player.id,
@@ -768,6 +801,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
       const speed = GAME_CONFIG.BULLET_SPEED * 0.9;
       const bullet: Bullet = {
         id: uuid(),
+        shortId: game.nextShortId++,
         x: player.x,
         y: player.y,
         dx: pelletDirX * speed,
@@ -793,6 +827,7 @@ export function shoot(player: Player, game: Game, dirX: number, dirY: number) {
 
   const bullet: Bullet = {
     id: uuid(),
+    shortId: game.nextShortId++,
     x: player.x,
     y: player.y,
     dx: finalDirX * GAME_CONFIG.BULLET_SPEED,
@@ -912,6 +947,7 @@ export function spawnPickup(game: Game) {
   if (validPosition) {
     const pickup: Pickup = {
       id: uuid(),
+      shortId: game.nextShortId++,
       x: pickupX,
       y: pickupY,
       type,
@@ -946,6 +982,7 @@ export function spawnOrb(game: Game) {
     if (validPosition) {
       const orb: Orb = {
         id: uuid(),
+        shortId: game.nextShortId++,
         x: orbX,
         y: orbY,
         createdAt: Date.now(),
@@ -971,6 +1008,7 @@ function destroyLootCrate(crate: LootCrate, game: Game) {
   const type = types[Math.floor(Math.random() * types.length)];
   const pickup: Pickup = {
     id: uuid(),
+    shortId: game.nextShortId++,
     x: crate.x,
     y: crate.y,
     type,
@@ -1015,6 +1053,7 @@ export function spawnLootCrate(game: Game) {
   if (validPosition) {
     const crate: LootCrate = {
       id: uuid(),
+      shortId: game.nextShortId++,
       x: crateX,
       y: crateY,
       hp: GAME_CONFIG.LOOT_CRATE_HP,
@@ -1221,22 +1260,6 @@ function endGame(game: Game, winner: Player) {
   });
   debouncedBroadcastOnlineList();
 
-  // Send room list to all players so they can join a new room
-  const roomList = Array.from(rooms.values()).map((r) => ({
-    id: r.id,
-    name: r.name,
-    playerCount: r.players.length,
-    maxPlayers: GAME_CONFIG.ROOM_MAX_PLAYERS,
-  }));
-  const roomListMsg = serialize({ type: "roomList", rooms: roomList });
-  game.players.forEach((p) => {
-    try {
-      if (p.ws.readyState === WebSocket.OPEN) {
-        p.ws.send(roomListMsg);
-      }
-    } catch { /* ignore */ }
-  });
-
   setTimeout(() => {
     games.delete(game.id);
   }, 2000);
@@ -1266,6 +1289,7 @@ export function endGameByScore(game: Game) {
 /* ================= RESPAWN ================= */
 
 export function respawnPlayer(player: Player, game: Game) {
+  player.waitingForRespawn = false;
   // Default to zone center when shrinking, otherwise arena center
   let bestX = game.zoneShrinking ? game.zoneX + game.zoneW / 2 : GAME_CONFIG.ARENA_WIDTH / 2;
   let bestY = game.zoneShrinking ? game.zoneY + game.zoneH / 2 : GAME_CONFIG.ARENA_HEIGHT / 2;
@@ -1365,6 +1389,13 @@ export function respawnPlayer(player: Player, game: Game) {
     x: Math.round(bestX),
     y: Math.round(bestY),
   });
+}
+
+/** Manual respawn — called when the player clicks the respawn button */
+export function requestRespawn(player: Player, game: Game) {
+  if (player.hp > 0) return;            // Not dead
+  if (!player.waitingForRespawn) return; // Already respawning
+  respawnPlayer(player, game);
 }
 
 /* ================= OBSTACLE SPAWNING ================= */
@@ -1535,6 +1566,7 @@ export function initPersistentGame(): Game {
 
   const game: Game = {
     id: "persistent",
+    nextShortId: 1,
     players: [],
     bullets: [],
     obstacles,
@@ -1597,7 +1629,201 @@ export function initPersistentGame(): Game {
 
   console.log(`🌍 Persistent game world initialized (${obstacles.length} obstacles, arena ${GAME_CONFIG.ARENA_WIDTH}x${GAME_CONFIG.ARENA_HEIGHT})`);
 
+  // Start round timer (5 minutes)
+  startRoundTimer(game);
+
   return game;
+}
+
+/* ================= ROUND TIMER ================= */
+
+function startRoundTimer(game: Game) {
+  const roundDuration = GAME_CONFIG.ROUND_DURATION; // 5 minutes
+  game.matchStartTime = Date.now();
+
+  // Broadcast timer every second
+  game.gameTimerInterval = setInterval(() => {
+    const elapsed = Date.now() - game.matchStartTime;
+    const remaining = Math.max(0, Math.ceil((roundDuration - elapsed) / 1000));
+    broadcast(game, { type: "gameTimer", remaining });
+
+    if (remaining <= 0) {
+      clearInterval(game.gameTimerInterval!);
+      endRound(game);
+    }
+  }, 1000);
+}
+
+function endRound(game: Game) {
+  // Build scoreboard
+  const scoreboard = game.players
+    .map((p) => ({
+      username: p.username,
+      kills: p.kills,
+      deaths: p.deaths,
+      score: p.score,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const winnerName = scoreboard.length > 0 ? scoreboard[0].username : "Nobody";
+
+  // Save stats for all players
+  game.players.forEach((p) => {
+    updatePlayerStats(p.username, p.kills, p.deaths, p.username === winnerName);
+  });
+
+  // Save match history
+  addMatchHistory({
+    timestamp: Date.now(),
+    players: scoreboard.map((s) => ({ ...s, isWinner: s.username === winnerName })),
+    winnerName,
+  });
+
+  // Pick a random win sound index (1-8)
+  const winAudioIndex = Math.floor(Math.random() * 8) + 1;
+  // Assign unique lose sound indices (1-9) to each loser
+  const loseIndices = Array.from({ length: 9 }, (_, i) => i + 1);
+  for (let i = loseIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [loseIndices[i], loseIndices[j]] = [loseIndices[j], loseIndices[i]];
+  }
+  let loseIdx = 0;
+
+  // Send per-player roundEnd message
+  game.players.forEach((p) => {
+    const isWinner = p.username === winnerName;
+    const audioIndex = isWinner ? winAudioIndex : loseIndices[loseIdx++ % loseIndices.length];
+    const msg = serialize({
+      type: "roundEnd",
+      winnerName,
+      scoreboard,
+      audioIndex,
+      restartDelay: GAME_CONFIG.ROUND_RESTART_DELAY,
+    });
+    try {
+      if (p.ws.readyState === WebSocket.OPEN) p.ws.send(msg);
+    } catch { /* ignore */ }
+  });
+
+  // Schedule new round
+  setTimeout(() => {
+    resetPersistentRound(game);
+  }, GAME_CONFIG.ROUND_RESTART_DELAY);
+}
+
+function resetPersistentRound(game: Game) {
+  // Clear all intervals before resetting
+  clearGameIntervals(game);
+
+  // Regenerate obstacles
+  game.obstacles = generateObstacles();
+  game.bullets = [];
+  game.pickups = [];
+  game.orbs = [];
+  game.bombs = [];
+  game.lightnings = [];
+  game.lootCrates = [];
+  game.stateSequence = 0;
+  game.zoneX = 0;
+  game.zoneY = 0;
+  game.zoneW = GAME_CONFIG.ARENA_WIDTH;
+  game.zoneH = GAME_CONFIG.ARENA_HEIGHT;
+  game.zoneShrinking = false;
+
+  // Reset all player stats and respawn them
+  game.players.forEach((p) => {
+    p.kills = 0;
+    p.deaths = 0;
+    p.score = 0;
+    p.killStreak = 0;
+    p.lastKilledBy = "";
+    p.waitingForRespawn = false;
+    p.hp = GAME_CONFIG.PLAYER_HP;
+    p.shots = GAME_CONFIG.SHOTS_PER_MAGAZINE;
+    p.reloading = false;
+    p.weapon = "machinegun";
+    p.speedBoostUntil = 0;
+    p.minigunUntil = 0;
+    p.shieldUntil = 0;
+    p.invisibleUntil = 0;
+    p.regenUntil = 0;
+    p.lastRegenTick = 0;
+    p.armor = 0;
+    p.dashCooldownUntil = 0;
+    p.dashUntil = 0;
+    p.keys = { w: false, a: false, s: false, d: false };
+  });
+
+  // Respawn all players at random positions
+  game.players.forEach((p) => {
+    let bestX = GAME_CONFIG.ARENA_WIDTH / 2;
+    let bestY = GAME_CONFIG.ARENA_HEIGHT / 2;
+    let bestDistance = 0;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const testX = 50 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 100);
+      const testY = 50 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 100);
+      if (!isPositionClear(testX, testY, game.obstacles, GAME_CONFIG.PLAYER_RADIUS)) continue;
+      let minDist = Infinity;
+      for (const other of game.players) {
+        if (other.id === p.id || other.hp <= 0) continue;
+        const dist = Math.sqrt((testX - other.x) ** 2 + (testY - other.y) ** 2);
+        minDist = Math.min(minDist, dist);
+      }
+      if (minDist > bestDistance) { bestDistance = minDist; bestX = testX; bestY = testY; }
+    }
+    p.x = bestX;
+    p.y = bestY;
+  });
+
+  // Restart spawn intervals
+  game.obstacleSpawnInterval = setInterval(() => spawnRandomObstacle(game), GAME_CONFIG.OBSTACLE_SPAWN_INTERVAL);
+  game.pickupSpawnInterval = setInterval(() => spawnPickup(game), GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
+  spawnInitialOrbs(game);
+  game.orbSpawnInterval = setInterval(() => spawnOrb(game), GAME_CONFIG.ORB_SPAWN_INTERVAL);
+
+  const scheduleBomb2 = () => {
+    const delay = GAME_CONFIG.BOMB_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.bombSpawnInterval = setTimeout(() => { spawnBomb(game); scheduleBomb2(); }, delay);
+  };
+  scheduleBomb2();
+
+  const scheduleLightning2 = () => {
+    const delay = GAME_CONFIG.LIGHTNING_SPAWN_INTERVAL * (0.5 + Math.random());
+    game.lightningSpawnInterval = setTimeout(() => { spawnLightning(game); scheduleLightning2(); }, delay);
+  };
+  scheduleLightning2();
+
+  spawnInitialLootCrates(game);
+  game.lootCrateSpawnInterval = setInterval(() => spawnLootCrate(game), GAME_CONFIG.LOOT_CRATE_RESPAWN_INTERVAL);
+
+  // Build shortIdMap for all currently connected players
+  const shortIdMap: Record<number, { id: string; username: string }> = {};
+  for (const p of game.players) {
+    shortIdMap[p.shortId] = { id: p.id, username: p.username };
+  }
+
+  // Notify all players of new round
+  game.players.forEach((p) => {
+    const msg = serialize({
+      type: "roundStart",
+      obstacles: game.obstacles,
+      orbs: game.orbs.map((o) => [o.id, o.x, o.y]),
+      arenaWidth: GAME_CONFIG.ARENA_WIDTH,
+      arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
+      maxHp: GAME_CONFIG.PLAYER_HP,
+      shortIdMap,
+      playerX: Math.round(p.x),
+      playerY: Math.round(p.y),
+    });
+    try {
+      if (p.ws.readyState === WebSocket.OPEN) p.ws.send(msg);
+    } catch { /* ignore */ }
+  });
+
+  // Start new round timer
+  startRoundTimer(game);
+
+  console.log(`🔄 New round started! (${game.players.length} players)`);
 }
 
 /** Add a player to the persistent game world */
@@ -1650,6 +1876,7 @@ export function addPlayerToGame(player: Player, game: Game) {
   player.dashDirX = 0;
   player.dashDirY = 0;
   player.killStreak = 0;
+  player.waitingForRespawn = false;
   player.ready = true;
 
   game.players.push(player);

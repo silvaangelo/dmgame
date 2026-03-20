@@ -37,6 +37,7 @@ describe("serializePlayersCompact", () => {
   function createMockPlayer(overrides: Partial<Player> = {}): Player {
     return {
       id: "p1",
+      shortId: 1,
       username: "Test",
       ws: null as unknown as Player["ws"],
       team: 0,
@@ -50,6 +51,7 @@ describe("serializePlayersCompact", () => {
       lastProcessedInput: 5,
       kills: 3,
       deaths: 1,
+      score: 0,
       ready: true,
       aimAngle: 1.2345,
       weapon: "machinegun",
@@ -78,14 +80,17 @@ describe("serializePlayersCompact", () => {
   function createMockGame(players: Player[]): Game {
     return {
       id: "g1",
+      nextShortId: 1,
       players,
       bullets: [],
       obstacles: [],
       pickups: [],
+      orbs: [],
       bombs: [],
       lightnings: [],
       lootCrates: [],
       started: true,
+      gameMode: "deathmatch",
       stateSequence: 0,
       matchStartTime: 0,
       zoneX: 0,

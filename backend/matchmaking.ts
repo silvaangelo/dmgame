@@ -262,6 +262,7 @@ export function startGameFromRoom(room: Room) {
 
   const game: Game = {
     id: uuid(),
+    nextShortId: 1,
     players,
     bullets: [],
     obstacles,

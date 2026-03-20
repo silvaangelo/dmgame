@@ -8,7 +8,7 @@ export const GAME_CONFIG = {
   LMS_PLAYER_HP: 20,         // Last Man Standing — players start with 20 HP
   PLAYER_SPEED: 8,
   PLAYER_RADIUS: 20,
-  SHOTS_PER_MAGAZINE: 25,
+  SHOTS_PER_MAGAZINE: 35,
   SHOT_COOLDOWN: 35,
   RELOAD_TIME: 1950,
   // Weapon-specific reload times
@@ -28,7 +28,7 @@ export const GAME_CONFIG = {
   SHOTGUN_DAMAGE: 3,
   SHOTGUN_PELLETS: 7,
   SHOTGUN_SPREAD: 0.35,
-  SHOTGUN_AMMO: 8,           // shells per magazine
+  SHOTGUN_AMMO: 10,          // shells per magazine
   // Knife
   KNIFE_COOLDOWN: 200,
   KNIFE_DAMAGE: 4,
@@ -37,7 +37,7 @@ export const GAME_CONFIG = {
   // Pickups — less frequent, more powerful
   PICKUP_SPAWN_INTERVAL: 18000,
   PICKUP_LIFETIME: 30000,
-  PICKUP_RADIUS: 30,
+  PICKUP_RADIUS: 40,
   PICKUP_HEALTH_AMOUNT: 5,
   PICKUP_SPEED_DURATION: 12000,
   PICKUP_SPEED_MULTIPLIER: 2.0,
@@ -51,7 +51,7 @@ export const GAME_CONFIG = {
   SNIPER_COOLDOWN: 1100,
   SNIPER_DAMAGE: 8,
   SNIPER_BULLET_SPEED: 44,
-  SNIPER_AMMO: 5,            // rounds per magazine
+  SNIPER_AMMO: 7,            // rounds per magazine
   // Shield powerup — more powerful
   SHIELD_DURATION: 15000,
   SHIELD_ABSORB: 5, // absorbs 5 HP worth of damage
@@ -80,13 +80,16 @@ export const GAME_CONFIG = {
   LIGHTNING_RADIUS: 150,
   KILLS_TO_WIN: 999,          // Not used — persistent world
   GAME_DURATION: 0,            // No timer — persistent world
+  ROUND_DURATION: 300000,      // 5 minutes per round (ms)
+  ROUND_RESTART_DELAY: 10000,  // 10s scoreboard before next round
   KILL_SCORE: 10,              // Points per kill
   ORB_SCORE: 1,                // Points per orb collected
   // Orbs (slither-style collectible points)
   ORB_SPAWN_INTERVAL: 1500,    // Spawn new orbs every 1.5s
-  ORB_RADIUS: 10,
-  ORB_MAX: 150,                // Max orbs on map at once
+  ORB_RADIUS: 16,
+  ORB_MAX: 250,                // Max orbs on map at once
   ORB_LIFETIME: 45000,         // Orbs last 45s
+  DEATH_ORB_DROP_FRACTION: 0.5, // Drop half points on death
   RESPAWN_TIME: 2000,
   OBSTACLE_SPAWN_INTERVAL: 8000,
   // Dynamic arena shrinking — disabled in persistent mode

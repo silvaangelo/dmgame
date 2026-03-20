@@ -4,7 +4,7 @@ import compression from "compression";
 import { app, server } from "./server.js";
 import { setupSocket } from "./socket.js";
 import { startGameLoop, initPersistentGame } from "./game.js";
-import { initDatabase, registerUser, getUserByToken } from "./database.js";
+import { initDatabase } from "./database.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -38,50 +38,6 @@ app.use(express.static(frontendDir, {
 }));
 
 /* ================= API ROUTES ================= */
-
-// Register or re-register a username
-app.post("/api/register", (req, res) => {
-  const { username } = req.body as { username?: string };
-  if (!username || typeof username !== "string") {
-    res.status(400).json({ error: "Username é obrigatório." });
-    return;
-  }
-
-  const trimmed = username.trim();
-  const usernamePattern = /^[a-zA-Z0-9_]+$/;
-  if (trimmed.length < 2 || trimmed.length > 16 || !usernamePattern.test(trimmed)) {
-    res.status(400).json({ error: "Username deve ter 2-16 caracteres (letras, números, _)." });
-    return;
-  }
-
-  const user = registerUser(trimmed);
-
-  if (!user) {
-    res.status(409).json({ error: "Este nome já está em uso. Faça login com seu token." });
-    return;
-  }
-
-  res.json({
-    username: user.username,
-    token: user.token,
-  });
-});
-
-// Identify user by token (POST to keep token out of URL/logs)
-app.post("/api/session", (req, res) => {
-  const { token } = req.body as { token?: string };
-
-  if (token && typeof token === "string") {
-    const user = getUserByToken(token);
-    if (user) {
-      user.lastSeen = Date.now();
-      res.json({ username: user.username, token: user.token });
-      return;
-    }
-  }
-
-  res.json({ username: null, token: null });
-});
 
 // SPA fallback — any non-file route returns index.html
 app.get("/{*splat}", (_req, res) => {

@@ -47,7 +47,8 @@
       </div>
       <div id="volumeControl">
         <span id="volumeIcon" onclick="toggleMute()" style="cursor:pointer;">🔊</span>
-        <input type="range" id="volumeSlider" min="0" max="100" value="70" style="accent-color:#ff6b35;cursor:pointer;width:100px;">
+        <input type="range" id="volumeSlider" min="0" max="100" value="70"
+          style="accent-color:#ff6b35;cursor:pointer;width:100px;">
         <span id="volumeLabel">70%</span>
       </div>
     </div>
@@ -59,6 +60,9 @@
   <!-- HUD (in-game overlay) -->
   <div id="gameUI" style="display:none;">
     <div class="hud-bar">
+      <div class="hud-section hud-timer">
+        <span id="timerDisplay">⏱ 5:00</span>
+      </div>
       <div class="hud-section hud-kills">
         <span id="killsDisplay">⭐ 0 pts</span>
       </div>
@@ -77,8 +81,10 @@
         <span id="speedBoostDisplay"></span>
       </div>
       <div class="hud-section hud-volume" style="display:flex;align-items:center;gap:4px;min-width:80px;">
-        <span id="hudVolumeIcon" style="cursor:pointer;font-size:14px;" onclick="toggleMute();syncVolumeControls();">🔊</span>
-        <input type="range" id="hudVolumeSlider" min="0" max="100" style="width:60px;accent-color:#ff6b35;cursor:pointer;height:4px;">
+        <span id="hudVolumeIcon" style="cursor:pointer;font-size:14px;"
+          onclick="toggleMute();syncVolumeControls();">🔊</span>
+        <input type="range" id="hudVolumeSlider" min="0" max="100"
+          style="width:60px;accent-color:#ff6b35;cursor:pointer;height:4px;">
       </div>
     </div>
   </div>
@@ -103,7 +109,16 @@
   <div id="deathOverlay" style="display:none;">
     <div id="deathMessage">YOU DIED</div>
     <div id="deathKiller"></div>
-    <div id="deathRespawn">Respawning...</div>
+    <div id="deathDroppedScore"></div>
+    <button id="deathRespawnBtn" onclick="doRespawn()">⚔ RESPAWN</button>
+  </div>
+
+  <!-- Round End overlay -->
+  <div id="roundEndOverlay" style="display:none;">
+    <div id="roundEndTitle">ROUND OVER</div>
+    <div id="roundEndWinner"></div>
+    <div id="roundEndScoreboard"></div>
+    <div id="roundEndCountdown">Next round in...</div>
   </div>
 
   <!-- Mobile Touch Controls -->
