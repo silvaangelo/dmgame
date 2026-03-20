@@ -2307,6 +2307,10 @@ function connect() {
         triggerScreenShake(5 + proximity * 13);
         flashbangOverlay.alpha = 0.9 + proximity * 0.1;
         flashbangOverlay.flicker = 1;
+        // Use server blindDuration for longer lightning blind
+        var blindDurationMs = data.blindDuration || 3000;
+        flashbangOverlay.decayRate = 1.0 / (blindDurationMs / 1000 * 60);
+        flashbangOverlay.pageDecayRate = 1.0 / (blindDurationMs / 1000 * 60);
         applyPageFlash(0.8 + proximity * 0.2);
       } else if (ldist < lRadius * 2.5) {
         const nearFactor = 1.0 - (ldist - lRadius) / (lRadius * 1.5);
@@ -2814,7 +2818,7 @@ function updateShotUI() {
   } else if (player.weapon === "minigun") {
     shotsDisplay.textContent = `${weaponName} | ∞`;
   } else {
-    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 35;
+    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 25;
     shotsDisplay.textContent = `${shortcutTag}${weaponName} | ${player.shots}/${weaponMaxAmmo}`;
   }
 
@@ -4156,7 +4160,9 @@ function applyPageFlash(intensity) {
 }
 function updatePageFlash() {
   if (pageFlashIntensity > 0) {
-    pageFlashIntensity = Math.max(0, pageFlashIntensity - 0.006);
+    var pfDecay = (flashbangOverlay && flashbangOverlay.pageDecayRate) || 0.006;
+    pageFlashIntensity = Math.max(0, pageFlashIntensity - pfDecay);
+    if (pageFlashIntensity <= 0 && flashbangOverlay) flashbangOverlay.pageDecayRate = 0;
     if (pageFlashIntensity > 0.01) {
       const flicker = pageFlashIntensity > 0.3 ? (Math.random() - 0.5) * 0.15 : 0;
       const b = 1 + (pageFlashIntensity + flicker) * 3;
@@ -4171,8 +4177,10 @@ function updatePageFlash() {
 
 function updateFlashbang() {
   if (flashbangOverlay.alpha > 0) {
-    // Decay over ~3 seconds
-    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - 0.005);
+    // Use custom decay rate (lightning) or default (~3 seconds)
+    var decayRate = flashbangOverlay.decayRate || 0.005;
+    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - decayRate);
+    if (flashbangOverlay.alpha <= 0) flashbangOverlay.decayRate = 0;
     // Chaotic flicker when intensity is high
     if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.2) {
       flashbangOverlay.flickerVal = (Math.random() - 0.5) * 0.2;

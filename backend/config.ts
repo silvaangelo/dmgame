@@ -8,32 +8,32 @@ export const GAME_CONFIG = {
   LMS_PLAYER_HP: 20,         // Last Man Standing — players start with 20 HP
   PLAYER_SPEED: 8,
   PLAYER_RADIUS: 20,
-  SHOTS_PER_MAGAZINE: 35,
-  SHOT_COOLDOWN: 35,
+  SHOTS_PER_MAGAZINE: 25,
+  SHOT_COOLDOWN: 55,
   RELOAD_TIME: 1950,
   // Weapon-specific reload times
-  MACHINEGUN_RELOAD_TIME: 1800,
-  SHOTGUN_RELOAD_TIME: 2800,
-  SNIPER_RELOAD_TIME: 3000,
+  MACHINEGUN_RELOAD_TIME: 2000,
+  SHOTGUN_RELOAD_TIME: 2200,
+  SNIPER_RELOAD_TIME: 2800,
   BULLET_SPEED: 22,
   BULLET_LIFETIME: 2500,
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
-  // Machine Gun (automatic)
-  MACHINEGUN_COOLDOWN: 35,
+  // Machine Gun (automatic) — nerfed: slower fire, more recoil
+  MACHINEGUN_COOLDOWN: 55,
   MACHINEGUN_DAMAGE: 1,
-  MACHINEGUN_RECOIL: 0.06,
-  // Shotgun — powerful close-range
-  SHOTGUN_COOLDOWN: 600,
-  SHOTGUN_DAMAGE: 3,
-  SHOTGUN_PELLETS: 7,
-  SHOTGUN_SPREAD: 0.35,
+  MACHINEGUN_RECOIL: 0.10,
+  // Shotgun — powerful close-range, faster fire
+  SHOTGUN_COOLDOWN: 450,
+  SHOTGUN_DAMAGE: 4,
+  SHOTGUN_PELLETS: 8,
+  SHOTGUN_SPREAD: 0.40,
   SHOTGUN_AMMO: 10,          // shells per magazine
-  // Knife
-  KNIFE_COOLDOWN: 200,
-  KNIFE_DAMAGE: 4,
-  KNIFE_RANGE: 55,
-  KNIFE_SPEED_BONUS: 1.5,
+  // Knife — deadly melee, more range
+  KNIFE_COOLDOWN: 180,
+  KNIFE_DAMAGE: 5,
+  KNIFE_RANGE: 70,
+  KNIFE_SPEED_BONUS: 1.6,
   // Pickups — less frequent, more powerful
   PICKUP_SPAWN_INTERVAL: 18000,
   PICKUP_LIFETIME: 30000,
@@ -47,10 +47,10 @@ export const GAME_CONFIG = {
   MINIGUN_DAMAGE: 2,
   MINIGUN_RECOIL: 0.06,
   MINIGUN_DURATION: 15000,
-  // Sniper Rifle
-  SNIPER_COOLDOWN: 1100,
-  SNIPER_DAMAGE: 8,
-  SNIPER_BULLET_SPEED: 44,
+  // Sniper Rifle — buffed: faster fire, one-shot potential
+  SNIPER_COOLDOWN: 900,
+  SNIPER_DAMAGE: 10,
+  SNIPER_BULLET_SPEED: 48,
   SNIPER_AMMO: 7,            // rounds per magazine
   // Shield powerup — more powerful
   SHIELD_DURATION: 15000,
@@ -78,6 +78,7 @@ export const GAME_CONFIG = {
   LIGHTNING_FUSE_TIME: 250,
   LIGHTNING_DAMAGE: 2,
   LIGHTNING_RADIUS: 150,
+  LIGHTNING_BLIND_DURATION: 5000, // 3s blindness on direct hit
   KILLS_TO_WIN: 999,          // Not used — persistent world
   GAME_DURATION: 0,            // No timer — persistent world
   ROUND_DURATION: 300000,      // 5 minutes per round (ms)

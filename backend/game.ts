@@ -17,8 +17,11 @@ const CELL_SIZE = 200;
 const obstacleGrid = new SpatialGrid<Obstacle>(CELL_SIZE, GAME_CONFIG.ARENA_WIDTH);
 const playerGrid = new SpatialGrid<Player>(CELL_SIZE, GAME_CONFIG.ARENA_WIDTH);
 
-/** The culling margin beyond each player's viewport in pixels. */
-const CULL_MARGIN = 1400;
+/** The culling margin beyond each player's viewport in pixels.
+ *  At CAMERA_SCALE 0.65 on a 1920px screen the logical viewport
+ *  half-width is ~1477px, so the margin must exceed that.
+ */
+const CULL_MARGIN = 2400;
 
 /* ================= KILL STREAKS ================= */
 
@@ -50,9 +53,9 @@ function handleKill(
     killer.killStreak++;
     killer.score += GAME_CONFIG.KILL_SCORE; // +10 points per kill
 
-    // Heal on kill — recover 1 HP (capped at max)
+    // Heal on kill — restore half of max HP
     const maxHp = GAME_CONFIG.PLAYER_HP;
-    killer.hp = Math.min(maxHp, killer.hp + 1);
+    killer.hp = Math.min(maxHp, killer.hp + Math.ceil(maxHp / 2));
 
     // Revenge tracking
     const isRevenge = victim.lastKilledBy === "" ? false : killer.lastKilledBy === victim.id;
@@ -577,13 +580,14 @@ export function updateGame(game: Game) {
       }
     });
 
-    // Broadcast lightning strike
+    // Broadcast lightning strike with blind duration
     broadcast(game, {
       type: "lightningStruck",
       id: lightning.id,
       x: Math.round(lightning.x),
       y: Math.round(lightning.y),
       radius: GAME_CONFIG.LIGHTNING_RADIUS,
+      blindDuration: GAME_CONFIG.LIGHTNING_BLIND_DURATION,
     });
   });
 

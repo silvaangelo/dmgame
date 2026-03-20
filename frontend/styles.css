@@ -238,60 +238,81 @@ canvas {
   color: #6a8a6a;
 }
 
-/* ===== HUD (in-game overlay bar) ===== */
+/* ===== HUD (in-game overlay — right side vertical panel) ===== */
 #gameUI {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
   z-index: 800;
-  background: linear-gradient(180deg, rgba(12, 18, 12, 0.0) 0%, rgba(12, 18, 12, 0.88) 30%, rgba(12, 18, 12, 0.95) 100%);
-  border-top: 1px solid rgba(74, 106, 74, 0.3);
-  backdrop-filter: blur(10px);
-  animation: slideUpIn 0.3s ease-out;
+  pointer-events: auto;
+  animation: screenFadeIn 0.3s ease-out;
 }
 
-.hud-bar {
+.hud-panel {
   display: flex;
-  align-items: stretch;
-  gap: 0;
+  flex-direction: column;
+  gap: 2px;
   font-family: 'Share Tech Mono', monospace;
+  background: rgba(10, 15, 10, 0.82);
+  border: 1px solid rgba(74, 106, 74, 0.35);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  padding: 10px 14px;
+  min-width: 210px;
 }
 
 .hud-section {
-  padding: 10px 20px;
+  padding: 6px 4px;
   display: flex;
   align-items: center;
   gap: 8px;
-  border-right: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
   white-space: nowrap;
 }
 
 .hud-section:last-child {
-  border-right: none;
+  border-bottom: none;
+}
+
+/* Timer */
+.hud-timer {
+  justify-content: center;
+}
+
+#timerDisplay {
+  font-size: 20px;
+  font-weight: 700;
+  color: #aaddaa;
+  font-family: 'Share Tech Mono', monospace;
+  letter-spacing: 1px;
+}
+
+#timerDisplay.timer-warning {
+  color: #ff4444;
+  animation: reloadBlink 0.5s ease-in-out infinite;
 }
 
 /* Kills/Score section */
 .hud-kills #killsDisplay {
   color: #ffaa44;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(255, 170, 68, 0.3);
+  text-shadow: 0 0 10px rgba(255, 170, 68, 0.4);
 }
 
 /* HP section */
 .hud-health {
-  min-width: 200px;
-  padding: 8px 16px;
+  padding: 6px 4px;
 }
 
 .hud-hp-bar-container {
   position: relative;
   width: 100%;
-  height: 32px;
+  height: 28px;
   background: rgba(0, 0, 0, 0.5);
-  border-radius: 3px;
+  border-radius: 4px;
   border: 1px solid #3a5a3a;
   overflow: hidden;
 }
@@ -303,7 +324,7 @@ canvas {
   height: 100%;
   width: 100%;
   background: linear-gradient(180deg, #5adf5a 0%, #3ab83a 50%, #2a982a 100%);
-  border-radius: 2px;
+  border-radius: 3px;
   transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.4s;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 10px rgba(74, 217, 74, 0.2);
 }
@@ -330,21 +351,17 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6);
   z-index: 1;
   letter-spacing: 1px;
 }
 
 /* Weapon section */
-.hud-weapon {
-  min-width: 180px;
-}
-
 .hud-weapon #shotsDisplay {
   color: #eef0ee;
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: 1px;
   text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
@@ -352,18 +369,20 @@ canvas {
 
 /* Status section (cooldown, reload, speed) */
 .hud-status {
-  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .hud-status #cooldownDisplay {
   color: #ffbb55;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 .hud-status #reloadDisplay {
   color: #ff6b35;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
   animation: reloadBlink 0.6s ease-in-out infinite;
 }
@@ -375,7 +394,7 @@ canvas {
 
 .hud-status #speedBoostDisplay {
   color: #44bbff;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
   text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
   animation: speedGlow 0.5s ease-in-out infinite;
@@ -681,25 +700,6 @@ canvas {
   margin-top: 12px;
   font-family: 'Share Tech Mono', monospace;
   text-shadow: 0 2px 8px rgba(255, 170, 68, 0.4);
-}
-
-/* ===== TIMER DISPLAY ===== */
-.hud-timer {
-  min-width: 70px;
-  text-align: center;
-}
-
-#timerDisplay {
-  font-size: 15px;
-  font-weight: 700;
-  color: #aaddaa;
-  font-family: 'Share Tech Mono', monospace;
-  letter-spacing: 1px;
-}
-
-#timerDisplay.timer-warning {
-  color: #ff4444;
-  animation: reloadBlink 0.5s ease-in-out infinite;
 }
 
 /* ===== ROUND END OVERLAY ===== */
@@ -1021,39 +1021,38 @@ canvas {
 
   /* HUD adjustments */
   #gameUI {
-    width: 100%;
-    border-radius: 0;
-    max-width: 100vw;
+    right: 6px;
+    transform: translateY(-50%);
   }
 
-  .hud-bar {
-    flex-wrap: wrap;
-    justify-content: center;
+  .hud-panel {
+    min-width: 170px;
+    padding: 8px 10px;
   }
 
   .hud-section {
-    padding: 6px 12px;
-    font-size: 14px;
-  }
-
-  .hud-health {
-    min-width: 150px;
+    padding: 4px 4px;
+    font-size: 13px;
   }
 
   .hud-kills #killsDisplay {
-    font-size: 18px;
-  }
-
-  .hud-weapon #shotsDisplay {
     font-size: 16px;
   }
 
+  .hud-weapon #shotsDisplay {
+    font-size: 14px;
+  }
+
   .hud-hp-bar-container {
-    height: 26px;
+    height: 22px;
   }
 
   .hud-hp-bar-container #healthDisplay {
-    font-size: 15px;
+    font-size: 14px;
+  }
+
+  #timerDisplay {
+    font-size: 16px;
   }
 
   /* Kill feed */
@@ -1106,12 +1105,14 @@ canvas {
     height: 28px;
   }
 
-  .hud-bar {
+  .hud-panel {
     gap: 0;
+    min-width: 150px;
   }
 
   .hud-section {
-    padding: 5px 8px;
+    padding: 3px 6px;
+    font-size: 12px;
   }
 }
 
