@@ -134,6 +134,8 @@ const WEAPON_KILL_ICONS = {
 
 let ws;
 let playerId;
+let loggedInUsername = "";
+let sessionToken = "";
 let players = [];
 let bullets = [];
 let obstacles = [];
@@ -223,6 +225,9 @@ let killFeedDirty = true;
 // Screen shake
 let screenShake = { intensity: 0, decay: 0.92 };
 let killFeedEntries = [];
+
+// Cached grid canvas (used in resizeCanvas and render)
+let gridCanvas = null;
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
 
@@ -1492,8 +1497,6 @@ let previousHP = 3;
 
 // ===== SESSION MANAGEMENT =====
 
-let loggedInUsername = "";
-let sessionToken = "";
 
 function saveSession(token, username) {
   sessionToken = token;
@@ -3783,7 +3786,6 @@ function renderFlashbang() {
 // ===== RENDER LOOP =====
 
 // Pre-render static grid to offscreen canvas for performance
-let gridCanvas = null;
 function ensureGridCanvas() {
   if (gridCanvas) return;
   // Create a small tile and use createPattern for efficient rendering
