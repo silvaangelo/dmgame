@@ -58,33 +58,16 @@
   <!-- Game Canvas (full-screen) -->
   <canvas id="game"></canvas>
 
-  <!-- HUD (in-game overlay — left waybar, top to bottom) -->
+  <!-- HUD (in-game overlay — minimal) -->
   <div id="gameUI" style="display:none;">
-    <div class="hud-panel">
-      <div class="hud-section hud-timer">
-        <span id="timerDisplay">⏱ 5:00</span>
-      </div>
-      <div class="hud-section hud-kills">
-        <span id="killsDisplay">⭐ 0 pts</span>
-      </div>
-      <div class="hud-section hud-health">
-        <div class="hud-hp-bar-container">
-          <div id="hpBarFill" class="hud-hp-bar-fill"></div>
-          <span id="healthDisplay">❤️ 4/4</span>
-        </div>
-      </div>
-      <div class="hud-section hud-weapon">
-        <span id="shotsDisplay">🔫 Machinegun | 25/25</span>
-      </div>
-      <div class="hud-section hud-status">
-        <span id="cooldownDisplay"></span>
-        <span id="reloadDisplay"></span>
-        <span id="speedBoostDisplay"></span>
-      </div>
-      <div class="hud-section hud-volume" style="display:flex;align-items:center;justify-content:center;">
-        <span id="hudVolumeIcon" style="cursor:pointer;font-size:14px;"
-          onclick="toggleMute();syncVolumeControls();">🔊</span>
-      </div>
+    <!-- Top-center game timer -->
+    <div id="topTimer">
+      <span id="timerDisplay">⏱ 5:00</span>
+    </div>
+    <!-- Top-left volume control -->
+    <div id="inGameVolume">
+      <span id="hudVolumeIcon" onclick="toggleMute();syncVolumeControls();">🔊</span>
+      <input type="range" id="hudVolumeSlider" min="0" max="100" value="70">
     </div>
   </div>
 

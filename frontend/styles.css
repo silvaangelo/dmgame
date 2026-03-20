@@ -238,166 +238,43 @@ canvas {
   color: #6a8a6a;
 }
 
-/* ===== HUD (in-game overlay — left waybar, top to bottom) ===== */
+/* ===== HUD (minimal in-game overlay) ===== */
 #gameUI {
   position: fixed;
   top: 0;
   left: 0;
-  bottom: 0;
+  right: 0;
   z-index: 800;
   pointer-events: none;
-  animation: screenFadeIn 0.3s ease-out;
 }
 
-.hud-panel {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 4px;
-  font-family: 'Share Tech Mono', monospace;
-  background: rgba(10, 15, 10, 0.45);
-  border-right: 1px solid rgba(74, 106, 74, 0.2);
-  border-radius: 0;
-  backdrop-filter: blur(6px);
-  padding: 8px 4px;
-  width: 52px;
-  height: 100%;
-  box-sizing: border-box;
-  pointer-events: auto;
-  overflow: hidden;
-}
-
-.hud-section {
-  padding: 2px 2px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  white-space: nowrap;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hud-section:last-child {
-  border-bottom: none;
-}
-
-/* Timer */
-.hud-timer {
-  justify-content: center;
+/* Top-center game timer */
+#topTimer {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 810;
+  pointer-events: none;
 }
 
 #timerDisplay {
-  font-size: 11px;
+  font-size: 18px;
   font-weight: 700;
-  color: #aaddaa;
+  color: #ddf0dd;
   font-family: 'Share Tech Mono', monospace;
-  letter-spacing: 0;
+  background: rgba(10, 15, 10, 0.55);
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(74, 106, 74, 0.3);
+  backdrop-filter: blur(4px);
+  text-shadow: 0 0 8px rgba(180, 255, 180, 0.3);
 }
 
 #timerDisplay.timer-warning {
   color: #ff4444;
+  border-color: rgba(255, 68, 68, 0.4);
   animation: reloadBlink 0.5s ease-in-out infinite;
-}
-
-/* Kills/Score section */
-.hud-kills #killsDisplay {
-  color: #ffaa44;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-shadow: 0 0 10px rgba(255, 170, 68, 0.4);
-  text-align: center;
-}
-
-/* HP section */
-.hud-health {
-  padding: 2px 2px;
-}
-
-.hud-hp-bar-container {
-  position: relative;
-  width: 100%;
-  height: 14px;
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 3px;
-  border: 1px solid #3a5a3a;
-  overflow: hidden;
-}
-
-.hud-hp-bar-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 100%;
-  background: linear-gradient(180deg, #5adf5a 0%, #3ab83a 50%, #2a982a 100%);
-  border-radius: 3px;
-  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.4s;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 10px rgba(74, 217, 74, 0.2);
-}
-
-.hud-hp-bar-fill.hp-danger {
-  background: linear-gradient(180deg, #ff5555 0%, #cc2222 50%, #aa1111 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 14px rgba(255, 50, 50, 0.4);
-  animation: hpDangerPulse 0.8s ease-in-out infinite;
-}
-
-.hud-hp-bar-fill.hp-mid {
-  background: linear-gradient(180deg, #ffcc44 0%, #dd9922 50%, #bb7711 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 10px rgba(255, 180, 44, 0.3);
-}
-
-@keyframes hpDangerPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.hud-hp-bar-container #healthDisplay {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6);
-  z-index: 1;
-  letter-spacing: 0;
-}
-
-/* Weapon section */
-.hud-weapon #shotsDisplay {
-  color: #eef0ee;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-shadow: 0 0 6px rgba(238, 240, 238, 0.15);
-  text-align: center;
-}
-
-/* Status section (cooldown, reload, speed) */
-.hud-status {
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-}
-
-.hud-status #cooldownDisplay {
-  color: #ffbb55;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.hud-status #reloadDisplay {
-  color: #ff6b35;
-  font-size: 10px;
-  font-weight: 700;
-  animation: reloadBlink 0.6s ease-in-out infinite;
 }
 
 @keyframes reloadBlink {
@@ -405,18 +282,34 @@ canvas {
   50% { opacity: 0.5; }
 }
 
-.hud-status #speedBoostDisplay {
-  color: #44bbff;
-  font-size: 10px;
-  font-weight: 700;
-  text-shadow: 0 0 8px rgba(68, 187, 255, 0.4);
-  animation: speedGlow 0.5s ease-in-out infinite;
-  text-align: center;
+/* Top-left volume control */
+#inGameVolume {
+  position: fixed;
+  top: 10px;
+  left: 12px;
+  z-index: 810;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+  background: rgba(10, 15, 10, 0.55);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(74, 106, 74, 0.2);
+  backdrop-filter: blur(4px);
 }
 
-@keyframes speedGlow {
-  0%, 100% { text-shadow: 0 0 8px rgba(68, 187, 255, 0.4); }
-  50% { text-shadow: 0 0 16px rgba(68, 187, 255, 0.7), 0 0 30px rgba(68, 187, 255, 0.2); }
+#inGameVolume #hudVolumeIcon {
+  cursor: pointer;
+  font-size: 16px;
+  user-select: none;
+}
+
+#inGameVolume input[type="range"] {
+  width: 70px;
+  accent-color: #ff6b35;
+  cursor: pointer;
+  height: 4px;
 }
 
 /* ===== LEADERBOARD OVERLAY (top-right, slither.io style) ===== */
@@ -1124,40 +1017,7 @@ canvas {
     display: none;
   }
 
-  /* HUD adjustments */
-  #gameUI {
-    left: 0;
-  }
-
-  .hud-panel {
-    width: 150px;
-    padding: 6px 8px 6px 6px;
-  }
-
-  .hud-section {
-    padding: 3px 3px;
-    font-size: 11px;
-  }
-
-  .hud-kills #killsDisplay {
-    font-size: 14px;
-  }
-
-  .hud-weapon #shotsDisplay {
-    font-size: 12px;
-  }
-
-  .hud-hp-bar-container {
-    height: 18px;
-  }
-
-  .hud-hp-bar-container #healthDisplay {
-    font-size: 12px;
-  }
-
-  #timerDisplay {
-    font-size: 14px;
-  }
+  /* HUD adjustments — minimal HUD, no changes needed */
 
   /* Kill feed */
   #killFeed {

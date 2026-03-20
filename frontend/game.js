@@ -297,7 +297,7 @@ const GAME_CONFIG = {
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
   PLAYER_RADIUS: 20,
-  PLAYER_SPEED: 5,
+  PLAYER_SPEED: 7,
   SHOTS_PER_MAGAZINE: 25,
   MAX_BLOOD_STAINS: 150,
   MAX_PARTICLES: 100,
@@ -478,13 +478,6 @@ let _cachedDOM = null;
 function getCachedDOM() {
   if (!_cachedDOM) {
     _cachedDOM = {
-      killsDisplay: document.getElementById("killsDisplay"),
-      shotsDisplay: document.getElementById("shotsDisplay"),
-      healthDisplay: document.getElementById("healthDisplay"),
-      cooldownDisplay: document.getElementById("cooldownDisplay"),
-      reloadDisplay: document.getElementById("reloadDisplay"),
-      hpBarFill: document.getElementById("hpBarFill"),
-      speedBoostDisplay: document.getElementById("speedBoostDisplay"),
       killFeed: document.getElementById("killFeed"),
       playerListContent: document.getElementById("playerListContent"),
       timerDisplay: document.getElementById("timerDisplay"),
@@ -2855,104 +2848,12 @@ function doRespawn() {
 })();
 
 // ===== HUD DISPLAY =====
+// HUD removed — score/ammo now rendered on canvas above player.
+// updateShotUI is kept as a no-op for any callers.
 
 let lastShotUIUpdate = 0;
 function updateShotUI() {
-  const now = Date.now();
-  if (now - lastShotUIUpdate < 100) return;
-  lastShotUIUpdate = now;
-
-  const player = players.find((p) => p.id === playerId);
-  if (!player) return;
-
-  const dom = getCachedDOM();
-  const killsDisplay = dom.killsDisplay;
-  const shotsDisplay = dom.shotsDisplay;
-  const healthDisplay = dom.healthDisplay;
-  const cooldownDisplay = dom.cooldownDisplay;
-  const reloadDisplay = dom.reloadDisplay;
-  const hpBarFill = dom.hpBarFill;
-
-  // Update score display
-  if (killsDisplay) {
-    killsDisplay.textContent = `⭐${player.score || 0}`;
-    if ((player.score || 0) >= 50) {
-      killsDisplay.style.color = "#ffcc00";
-      killsDisplay.style.textShadow = "0 0 12px rgba(255,204,0,0.5)";
-    } else {
-      killsDisplay.style.color = "#ff6b35";
-      killsDisplay.style.textShadow = "0 0 8px rgba(255,107,53,0.3)";
-    }
-  }
-
-  const weaponName = WEAPON_NAMES[player.weapon] || "🔫 ???";
-  const WEAPON_EMOJI = { machinegun: "🔫", shotgun: "💣", sniper: "🎯" };
-  const wEmoji = WEAPON_EMOJI[player.weapon] || "🔫";
-  {
-    const weaponMaxAmmo = player.weapon === "shotgun" ? 10 : player.weapon === "sniper" ? 7 : 35;
-    shotsDisplay.textContent = `${wEmoji}${player.shots}/${weaponMaxAmmo}`;
-  }
-
-  // Show respawn message if dead
-  if (player.hp <= 0) {
-    healthDisplay.textContent = "💀 DEAD";
-    if (hpBarFill) {
-      hpBarFill.style.width = "0%";
-      hpBarFill.className = "hud-hp-bar-fill";
-    }
-  } else {
-    const armorText = player.armor > 0 ? `+${player.armor}` : "";
-    healthDisplay.textContent = `${player.hp}/${maxHp}${armorText}`;
-    if (hpBarFill) {
-      const hpPercent = (player.hp / maxHp) * 100;
-      hpBarFill.style.width = hpPercent + "%";
-      if (player.hp <= Math.ceil(maxHp * 0.25)) {
-        hpBarFill.className = "hud-hp-bar-fill hp-danger";
-      } else if (player.hp <= Math.ceil(maxHp * 0.5)) {
-        hpBarFill.className = "hud-hp-bar-fill hp-mid";
-      } else {
-        hpBarFill.className = "hud-hp-bar-fill";
-      }
-    }
-  }
-
-  const shotNow = Date.now();
-  const timeSinceLastShot = shotNow - player.lastShotTime;
-  const weaponCooldown = WEAPON_COOLDOWNS[player.weapon] || 200;
-
-  // Show cooldown based on weapon
-  if (
-    timeSinceLastShot < weaponCooldown &&
-    player.shots > 0 &&
-    !player.reloading
-  ) {
-    const remaining = (weaponCooldown - timeSinceLastShot) / 1000;
-    cooldownDisplay.textContent = `${remaining.toFixed(1)}s`;
-  } else {
-    cooldownDisplay.textContent = "";
-  }
-
-  // Show reload status
-  if (player.reloading) {
-    reloadDisplay.textContent = "🔄 RELOAD";
-  } else {
-    reloadDisplay.textContent = "";
-  }
-
-  // Show speed boost status
-  const speedBoostDisplay = dom.speedBoostDisplay;
-  if (speedBoostDisplay) {
-    const parts = [];
-    if (player.speedBoosted) parts.push("⚡");
-    if (player.armor > 0) parts.push(`🛡${player.armor}`);
-    const dashRemaining = Math.max(0, dashCooldownUntil - Date.now());
-    if (dashRemaining > 0) {
-      parts.push(`💨${(dashRemaining / 1000).toFixed(0)}`);
-    } else {
-      parts.push("💨OK");
-    }
-    speedBoostDisplay.textContent = parts.join(" ");
-  }
+  // No-op: HUD elements removed. Info is drawn on canvas directly.
 }
 
 // ===== INPUT =====
@@ -5077,11 +4978,33 @@ function render() {
     ctx.fillText(p.username, renderX, renderY - 35);
     ctx.textAlign = "start";
 
+    // Score + ammo above player (local player only)
+    if (p.id === playerId) {
+      ctx.textAlign = "center";
+      // Score
+      ctx.font = "bold 13px 'Share Tech Mono', monospace";
+      const scoreColor = (p.score || 0) >= 50 ? "#ffcc00" : "#ff6b35";
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillText("⭐" + (p.score || 0), renderX + 1, renderY - 48);
+      ctx.fillStyle = scoreColor;
+      ctx.fillText("⭐" + (p.score || 0), renderX, renderY - 49);
+      // Ammo
+      const weaponMaxAmmo = p.weapon === "shotgun" ? 10 : p.weapon === "sniper" ? 7 : 35;
+      const ammoText = p.shots + "/" + weaponMaxAmmo;
+      const ammoColor = p.reloading ? "#ff6b35" : (p.shots <= 5 ? "#ff8844" : "#ddeedd");
+      ctx.font = "bold 11px 'Share Tech Mono', monospace";
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillText(ammoText, renderX + 1, renderY - 60);
+      ctx.fillStyle = ammoColor;
+      ctx.fillText(ammoText, renderX, renderY - 61);
+      ctx.textAlign = "start";
+    }
+
     // Bounty skull on the leading player
     if (bountyLeaderId === p.id) {
       ctx.font = "16px serif";
       ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, renderY - 54);
+      ctx.fillText("💀", renderX, p.id === playerId ? renderY - 72 : renderY - 54);
       ctx.textAlign = "start";
     }
 
