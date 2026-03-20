@@ -14,8 +14,8 @@ function esc(str) {
 
 // Game configuration constants
 const GAME_CONFIG = {
-  ARENA_WIDTH: 1400,
-  ARENA_HEIGHT: 900,
+  ARENA_WIDTH: 4000,
+  ARENA_HEIGHT: 4000,
   PLAYER_RADIUS: 20,
   PLAYER_SPEED: 8,
   SHOTS_PER_MAGAZINE: 25,
@@ -27,10 +27,16 @@ const GAME_CONFIG = {
   MUZZLE_FLASH_DURATION: 100,
   EXPLOSION_PARTICLE_COUNT: 12,
   BLOOD_PARTICLE_COUNT: 8,
-  KILLS_TO_WIN: 5,
+  KILLS_TO_WIN: 999,
   KNIFE_SPEED_BONUS: 1.5,
   PICKUP_SPEED_MULTIPLIER: 2.0,
+  VIEWPORT_WIDTH: 1400,
+  VIEWPORT_HEIGHT: 900,
 };
+
+// Camera state
+let cameraX = 0;
+let cameraY = 0;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
@@ -81,13 +87,13 @@ function acquireParticle(x, y, vx, vy, life, size, color) {
 }
 
 // ===== OFFSCREEN CULLING HELPERS =====
-// Since viewport = arena (no camera), cull entities outside arena bounds + margin
+// Camera-based culling: only render entities visible in viewport
 
-const CULL_MARGIN = 30; // Extra pixels beyond arena edge before culling
+const CULL_MARGIN = 30; // Extra pixels beyond viewport edge before culling
 
 function isOnScreen(x, y) {
-  return x >= -CULL_MARGIN && x <= GAME_CONFIG.ARENA_WIDTH + CULL_MARGIN &&
-         y >= -CULL_MARGIN && y <= GAME_CONFIG.ARENA_HEIGHT + CULL_MARGIN;
+  return x >= cameraX - CULL_MARGIN && x <= cameraX + GAME_CONFIG.VIEWPORT_WIDTH + CULL_MARGIN &&
+         y >= cameraY - CULL_MARGIN && y <= cameraY + GAME_CONFIG.VIEWPORT_HEIGHT + CULL_MARGIN;
 }
 
 // Skin definitions
@@ -190,6 +196,13 @@ let crateDestroyEffects = [];
 let dashCooldownUntil = 0;
 let dashTrails = [];
 
+// Orbs (slither-style collectible points)
+let orbs = [];
+
+// Game timer
+let gameTimerRemaining = 600; // seconds
+let gameDuration = 600000; // ms
+
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
 function getCachedDOM() {
@@ -225,7 +238,7 @@ const KILL_FEED_MAX = 5;
 // Skins
 let selectedSkin = 0;
 let currentRoomData = null;
-let currentGameMode = "deathmatch"; // "deathmatch" or "lastManStanding"
+let currentGameMode = "deathmatch"; // single mode
 let myGameModeVote = null; // local player's vote
 let maxHp = 4; // updated from server on game start (LMS uses 20)
 
@@ -290,23 +303,27 @@ let lastShootTime = 0;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// Responsive canvas sizing
+// Responsive canvas sizing — canvas is viewport-sized, not arena-sized
 function resizeCanvas() {
   const hudEl = document.getElementById("gameUI");
   const hudH = hudEl && hudEl.offsetHeight ? hudEl.offsetHeight : 0;
   const maxW = window.innerWidth * 0.92;
   const maxH = (window.innerHeight * 0.92) - hudH;
-  const arenaAspect = GAME_CONFIG.ARENA_WIDTH / GAME_CONFIG.ARENA_HEIGHT;
+  const viewAspect = GAME_CONFIG.VIEWPORT_WIDTH / GAME_CONFIG.VIEWPORT_HEIGHT;
   let displayW, displayH;
-  if (maxW / maxH > arenaAspect) {
+  if (maxW / maxH > viewAspect) {
     displayH = maxH;
-    displayW = maxH * arenaAspect;
+    displayW = maxH * viewAspect;
   } else {
     displayW = maxW;
-    displayH = maxW / arenaAspect;
+    displayH = maxW / viewAspect;
   }
   canvas.style.width = displayW + "px";
   canvas.style.height = displayH + "px";
+  // Canvas internal resolution = viewport size
+  canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
+  canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
+  gridCanvas = null; // Invalidate cached grid
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
@@ -1567,6 +1584,8 @@ function returnToLobby() {
   crateDestroyEffects = [];
   dashCooldownUntil = 0;
   dashTrails = [];
+  orbs = [];
+  gameTimerRemaining = 600;
   stopHeartbeat();
   stopAllGameSounds();
   gameEnded = false;
@@ -1676,37 +1695,27 @@ function updatePlayerList() {
   if (!listContent) return;
 
   const playerHTML = players
-    .sort((a, b) => {
-      if (currentGameMode === "lastManStanding") {
-        // Sort alive first, then by kills
-        if ((a.hp > 0) !== (b.hp > 0)) return b.hp > 0 ? 1 : -1;
-      }
-      return b.kills - a.kills;
-    })
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
     .map((p, index) => {
       const isMe = p.id === playerId;
       const isDead = p.hp <= 0;
-      const isLeading = index === 0 && p.kills > 0;
-      const isLMS = currentGameMode === "lastManStanding";
-      const killProgress = isLMS
-        ? (isDead ? 0 : 100)
-        : Math.min(100, (p.kills / GAME_CONFIG.KILLS_TO_WIN) * 100);
-      const killsLabel = isLMS
-        ? `🎯 ${p.kills}`
-        : `🎯 ${p.kills}/${GAME_CONFIG.KILLS_TO_WIN}`;
-      const statusIcon = isLMS && isDead ? " ☠️ ELIMINADO" : isDead ? "💀" : "";
+      const isLeading = index === 0 && (p.score || 0) > 0;
+      const score = p.score || 0;
+      // Progress bar — normalize to highest player score or 50, whichever is bigger
+      const maxScore = Math.max(50, ...players.map(pp => pp.score || 0));
+      const scoreProgress = Math.min(100, (score / maxScore) * 100);
       return `
-        <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px; ${isDead && isLMS ? "opacity: 0.5;" : ""}">
+        <div style="padding: 10px 15px; margin-bottom: 8px; background: ${isMe ? "rgba(255, 107, 53, 0.15)" : "rgba(255,255,255,0.03)"}; border-radius: 4px; border: 1px solid ${isDead ? "#333" : isLeading ? "#ffd700" : isMe ? "#ff6b35" : "#2a3a2a"}; min-width: 150px;">
           <div style="font-weight: ${isMe ? "bold" : "normal"}; color: ${isDead ? "#666" : "#f0f0f0"}; margin-bottom: 5px; font-size: 18px; font-family: 'Rajdhani', sans-serif;">
-            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(Você)" : ""} ${statusIcon}
+            ${isLeading ? "👑 " : ""}${esc(p.username)} ${isMe ? "(You)" : ""} ${isDead ? "💀" : ""}
           </div>
           <div style="font-size: 15px; display: flex; gap: 10px; font-family: 'Share Tech Mono', monospace;">
             <span style="color: ${p.hp <= 1 ? '#ff5555' : p.hp <= Math.ceil(maxHp * 0.5) ? '#ffcc44' : '#55dd55'};">❤️ ${p.hp}/${maxHp}</span>
-            <span style="color: #ffaa44;">${killsLabel}</span>
-            <span style="color: #aa88aa;">💀 ${p.deaths || 0}</span>
+            <span style="color: #ffcc00;">⭐ ${score} pts</span>
+            <span style="color: #ffaa44;">🎯 ${p.kills}</span>
           </div>
           <div style="margin-top: 5px; background: #1a1f14; border-radius: 2px; height: 4px; overflow: hidden;">
-            <div style="width: ${killProgress}%; height: 100%; background: linear-gradient(90deg, ${isLMS ? (isDead ? '#666' : '#e63946') : '#ff6b35'}, ${isLMS ? (isDead ? '#444' : '#c1121f') : '#ff4422'});"></div>
+            <div style="width: ${scoreProgress}%; height: 100%; background: linear-gradient(90deg, #ff6b35, #ffcc00);"></div>
           </div>
         </div>
       `;
@@ -1722,6 +1731,7 @@ function updatePlayerList() {
 let lastAimSendTime = 0;
 canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
+  // Screen-space mouse position
   mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
   mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
 
@@ -1730,7 +1740,10 @@ canvas.addEventListener("mousemove", (e) => {
   if (ws && playerId && gameReady && now - lastAimSendTime > 33) {
     const player = players.find((p) => p.id === playerId);
     if (player) {
-      const aimAngle = Math.atan2(mouseY - predictedY, mouseX - predictedX);
+      // Convert screen mouse to world coordinates for aiming
+      const worldMouseX = mouseX + cameraX;
+      const worldMouseY = mouseY + cameraY;
+      const aimAngle = Math.atan2(worldMouseY - predictedY, worldMouseX - predictedX);
       ws.send(serialize({ type: "aim", aimAngle }));
       lastAimSendTime = now;
     }
@@ -1776,9 +1789,11 @@ function tryShoot() {
     const playerX = predictedX;
     const playerY = predictedY;
 
-    // Calculate direction to mouse
-    const dx = mouseX - playerX;
-    const dy = mouseY - playerY;
+    // Calculate direction to mouse (convert screen mouse to world coords)
+    const worldMouseX = mouseX + cameraX;
+    const worldMouseY = mouseY + cameraY;
+    const dx = worldMouseX - playerX;
+    const dy = worldMouseY - playerY;
     const length = Math.sqrt(dx * dx + dy * dy);
 
     // Normalize direction
@@ -2109,8 +2124,10 @@ function setupWsMessageHandler() {
       // Update arena dimensions from server
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
-      canvas.width = GAME_CONFIG.ARENA_WIDTH;
-      canvas.height = GAME_CONFIG.ARENA_HEIGHT;
+      if (data.gameDuration) gameDuration = data.gameDuration;
+      gameTimerRemaining = Math.ceil(gameDuration / 1000);
+      canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
+      canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
       gridCanvas = null; // Invalidate cached grid
       resizeCanvas();
 
@@ -2186,11 +2203,7 @@ function setupWsMessageHandler() {
       if (data.maxHp) maxHp = data.maxHp;
 
       // Show dramatic game start toast with mode info
-      if (currentGameMode === "lastManStanding") {
-        showToast("👑 ÚLTIMO VIVO! 👑", "#e63946");
-      } else {
-        showToast("🔥 VAI! 🔥", "#ff6b35");
-      }
+      showToast("🔥 VAI! Colete pontos e elimine! 🔥", "#ff6b35");
 
       // Show in-game controls hint (fades after a few seconds)
       const igc = document.getElementById("inGameControls");
@@ -2201,16 +2214,15 @@ function setupWsMessageHandler() {
         igc._fadeTimer = setTimeout(() => igc.classList.add("faded"), 8000);
       }
 
-      // Update kills to win if provided
-      if (data.killsToWin) {
-        GAME_CONFIG.KILLS_TO_WIN = data.killsToWin;
-      }
+      // Update game duration
+      if (data.gameDuration) gameDuration = data.gameDuration;
+      gameTimerRemaining = Math.ceil(gameDuration / 1000);
 
       // Update arena dimensions if provided
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
-      canvas.width = GAME_CONFIG.ARENA_WIDTH;
-      canvas.height = GAME_CONFIG.ARENA_HEIGHT;
+      canvas.width = GAME_CONFIG.VIEWPORT_WIDTH;
+      canvas.height = GAME_CONFIG.VIEWPORT_HEIGHT;
       gridCanvas = null; // Invalidate cached grid
       resizeCanvas();
 
@@ -2276,6 +2288,18 @@ function setupWsMessageHandler() {
     if (data.type === "zoneWarning") {
       zoneWarningShown = true;
       showToast("⚠️ ZONA ENCOLHENDO!", "#ff4444");
+    }
+
+    if (data.type === "gameTimer") {
+      gameTimerRemaining = data.remaining;
+    }
+
+    if (data.type === "timeUp") {
+      showToast("⏰ TEMPO ESGOTADO!", "#ff6b35");
+    }
+
+    if (data.type === "orbCollected") {
+      // Could add particle effect at orb position here
     }
 
     if (data.type === "kill") {
@@ -2485,6 +2509,7 @@ function setupWsMessageHandler() {
           regen: p[14] === 1,
           armor: p[15] || 0,
           dashing: p[16] === 1,
+          score: p[17] || 0,
           username: usernameMap.get(p[0]) || "Jogador",
         };
       }
@@ -2529,6 +2554,16 @@ function setupWsMessageHandler() {
         return pk;
       });
       pickups = parsedPickups;
+
+      // Update orbs
+      if (data.orbs) {
+        orbs = data.orbs.map((o) => {
+          if (Array.isArray(o)) {
+            return { id: o[0], x: o[1], y: o[2] };
+          }
+          return o;
+        });
+      }
 
       // Update zone shrinking state
       if (data.z) {
@@ -2816,8 +2851,8 @@ function setupWsMessageHandler() {
         playSound(`bomb-${bIdx}`, 0.25, 0.9 + Math.random() * 0.2);
       }, 1100);
 
-      // Sort scoreboard by kills descending
-      const sorted = [...data.scoreboard].sort((a, b) => b.kills - a.kills);
+      // Sort scoreboard by score descending
+      const sorted = [...data.scoreboard].sort((a, b) => (b.score || 0) - (a.score || 0));
       const endMedals = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"];
 
       // Winner showcase (top 3)
@@ -2831,7 +2866,7 @@ function setupWsMessageHandler() {
             <span class="showcase-medal">${endMedals[i] || ""}</span>
           </div>
           <div class="showcase-name">${esc(p.username)}</div>
-          <div class="showcase-kills">${p.kills}K / ${p.deaths}D</div>
+          <div class="showcase-kills">⭐${p.score || 0} | ${p.kills}K / ${p.deaths}D</div>
         </div>`;
       }).join("");
 
@@ -2842,7 +2877,7 @@ function setupWsMessageHandler() {
         return `<div class="vs-row ${isW ? "winner" : ""}">
           <span class="vs-rank">${isW ? "\uD83D\uDC51" : (i + 1) + "."}</span>
           <span class="vs-name">${esc(p.username)}</span>
-          <span class="vs-stats">${p.kills}K / ${p.deaths}D (${kd})</span>
+          <span class="vs-stats">⭐${p.score || 0} | ${p.kills}K / ${p.deaths}D (${kd})</span>
         </div>`;
       }).join("");
 
@@ -2857,9 +2892,8 @@ function setupWsMessageHandler() {
       // Banner
       document.getElementById("victoryBanner").innerHTML =
         isLocalWinner ? "\uD83C\uDF89 \uD83C\uDF86 \uD83C\uDF89" : "\u2694\uFE0F \uD83D\uDC80 \u2694\uFE0F";
-      const modeLabel = endGameMode === "lastManStanding" ? "👑 ÚLTIMO VIVO!" : "\uD83C\uDFC6 VITÓRIA! \uD83C\uDFC6";
       document.getElementById("victoryMessage").innerHTML =
-        isLocalWinner ? modeLabel : esc(data.winnerName) + (endGameMode === "lastManStanding" ? " SOBREVIVEU!" : " VENCEU!");
+        isLocalWinner ? "\uD83C\uDFC6 VICTORY! \uD83C\uDFC6" : esc(data.winnerName) + " WINS!";
       document.getElementById("victorySubtext").innerHTML = viralPhrase;
       document.getElementById("victoryShowcase").innerHTML = showcaseHTML;
       document.getElementById("victoryScoreboard").innerHTML = scoreboardHTML;
@@ -3188,27 +3222,15 @@ function updateShotUI() {
   const reloadDisplay = dom.reloadDisplay;
   const hpBarFill = dom.hpBarFill;
 
-  // Update kills progress
+  // Update score display
   if (killsDisplay) {
-    if (currentGameMode === "lastManStanding") {
-      const alive = players.filter((p) => p.hp > 0).length;
-      killsDisplay.textContent = `👑 ${alive} vivos | ${player.kills} abates`;
-      if (alive <= 2) {
-        killsDisplay.style.color = "#ff4422";
-        killsDisplay.style.textShadow = "0 0 12px rgba(255,68,34,0.5)";
-      } else {
-        killsDisplay.style.color = "#e63946";
-        killsDisplay.style.textShadow = "0 0 8px rgba(230,57,70,0.3)";
-      }
+    killsDisplay.textContent = `⭐ ${player.score || 0} pts | ${player.kills} kills`;
+    if ((player.score || 0) >= 50) {
+      killsDisplay.style.color = "#ffcc00";
+      killsDisplay.style.textShadow = "0 0 12px rgba(255,204,0,0.5)";
     } else {
-      killsDisplay.textContent = `🏆 ${player.kills}/${GAME_CONFIG.KILLS_TO_WIN}`;
-      if (player.kills >= GAME_CONFIG.KILLS_TO_WIN - 1) {
-        killsDisplay.style.color = "#ff4422";
-        killsDisplay.style.textShadow = "0 0 12px rgba(255,68,34,0.5)";
-      } else {
-        killsDisplay.style.color = "#ff6b35";
-        killsDisplay.style.textShadow = "0 0 8px rgba(255,107,53,0.3)";
-      }
+      killsDisplay.style.color = "#ff6b35";
+      killsDisplay.style.textShadow = "0 0 8px rgba(255,107,53,0.3)";
     }
   }
 
@@ -3227,11 +3249,7 @@ function updateShotUI() {
 
   // Show respawn message if dead
   if (player.hp <= 0) {
-    if (currentGameMode === "lastManStanding") {
-      healthDisplay.textContent = "☠️ ELIMINADO — Assistindo...";
-    } else {
-      healthDisplay.textContent = RESPAWN_PHRASES[Math.floor(Math.random() * RESPAWN_PHRASES.length)];
-    }
+    healthDisplay.textContent = RESPAWN_PHRASES[Math.floor(Math.random() * RESPAWN_PHRASES.length)];
     if (hpBarFill) {
       hpBarFill.style.width = "0%";
       hpBarFill.className = "hud-hp-bar-fill";
@@ -3352,7 +3370,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (Date.now() >= dashCooldownUntil) {
       ws.send(serialize({ type: "dash" }));
-      dashCooldownUntil = Date.now() + 3000; // mirror server cooldown
+      dashCooldownUntil = Date.now() + 1000; // mirror server cooldown (1s)
       // Create dash trail for local player
       const localP = players.find((p) => p.id === playerId);
       if (localP) {
@@ -4112,6 +4130,39 @@ function renderPickupEffects() {
   });
 }
 
+// ============ ORB RENDERING ============
+function renderOrbs() {
+  const now = Date.now();
+  for (let i = 0; i < orbs.length; i++) {
+    const orb = orbs[i];
+    if (!isOnScreen(orb.x, orb.y, 20)) continue;
+
+    // Pulsating glow effect
+    const pulse = 0.7 + 0.3 * Math.sin(now * 0.004 + orb.x * 0.1 + orb.y * 0.1);
+    const radius = 8 * pulse;
+
+    // Outer glow
+    ctx.save();
+    ctx.globalAlpha = 0.3 * pulse;
+    ctx.fillStyle = "#00ffcc";
+    ctx.beginPath();
+    ctx.arc(orb.x, orb.y, radius + 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner orb
+    ctx.globalAlpha = 0.9;
+    const gradient = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, radius);
+    gradient.addColorStop(0, "#ffffff");
+    gradient.addColorStop(0.4, "#66ffdd");
+    gradient.addColorStop(1, "#00cc99");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(orb.x, orb.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 function renderPickups() {
   const pickupColors = {
     health: "#ff4444", ammo: "#44bb44", speed: "#4488ff", minigun: "#ff8800",
@@ -4634,26 +4685,24 @@ function renderFlashbang() {
 let gridCanvas = null;
 function ensureGridCanvas() {
   if (gridCanvas) return;
+  // Create a small tile and use createPattern for efficient rendering
   gridCanvas = document.createElement("canvas");
-  gridCanvas.width = GAME_CONFIG.ARENA_WIDTH;
-  gridCanvas.height = GAME_CONFIG.ARENA_HEIGHT;
+  const tileSize = 40;
+  gridCanvas.width = tileSize;
+  gridCanvas.height = tileSize;
   const gc = gridCanvas.getContext("2d");
   gc.fillStyle = "#2a3020";
-  gc.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT);
+  gc.fillRect(0, 0, tileSize, tileSize);
   gc.strokeStyle = "rgba(65, 85, 60, 0.35)";
   gc.lineWidth = 0.5;
-  for (let x = 0; x < GAME_CONFIG.ARENA_WIDTH; x += 40) {
-    gc.beginPath();
-    gc.moveTo(x, 0);
-    gc.lineTo(x, GAME_CONFIG.ARENA_HEIGHT);
-    gc.stroke();
-  }
-  for (let y = 0; y < GAME_CONFIG.ARENA_HEIGHT; y += 40) {
-    gc.beginPath();
-    gc.moveTo(0, y);
-    gc.lineTo(GAME_CONFIG.ARENA_WIDTH, y);
-    gc.stroke();
-  }
+  gc.beginPath();
+  gc.moveTo(0, 0);
+  gc.lineTo(0, tileSize);
+  gc.stroke();
+  gc.beginPath();
+  gc.moveTo(0, 0);
+  gc.lineTo(tileSize, 0);
+  gc.stroke();
 }
 
 function ensureObstacleCanvas() {
@@ -4708,21 +4757,160 @@ function updateInterpolation() {
   });
 }
 
+// ============ MINIMAP ============
+const MINIMAP_SIZE = 180;
+const MINIMAP_PADDING = 14;
+
+function renderMinimap() {
+  if (!gameReady) return;
+  const framePlayer = players.find((p) => p.id === playerId);
+  if (!framePlayer) return;
+
+  const mx = canvas.width - MINIMAP_SIZE - MINIMAP_PADDING;
+  const my = canvas.height - MINIMAP_SIZE - MINIMAP_PADDING;
+  const scaleX = MINIMAP_SIZE / GAME_CONFIG.ARENA_WIDTH;
+  const scaleY = MINIMAP_SIZE / GAME_CONFIG.ARENA_HEIGHT;
+
+  // Background
+  ctx.save();
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = "#111118";
+  ctx.fillRect(mx, my, MINIMAP_SIZE, MINIMAP_SIZE);
+  ctx.globalAlpha = 1;
+
+  // Border
+  ctx.strokeStyle = "rgba(255,255,255,0.3)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mx, my, MINIMAP_SIZE, MINIMAP_SIZE);
+
+  // Draw obstacles as small dark rectangles
+  for (let i = 0; i < obstacles.length; i++) {
+    const ob = obstacles[i];
+    ctx.fillStyle = "rgba(80,80,80,0.6)";
+    ctx.fillRect(
+      mx + ob.x * scaleX,
+      my + ob.y * scaleY,
+      ob.width * scaleX,
+      ob.height * scaleY
+    );
+  }
+
+  // Draw orbs as small cyan dots
+  for (let i = 0; i < orbs.length; i++) {
+    const orb = orbs[i];
+    ctx.fillStyle = "#00ffcc";
+    ctx.beginPath();
+    ctx.arc(mx + orb.x * scaleX, my + orb.y * scaleY, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw other players as colored dots
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    if (p.id === playerId) continue;
+    if (p.invisible) {
+      ctx.fillStyle = "rgba(170,102,255,0.4)";
+    } else {
+      ctx.fillStyle = "#ff4444";
+    }
+    ctx.beginPath();
+    ctx.arc(mx + p.x * scaleX, my + p.y * scaleY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw local player as white dot with glow
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "#ffffff";
+  ctx.shadowBlur = 4;
+  ctx.beginPath();
+  ctx.arc(mx + predictedX * scaleX, my + predictedY * scaleY, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Draw viewport rectangle
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(
+    mx + cameraX * scaleX,
+    my + cameraY * scaleY,
+    GAME_CONFIG.VIEWPORT_WIDTH * scaleX,
+    GAME_CONFIG.VIEWPORT_HEIGHT * scaleY
+  );
+
+  ctx.restore();
+}
+
+// ============ GAME TIMER OVERLAY ============
+function renderGameTimer() {
+  if (!gameReady || gameTimerRemaining <= 0) return;
+  const minutes = Math.floor(gameTimerRemaining / 60);
+  const seconds = gameTimerRemaining % 60;
+  const timeStr = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+
+  ctx.save();
+  ctx.font = "bold 22px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+
+  // Background pill
+  const tx = canvas.width / 2;
+  const ty = 10;
+  const tw = ctx.measureText(timeStr).width + 24;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.beginPath();
+  ctx.roundRect(tx - tw / 2, ty, tw, 32, 8);
+  ctx.fill();
+
+  // Timer text — red when under 60s
+  ctx.fillStyle = gameTimerRemaining <= 60 ? "#ff4444" : "#ffffff";
+  ctx.fillText(timeStr, tx, ty + 5);
+  ctx.restore();
+}
+
 function render() {
   const frameNow = Date.now();
   const framePlayer = players.find((p) => p.id === playerId);
 
-  // Draw cached grid background (no per-frame line drawing)
+  // Update camera position to follow local player
+  if (framePlayer) {
+    const targetCamX = predictedX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
+    const targetCamY = predictedY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
+    // Clamp camera to arena bounds
+    cameraX = Math.max(0, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
+    cameraY = Math.max(0, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
+  }
+
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw grid background using tile pattern
   ensureGridCanvas();
-  ctx.drawImage(gridCanvas, 0, 0);
+  ctx.save();
+  const gridPattern = ctx.createPattern(gridCanvas, "repeat");
+  ctx.fillStyle = gridPattern;
+  // Offset pattern to align with camera
+  ctx.translate(-Math.floor(cameraX) % 40, -Math.floor(cameraY) % 40);
+  ctx.fillRect(0, 0, GAME_CONFIG.VIEWPORT_WIDTH + 40, GAME_CONFIG.VIEWPORT_HEIGHT + 40);
+  ctx.restore();
+
+  // Draw arena boundary (dark outside the arena)
+  ctx.save();
+  ctx.translate(-Math.floor(cameraX), -Math.floor(cameraY));
+  ctx.fillStyle = "#111";
+  // Top
+  if (cameraY < 0) ctx.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, -cameraY);
+  // Bottom
+  const bottomY = GAME_CONFIG.ARENA_HEIGHT - cameraY;
+  if (bottomY < GAME_CONFIG.VIEWPORT_HEIGHT) ctx.fillRect(0, GAME_CONFIG.ARENA_HEIGHT, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.VIEWPORT_HEIGHT - bottomY);
+  ctx.restore();
 
   // Screen shake offset
   updateScreenShake();
   const shakeOffset = getScreenShakeOffset();
-  if (shakeOffset.x !== 0 || shakeOffset.y !== 0) {
-    ctx.save();
-    ctx.translate(shakeOffset.x, shakeOffset.y);
-  }
+
+  // Push camera transform — all world drawing happens in world coordinates
+  ctx.save();
+  ctx.translate(-Math.floor(cameraX) + shakeOffset.x, -Math.floor(cameraY) + shakeOffset.y);
 
   // Update interpolation for smooth movement
   updateInterpolation();
@@ -4786,6 +4974,9 @@ function render() {
   // Render pickups
   renderPickups();
   renderPickupEffects();
+
+  // Render orbs (collectible points like slither.io)
+  renderOrbs();
 
   // Render loot crates
   updateCrateDestroyEffects();
@@ -5198,6 +5389,9 @@ function render() {
   // Render death animations (ragdoll particles)
   renderDeathAnimations();
 
+  // === End world-space rendering — restore camera transform ===
+  ctx.restore();
+
   // Render crosshair
   if (framePlayer) {
     // Tactical crosshair
@@ -5230,10 +5424,11 @@ function render() {
     renderKillFeed();
   }
 
-  // Restore canvas from screen shake
-  if (shakeOffset.x !== 0 || shakeOffset.y !== 0) {
-    ctx.restore();
-  }
+  // Render minimap
+  renderMinimap();
+
+  // Render game timer
+  renderGameTimer();
 
   // Flashbang overlay (must be last — covers entire screen)
   renderFlashbang();

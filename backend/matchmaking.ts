@@ -8,8 +8,8 @@ import {
   isPositionClear,
   debouncedBroadcastOnlineList,
 } from "./utils.js";
-import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink, spawnLootCrate, spawnInitialLootCrates } from "./game.js";
-import { broadcastRoomList, resolveGameModeVotes } from "./room.js";
+import { spawnRandomObstacle, spawnPickup, spawnBomb, spawnLightning, startZoneShrink, spawnLootCrate, spawnInitialLootCrates, spawnOrb, spawnInitialOrbs, endGameByScore } from "./game.js";
+import { broadcastRoomList } from "./room.js";
 
 /* ================= START GAME FROM ROOM ================= */
 
@@ -254,17 +254,11 @@ export function startGameFromRoom(room: Room) {
     p.dashUntil = 0;
     p.dashDirX = 0;
     p.dashDirY = 0;
+    p.score = 0;
   });
 
-  // Resolve gamemode from room votes
-  const gameMode = resolveGameModeVotes(room);
-
-  // In LMS, players start with more HP (no respawns)
-  if (gameMode === "lastManStanding") {
-    players.forEach((p) => {
-      p.hp = GAME_CONFIG.LMS_PLAYER_HP;
-    });
-  }
+  // Single game mode: deathmatch
+  const gameMode = "deathmatch" as const;
 
   const game: Game = {
     id: uuid(),
@@ -272,6 +266,7 @@ export function startGameFromRoom(room: Room) {
     bullets: [],
     obstacles,
     pickups: [],
+    orbs: [],
     bombs: [],
     lightnings: [],
     lootCrates: [],
@@ -306,7 +301,8 @@ export function startGameFromRoom(room: Room) {
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
     gameMode: game.gameMode,
-    maxHp: game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP,
+    maxHp: GAME_CONFIG.PLAYER_HP,
+    gameDuration: GAME_CONFIG.GAME_DURATION,
   });
 
   // Start the pre-game ready timeout (15s)
@@ -369,18 +365,14 @@ function beginMatch(game: Game) {
 
   broadcast(game, {
     type: "allReady",
-    killsToWin: GAME_CONFIG.KILLS_TO_WIN,
+    gameDuration: GAME_CONFIG.GAME_DURATION,
     arenaWidth: GAME_CONFIG.ARENA_WIDTH,
     arenaHeight: GAME_CONFIG.ARENA_HEIGHT,
     gameMode: game.gameMode,
-    maxHp: game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP,
+    maxHp: GAME_CONFIG.PLAYER_HP,
   });
 
-  if (game.gameMode === "lastManStanding") {
-    console.log(`🎮 Last Man Standing starting NOW! Last player alive wins!`);
-  } else {
-    console.log(`🎮 Deathmatch starting NOW! First to ${GAME_CONFIG.KILLS_TO_WIN} kills wins!`);
-  }
+  console.log(`🎮 Deathmatch starting NOW! 10-minute match — highest score wins!`);
 
   game.obstacleSpawnInterval = setInterval(() => {
     if (games.has(game.id)) {
@@ -397,6 +389,16 @@ function beginMatch(game: Game) {
       clearInterval(game.pickupSpawnInterval);
     }
   }, GAME_CONFIG.PICKUP_SPAWN_INTERVAL);
+
+  // Spawn initial orbs + continuous orb spawning
+  spawnInitialOrbs(game);
+  game.orbSpawnInterval = setInterval(() => {
+    if (games.has(game.id)) {
+      spawnOrb(game);
+    } else {
+      clearInterval(game.orbSpawnInterval);
+    }
+  }, GAME_CONFIG.ORB_SPAWN_INTERVAL);
 
   // Schedule bombs with randomized timing (0.5x–1.5x base interval)
   const scheduleBomb = () => {
@@ -436,4 +438,26 @@ function beginMatch(game: Game) {
       startZoneShrink(game);
     }
   }, GAME_CONFIG.ZONE_SHRINK_START);
+
+  // Game duration timer — end game after GAME_DURATION ms
+  game.gameTimerTimeout = setTimeout(() => {
+    if (games.has(game.id) && game.players.length > 0) {
+      broadcast(game, { type: "timeUp" });
+      endGameByScore(game);
+    }
+  }, GAME_CONFIG.GAME_DURATION);
+
+  // Broadcast remaining time every 1 second
+  game.gameTimerInterval = setInterval(() => {
+    if (!games.has(game.id)) {
+      clearInterval(game.gameTimerInterval);
+      return;
+    }
+    const elapsed = Date.now() - game.matchStartTime;
+    const remaining = Math.max(0, GAME_CONFIG.GAME_DURATION - elapsed);
+    broadcast(game, {
+      type: "gameTimer",
+      remaining: Math.ceil(remaining / 1000),
+    });
+  }, 1000);
 }

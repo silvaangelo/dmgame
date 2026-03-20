@@ -124,18 +124,7 @@
             Escolha sua skin:</p>
           <div id="skinOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
         </div>
-        <div id="gameModeVoting" style="margin-bottom: 14px;">
-          <p style="color: #8aaa8a; font-size: 17px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace;">🎮
-            Modo de Jogo:</p>
-          <div id="gameModeOptions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
-            <button class="gamemode-btn" data-mode="random" onclick="doVoteGameMode('random')">🎲 Aleatório <span
-                class="vote-count"></span></button>
-            <button class="gamemode-btn" data-mode="deathmatch" onclick="doVoteGameMode('deathmatch')">💀 Deathmatch
-              <span class="vote-count"></span></button>
-            <button class="gamemode-btn" data-mode="lastManStanding" onclick="doVoteGameMode('lastManStanding')">👑
-              Último Vivo <span class="vote-count"></span></button>
-          </div>
-        </div>
+
         <div style="display: flex; gap: 12px; justify-content: center; flex-direction: column; align-items: center;">
           <button id="roomReadyBtn" onclick="doRoomReady()">⚔ BORA! ⚔</button>
           <button id="roomLeaveBtn" onclick="doLeaveRoom()"
@@ -150,7 +139,7 @@
     <div id="globalControlsPanel">
       <h4>🎮 Controles</h4>
       <div style="margin-bottom: 8px;">
-        <div>🏆 Primeiro a 5 abates!</div>
+        <div>⭐ Kill & collect orbs! 10min match</div>
       </div>
       <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px; margin-bottom: 8px;">
         <div style="color: #d9a04a; margin-bottom: 4px; font-weight: 600;">🔊 Volume</div>
@@ -183,7 +172,7 @@
     <div id="gameUI" style="display:none;">
       <div class="hud-bar">
         <div class="hud-section hud-kills">
-          <span id="killsDisplay">🏆 0/5</span>
+          <span id="killsDisplay">⭐ 0 pts</span>
         </div>
         <div class="hud-section hud-health">
           <div class="hud-hp-bar-container">
@@ -207,7 +196,7 @@
         </div>
       </div>
     </div>
-    <canvas id="game" width="1400" height="900"></canvas>
+    <canvas id="game" width="1400" height="900" style="display:block;"></canvas>
   </div>
 
   <div id="playerList" style="display:none;">
@@ -232,7 +221,7 @@
     <div class="ready-screen-controls"
       style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 14px; color: #8aaa8a; line-height: 1.8;">
       <div style="color: #88ccff; font-weight: 600; margin-bottom: 4px;">🎮 Controles</div>
-      <div>🏆 Primeiro a 5 abates!</div>
+      <div>⭐ Kill & collect orbs to score! 10min match</div>
       <div style="margin-top: 4px;"><kbd
           style="background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #bbddbb; border: 1px solid #3a5a3a;">WASD
           / Setas</kbd> Mover · <kbd

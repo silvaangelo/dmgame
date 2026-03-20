@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "crypto";
 import { WebSocket } from "ws";
-import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate } from "./types.js";
+import type { Player, Bullet, Game, Pickup, Bomb, Lightning, LootCrate, Orb } from "./types.js";
 import { GAME_CONFIG, OBSTACLE_CONFIG } from "./config.js";
 import { games, allPlayers, rooms } from "./state.js";
 import {
@@ -36,9 +36,10 @@ function handleKill(
   if (killer && killer.id !== victim.id) {
     killer.kills++;
     killer.killStreak++;
+    killer.score += GAME_CONFIG.KILL_SCORE; // +10 points per kill
 
     // Heal on kill — recover 1 HP (capped at max)
-    const maxHp = game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP;
+    const maxHp = GAME_CONFIG.PLAYER_HP;
     killer.hp = Math.min(maxHp, killer.hp + 1);
 
     // Revenge tracking
@@ -79,9 +80,7 @@ function handleKill(
 
   checkVictory(game);
 
-  // In Last Man Standing mode, no respawns
-  if (game.gameMode === "lastManStanding") return;
-
+  // Respawn after delay
   if (games.has(game.id)) {
     setTimeout(() => {
       if (games.has(game.id)) {
@@ -412,6 +411,35 @@ export function updateGame(game: Game) {
     }
   });
 
+  // Remove expired orbs
+  game.orbs = game.orbs.filter(
+    (orb) => now - orb.createdAt < GAME_CONFIG.ORB_LIFETIME
+  );
+
+  // Check orb collisions
+  const orbCollisionDist = GAME_CONFIG.PLAYER_RADIUS + GAME_CONFIG.ORB_RADIUS;
+  const orbCollisionDistSq = orbCollisionDist * orbCollisionDist;
+  game.players.forEach((player) => {
+    if (player.hp <= 0) return;
+    const orbsToRemove: string[] = [];
+    game.orbs.forEach((orb) => {
+      const dx = player.x - orb.x;
+      const dy = player.y - orb.y;
+      if (dx * dx + dy * dy < orbCollisionDistSq) {
+        orbsToRemove.push(orb.id);
+        player.score += GAME_CONFIG.ORB_SCORE;
+        broadcast(game, {
+          type: "orbCollected",
+          orbId: orb.id,
+          playerId: player.id,
+        });
+      }
+    });
+    if (orbsToRemove.length > 0) {
+      game.orbs = game.orbs.filter((o) => !orbsToRemove.includes(o.id));
+    }
+  });
+
   // Check for bomb explosions
   const bombsToExplode: Bomb[] = [];
   game.bombs.forEach((bomb) => {
@@ -530,6 +558,9 @@ export function updateGame(game: Game) {
   // Compact loot crates: [id, x, y, hp]
   const compactCrates = game.lootCrates.map((c) => [c.id, Math.round(c.x), Math.round(c.y), c.hp]);
 
+  // Compact orbs: [id, x, y]
+  const compactOrbs = game.orbs.map((o) => [o.id, Math.round(o.x), Math.round(o.y)]);
+
   // Delta compression: only send players whose state actually changed
   if (!game.lastBroadcastState) {
     game.lastBroadcastState = new Map();
@@ -558,8 +589,9 @@ export function updateGame(game: Game) {
 
   const lastPickupCount = game.lastBroadcastState.get("pickupCount") as number || 0;
   const lastCrateCount = game.lastBroadcastState.get("crateCount") as number || 0;
+  const lastOrbCount = game.lastBroadcastState.get("orbCount") as number || 0;
   // Skip broadcast if truly nothing changed
-  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount && compactCrates.length === lastCrateCount) {
+  if (changedPlayers.length === 0 && compactBullets.length === 0 && compactPickups.length === lastPickupCount && compactCrates.length === lastCrateCount && compactOrbs.length === lastOrbCount) {
     return;
   }
 
@@ -567,6 +599,7 @@ export function updateGame(game: Game) {
   game.lastBroadcastState.set("players", newPlayerStates);
   game.lastBroadcastState.set("pickupCount", compactPickups.length);
   game.lastBroadcastState.set("crateCount", compactCrates.length);
+  game.lastBroadcastState.set("orbCount", compactOrbs.length);
 
   game.stateSequence++;
   broadcast(game, {
@@ -577,6 +610,7 @@ export function updateGame(game: Game) {
     b: compactBullets,
     pk: compactPickups,
     cr: compactCrates,
+    orbs: compactOrbs,
     z: game.zoneShrinking ? [
       Math.round(game.zoneX),
       Math.round(game.zoneY),
@@ -803,7 +837,7 @@ export function reloadWeapon(player: Player) {
 /* ================= PICKUPS ================= */
 
 function applyPickup(player: Player, pickup: Pickup, game: Game) {
-  const maxHp = game.gameMode === "lastManStanding" ? GAME_CONFIG.LMS_PLAYER_HP : GAME_CONFIG.PLAYER_HP;
+  const maxHp = GAME_CONFIG.PLAYER_HP;
   switch (pickup.type) {
     case "health":
       player.hp = Math.min(maxHp, player.hp + GAME_CONFIG.PICKUP_HEALTH_AMOUNT);
@@ -884,6 +918,46 @@ export function spawnPickup(game: Game) {
       createdAt: Date.now(),
     };
     game.pickups.push(pickup);
+  }
+}
+
+/* ================= ORBS (Slither-style points) ================= */
+
+export function spawnOrb(game: Game) {
+  if (game.orbs.length >= GAME_CONFIG.ORB_MAX) return;
+
+  // Spawn a batch of 3-5 orbs at once for slither feel
+  const batchSize = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < batchSize; i++) {
+    if (game.orbs.length >= GAME_CONFIG.ORB_MAX) break;
+
+    let validPosition = false;
+    let attempts = 0;
+    let orbX = 0;
+    let orbY = 0;
+
+    while (!validPosition && attempts < 20) {
+      orbX = 40 + Math.random() * (GAME_CONFIG.ARENA_WIDTH - 80);
+      orbY = 40 + Math.random() * (GAME_CONFIG.ARENA_HEIGHT - 80);
+      validPosition = isPositionClear(orbX, orbY, game.obstacles, GAME_CONFIG.ORB_RADIUS);
+      attempts++;
+    }
+
+    if (validPosition) {
+      const orb: Orb = {
+        id: uuid(),
+        x: orbX,
+        y: orbY,
+        createdAt: Date.now(),
+      };
+      game.orbs.push(orb);
+    }
+  }
+}
+
+export function spawnInitialOrbs(game: Game) {
+  for (let i = 0; i < 15; i++) {
+    spawnOrb(game);
   }
 }
 
@@ -1072,11 +1146,14 @@ export function spawnLightning(game: Game) {
 function clearGameIntervals(game: Game) {
   if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
   if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+  if (game.orbSpawnInterval) clearInterval(game.orbSpawnInterval);
   if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
   if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
   if (game.zoneShrinkInterval) clearInterval(game.zoneShrinkInterval);
   if (game.zoneDamageInterval) clearInterval(game.zoneDamageInterval);
   if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
+  if (game.gameTimerTimeout) clearTimeout(game.gameTimerTimeout);
+  if (game.gameTimerInterval) clearInterval(game.gameTimerInterval);
 }
 
 function endGame(game: Game, winner: Player) {
@@ -1092,9 +1169,10 @@ function endGame(game: Game, winner: Player) {
       username: p.username,
       kills: p.kills,
       deaths: p.deaths,
+      score: p.score,
       isWinner: p.id === winner.id,
     }))
-    .sort((a, b) => b.kills - a.kills);
+    .sort((a, b) => b.score - a.score);
 
   // Save match history
   addMatchHistory({
@@ -1165,35 +1243,23 @@ function endGame(game: Game, winner: Player) {
 }
 
 export function checkVictory(game: Game) {
-  if (game.gameMode === "lastManStanding") {
-    // LMS: game must have started to check victory
-    if (!game.started) return;
-
-    const alivePlayers = game.players.filter((p) => p.hp > 0);
-
-    if (alivePlayers.length <= 1) {
-      // If exactly 1 alive, they win. If 0 (simultaneous death), pick most kills.
-      const winner = alivePlayers.length === 1
-        ? alivePlayers[0]
-        : game.players.reduce((best, p) => (p.kills > best.kills ? p : best), game.players[0]);
-
-      console.log(`🏆 ${winner.username} is the last one standing! Game over.`);
-      endGame(game, winner);
-    }
-    return;
+  // Game ends by timer; this is only called if all players disconnect
+  if (!game.started) return;
+  if (game.players.length <= 0) {
+    endGameByScore(game);
   }
+}
 
-  // Deathmatch: first to KILLS_TO_WIN kills
-  const winner = game.players.find(
-    (p) => p.kills >= GAME_CONFIG.KILLS_TO_WIN
+export function endGameByScore(game: Game) {
+  if (!games.has(game.id)) return;
+  // Find winner by highest score
+  const winner = game.players.reduce(
+    (best, p) => (p.score > best.score ? p : best),
+    game.players[0]
   );
-
-  if (winner) {
-    console.log(
-      `🏆 ${winner.username} wins with ${winner.kills} kills! Game over.`
-    );
-    endGame(game, winner);
-  }
+  if (!winner) return;
+  console.log(`🏆 ${winner.username} wins with ${winner.score} points! Game over.`);
+  endGame(game, winner);
 }
 
 /* ================= RESPAWN ================= */

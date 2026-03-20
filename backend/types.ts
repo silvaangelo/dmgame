@@ -2,8 +2,8 @@ import { WebSocket } from "ws";
 
 export type WeaponType = "machinegun" | "shotgun" | "knife" | "minigun" | "sniper";
 
-export type GameMode = "deathmatch" | "lastManStanding";
-export type GameModeVote = "random" | "deathmatch" | "lastManStanding";
+export type GameMode = "deathmatch";
+export type GameModeVote = "deathmatch";
 
 export type Player = {
   id: string;
@@ -20,6 +20,7 @@ export type Player = {
   lastProcessedInput: number;
   kills: number;
   deaths: number;
+  score: number;
   ready: boolean;
   aimAngle: number;
   weapon: WeaponType;
@@ -92,6 +93,13 @@ export type Pickup = {
   createdAt: number;
 };
 
+export type Orb = {
+  id: string;
+  x: number;
+  y: number;
+  createdAt: number;
+};
+
 export type LootCrate = {
   id: string;
   x: number;
@@ -106,6 +114,7 @@ export type Game = {
   bullets: Bullet[];
   obstacles: Obstacle[];
   pickups: Pickup[];
+  orbs: Orb[];
   bombs: Bomb[];
   lightnings: Lightning[];
   lootCrates: LootCrate[];
@@ -115,19 +124,22 @@ export type Game = {
   stateSequence: number;
   obstacleSpawnInterval?: NodeJS.Timeout;
   pickupSpawnInterval?: NodeJS.Timeout;
+  orbSpawnInterval?: NodeJS.Timeout;
   bombSpawnInterval?: NodeJS.Timeout;
   lightningSpawnInterval?: NodeJS.Timeout;
   lootCrateSpawnInterval?: NodeJS.Timeout;
   preGameTimeout?: NodeJS.Timeout;
   preGameCountdownInterval?: NodeJS.Timeout;
+  gameTimerTimeout?: NodeJS.Timeout;
+  gameTimerInterval?: NodeJS.Timeout;
   // Dynamic arena shrinking
   matchStartTime: number;
   zoneShrinkInterval?: NodeJS.Timeout;
   zoneDamageInterval?: NodeJS.Timeout;
-  zoneX: number;       // Top-left X of safe zone
-  zoneY: number;       // Top-left Y of safe zone
-  zoneW: number;       // Width of safe zone
-  zoneH: number;       // Height of safe zone
+  zoneX: number;
+  zoneY: number;
+  zoneW: number;
+  zoneH: number;
   zoneShrinking: boolean;
 };
 

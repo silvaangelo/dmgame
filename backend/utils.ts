@@ -65,6 +65,7 @@ export function serializePlayersCompact(game: Game) {
     now < p.regenUntil ? 1 : 0,
     p.armor,
     now < p.dashUntil ? 1 : 0,
+    p.score,
   ]);
 }
 

@@ -17,7 +17,6 @@ import {
   markRoomReady,
   removePlayerFromRooms,
   findRoomByPlayer,
-  voteGameMode,
 } from "./room.js";
 import { WebSocket } from "ws";
 import { getLeaderboard, getPlayerStats, getUserByToken } from "./database.js";
@@ -162,6 +161,7 @@ export function setupSocket() {
           lastProcessedInput: 0,
           kills: 0,
           deaths: 0,
+          score: 0,
           ready: false,
           aimAngle: 0,
           weapon: "machinegun",
@@ -308,14 +308,6 @@ export function setupSocket() {
               } catch { /* ignore */ }
             });
           }
-        }
-        return;
-      }
-
-      if (data.type === "voteGameMode") {
-        const validVotes = ["random", "deathmatch", "lastManStanding"];
-        if (data.vote && validVotes.includes(data.vote)) {
-          voteGameMode(player, data.vote);
         }
         return;
       }
@@ -508,9 +500,12 @@ export function setupSocket() {
 
             if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+            if (game.orbSpawnInterval) clearInterval(game.orbSpawnInterval);
             if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
             if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
             if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
+            if (game.gameTimerTimeout) clearTimeout(game.gameTimerTimeout);
+            if (game.gameTimerInterval) clearInterval(game.gameTimerInterval);
             games.delete(game.id);
           } else {
             checkVictory(game);
@@ -520,9 +515,12 @@ export function setupSocket() {
           if (game.players.length === 0) {
             if (game.obstacleSpawnInterval) clearInterval(game.obstacleSpawnInterval);
             if (game.pickupSpawnInterval) clearInterval(game.pickupSpawnInterval);
+            if (game.orbSpawnInterval) clearInterval(game.orbSpawnInterval);
             if (game.bombSpawnInterval) clearTimeout(game.bombSpawnInterval);
             if (game.lightningSpawnInterval) clearTimeout(game.lightningSpawnInterval);
             if (game.lootCrateSpawnInterval) clearInterval(game.lootCrateSpawnInterval);
+            if (game.gameTimerTimeout) clearTimeout(game.gameTimerTimeout);
+            if (game.gameTimerInterval) clearInterval(game.gameTimerInterval);
             games.delete(game.id);
           }
         }

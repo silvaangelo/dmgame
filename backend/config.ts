@@ -17,8 +17,8 @@ export const GAME_CONFIG = {
   SNIPER_RELOAD_TIME: 3000,
   BULLET_SPEED: 15,
   BULLET_LIFETIME: 2000,
-  ARENA_WIDTH: 1400,
-  ARENA_HEIGHT: 900,
+  ARENA_WIDTH: 4000,
+  ARENA_HEIGHT: 4000,
   // Machine Gun (automatic)
   MACHINEGUN_COOLDOWN: 35,
   MACHINEGUN_DAMAGE: 1,
@@ -64,7 +64,7 @@ export const GAME_CONFIG = {
   ARMOR_AMOUNT: 3,           // +3 temporary HP above max
   ARMOR_MAX: 3,              // max armor a player can have
   // Dash ability
-  DASH_COOLDOWN: 3000,       // 3s between dashes
+  DASH_COOLDOWN: 1000,       // 1s between dashes
   DASH_DURATION: 150,        // dash lasts 150ms
   DASH_SPEED: 28,            // pixels per tick during dash
   DASH_INVINCIBLE: true,     // i-frames during dash
@@ -78,7 +78,15 @@ export const GAME_CONFIG = {
   LIGHTNING_FUSE_TIME: 250,
   LIGHTNING_DAMAGE: 2,
   LIGHTNING_RADIUS: 150,
-  KILLS_TO_WIN: 5,
+  KILLS_TO_WIN: 999,          // Not used — game ends by timer
+  GAME_DURATION: 600000,       // 10 minutes in ms
+  KILL_SCORE: 10,              // Points per kill
+  ORB_SCORE: 1,                // Points per orb collected
+  // Orbs (slither-style collectible points)
+  ORB_SPAWN_INTERVAL: 2000,    // Spawn new orbs every 2s
+  ORB_RADIUS: 10,
+  ORB_MAX: 80,                 // Max orbs on map at once
+  ORB_LIFETIME: 60000,         // Orbs last 60s
   RESPAWN_TIME: 1500,
   OBSTACLE_SPAWN_INTERVAL: 8000,
   // Dynamic arena shrinking
@@ -105,14 +113,14 @@ export const GAME_CONFIG = {
 export const WEAPON_CYCLE = ["machinegun", "shotgun", "knife", "sniper"] as const;
 
 export const OBSTACLE_CONFIG = {
-  WALL_COUNT_MIN: 14,
-  WALL_COUNT_MAX: 22,
+  WALL_COUNT_MIN: 40,
+  WALL_COUNT_MAX: 60,
   WALL_LENGTH_MIN: 2,
   WALL_LENGTH_MAX: 10,
   WALL_BLOCK_SIZE: 14,
   WALL_SPACING: 60,
-  TREE_COUNT_MIN: 7,
-  TREE_COUNT_MAX: 12,
+  TREE_COUNT_MIN: 20,
+  TREE_COUNT_MAX: 35,
   TREE_SIZE: 24,             // smaller collision box to avoid getting stuck
   TREE_SPACING: 70,
 };
