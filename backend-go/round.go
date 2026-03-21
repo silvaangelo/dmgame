@@ -338,9 +338,20 @@ func addPlayerToGame(player *Player, game *Game) {
 	bestY := GameConfig.ArenaHeight / 2
 	bestDistance := 0.0
 
+	// Center-biased spawn: average of 2 randoms + blend toward center
+	spawnMargin := 50.0
+	centerX := GameConfig.ArenaWidth / 2
+	centerY := GameConfig.ArenaHeight / 2
+	spanX := GameConfig.ArenaWidth - 2*spawnMargin
+	spanY := GameConfig.ArenaHeight - 2*spawnMargin
+
 	for attempt := 0; attempt < 50; attempt++ {
-		testX := 50 + rand.Float64()*(GameConfig.ArenaWidth-100)
-		testY := 50 + rand.Float64()*(GameConfig.ArenaHeight-100)
+		rx := (rand.Float64() + rand.Float64()) / 2
+		ry := (rand.Float64() + rand.Float64()) / 2
+		testX := spawnMargin + rx*spanX
+		testY := spawnMargin + ry*spanY
+		testX = testX*0.6 + centerX*0.4
+		testY = testY*0.6 + centerY*0.4
 		if !isPositionClear(testX, testY, game.Obstacles, GameConfig.PlayerRadius) {
 			continue
 		}
@@ -454,9 +465,21 @@ func respawnPlayer(player *Player, game *Game) {
 		spawnMaxY = game.Zone.Y + game.Zone.H - spawnMargin
 	}
 
+	// Center-biased spawn: average of 2 random values tends toward center
+	centerX := (spawnMinX + spawnMaxX) / 2
+	centerY := (spawnMinY + spawnMaxY) / 2
+	spanX := math.Max(0, spawnMaxX-spawnMinX)
+	spanY := math.Max(0, spawnMaxY-spawnMinY)
+
 	for attempt := 0; attempt < 50; attempt++ {
-		testX := spawnMinX + rand.Float64()*math.Max(0, spawnMaxX-spawnMinX)
-		testY := spawnMinY + rand.Float64()*math.Max(0, spawnMaxY-spawnMinY)
+		// Use average of 2 uniform randoms for a triangular distribution biased to center
+		rx := (rand.Float64() + rand.Float64()) / 2
+		ry := (rand.Float64() + rand.Float64()) / 2
+		testX := spawnMinX + rx*spanX
+		testY := spawnMinY + ry*spanY
+		// Further bias: blend 40% toward center
+		testX = testX*0.6 + centerX*0.4
+		testY = testY*0.6 + centerY*0.4
 
 		if !isPositionClear(testX, testY, game.Obstacles, GameConfig.PlayerRadius) {
 			continue

@@ -297,7 +297,7 @@ const GAME_CONFIG = {
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
   PLAYER_RADIUS: 20,
-  PLAYER_SPEED: 7,
+  PLAYER_SPEED: 9,
   SHOTS_PER_MAGAZINE: 25,
   MAX_BLOOD_STAINS: 150,
   MAX_PARTICLES: 100,
@@ -4466,8 +4466,10 @@ function renderMinimap() {
     _renderMinimapContent(mc, framePlayer);
   }
 
-  // Blit cached minimap to main canvas
+  // Blit cached minimap to main canvas (semi-transparent)
+  ctx.globalAlpha = 0.55;
   ctx.drawImage(_minimapCanvas, mx, my);
+  ctx.globalAlpha = 1.0;
 }
 
 function _renderMinimapContent(mc, framePlayer) {
@@ -4942,15 +4944,18 @@ function render() {
     }
 
     // Health bar above player
-    const barWidth = 36;
-    const barHeight = 5;
+    const barWidth = 44;
+    const barHeight = 6;
     const barX = renderX - barWidth / 2;
-    const barY = renderY - 28;
+    const barY = renderY - 30;
     const hpPercent = p.hp / maxHp;
 
-    // Background
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+    // Background with strong outline
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
 
     // HP fill
     const hpColor =
@@ -4960,43 +4965,46 @@ function render() {
 
     // Armor bar (golden, stacked below HP bar)
     if (p.armor > 0) {
-      const armorBarY = barY + barHeight + 1;
+      const armorBarY = barY + barHeight + 2;
       const armorPercent = p.armor / 3;
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(barX - 1, armorBarY, barWidth + 2, 3);
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(barX - 1, armorBarY, barWidth + 2, 4);
       ctx.fillStyle = "#ddaa22";
-      ctx.fillRect(barX, armorBarY, barWidth * armorPercent, 2);
+      ctx.fillRect(barX, armorBarY + 1, barWidth * armorPercent, 3);
     }
 
     // Username
-    ctx.font = "bold 20px 'Rajdhani', sans-serif";
+    ctx.font = "bold 22px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
-    // Shadow for readability
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillText(p.username, renderX + 1, renderY - 34);
+    // Stroke outline for maximum readability
+    ctx.strokeStyle = "rgba(0,0,0,0.9)";
+    ctx.lineWidth = 3;
+    ctx.strokeText(p.username, renderX, renderY - 37);
     ctx.fillStyle = p.id === playerId ? "#ffcc66" : "#e0ece0";
-    ctx.fillText(p.username, renderX, renderY - 35);
+    ctx.fillText(p.username, renderX, renderY - 37);
     ctx.textAlign = "start";
 
     // Score + ammo above player (local player only)
     if (p.id === playerId) {
       ctx.textAlign = "center";
       // Score
-      ctx.font = "bold 13px 'Share Tech Mono', monospace";
+      ctx.font = "bold 15px 'Share Tech Mono', monospace";
       const scoreColor = (p.score || 0) >= 50 ? "#ffcc00" : "#ff6b35";
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillText("⭐" + (p.score || 0), renderX + 1, renderY - 48);
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.lineWidth = 3;
+      ctx.strokeText("⭐" + (p.score || 0), renderX, renderY - 52);
       ctx.fillStyle = scoreColor;
-      ctx.fillText("⭐" + (p.score || 0), renderX, renderY - 49);
+      ctx.fillText("⭐" + (p.score || 0), renderX, renderY - 52);
       // Ammo
       const weaponMaxAmmo = p.weapon === "shotgun" ? 10 : p.weapon === "sniper" ? 7 : 35;
       const ammoText = p.shots + "/" + weaponMaxAmmo;
       const ammoColor = p.reloading ? "#ff6b35" : (p.shots <= 5 ? "#ff8844" : "#ddeedd");
-      ctx.font = "bold 11px 'Share Tech Mono', monospace";
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillText(ammoText, renderX + 1, renderY - 60);
+      ctx.font = "bold 13px 'Share Tech Mono', monospace";
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.lineWidth = 3;
+      ctx.strokeText(ammoText, renderX, renderY - 65);
       ctx.fillStyle = ammoColor;
-      ctx.fillText(ammoText, renderX, renderY - 61);
+      ctx.fillText(ammoText, renderX, renderY - 65);
       ctx.textAlign = "start";
     }
 
@@ -5004,7 +5012,7 @@ function render() {
     if (bountyLeaderId === p.id) {
       ctx.font = "16px serif";
       ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, p.id === playerId ? renderY - 72 : renderY - 54);
+      ctx.fillText("💀", renderX, p.id === playerId ? renderY - 78 : renderY - 56);
       ctx.textAlign = "start";
     }
 

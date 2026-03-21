@@ -129,7 +129,7 @@ var GameConfig = struct {
 	ReadyCountdown:  3,
 	PlayerHP:        8,
 	LMSPlayerHP:     20,
-	PlayerSpeed:     7,
+	PlayerSpeed:     9,
 	PlayerRadius:    20,
 	ShotsPerMag:     35,
 	ShotCooldown:    55,
@@ -188,7 +188,7 @@ var GameConfig = struct {
 	// Dash
 	DashCooldown:   1000,
 	DashDuration:   150,
-	DashSpeed:      35,
+	DashSpeed:      42,
 	DashInvincible: true,
 	// Bombs
 	BombSpawnInterval: 3000,
