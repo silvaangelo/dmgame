@@ -4734,7 +4734,7 @@ function render() {
     ctx.fillStyle = bloodColors[c];
     bloodStains.forEach((stain) => {
       if (stain.color !== c) return;
-      if (!isInViewport(stain.x, stain.y)) return;
+      if (!isOnScreen(stain.x, stain.y)) return;
       ctx.globalAlpha = stain.opacity * 0.7;
       ctx.beginPath();
       ctx.arc(stain.x, stain.y, stain.size, 0, Math.PI * 2);
