@@ -299,7 +299,7 @@ const GAME_CONFIG = {
   PLAYER_RADIUS: 20,
   PLAYER_SPEED: 9,
   SHOTS_PER_MAGAZINE: 25,
-  MAX_BLOOD_STAINS: 150,
+  MAX_BLOOD_STAINS: 80,
   MAX_PARTICLES: 100,
   MAX_EXPLOSIONS: 8,
   MAX_BLOOD_EFFECTS: 10,
@@ -318,6 +318,7 @@ const GAME_CONFIG = {
 let cameraX = 0;
 let cameraY = 0;
 const CAMERA_SCALE = 0.65; // Zoom out to see more of the arena
+let _cameraInitialized = false;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
@@ -397,9 +398,9 @@ const WEAPON_NAMES = {
   sniper: "🎯 Sniper",
 };
 const WEAPON_COOLDOWNS = {
-  machinegun: 60,
+  machinegun: 45,
   shotgun: 500,
-  sniper: 1200,
+  sniper: 950,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
@@ -2059,7 +2060,7 @@ function tryShoot() {
   createShellCasing(predictedX, predictedY, casingAngle);
 
   // Client-side predicted bullet (removed on next server state)
-  const bulletSpeed = weapon === "sniper" ? 30 : 15;
+  const bulletSpeed = weapon === "sniper" ? 48 : 15;
   bullets.push({
     id: "predicted-" + Math.random().toString(36).slice(2),
     x: predictedX + dirX * 20,
@@ -4583,13 +4584,23 @@ function render() {
   _framePlayer = players.find((p) => p.id === playerId);
   const framePlayer = _framePlayer;
 
-  // Update camera position to follow local player
+  // Update camera position to follow local player (smooth lerp to reduce stutter)
   if (framePlayer) {
     const targetCamX = predictedX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
     const targetCamY = predictedY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
     // Clamp camera to arena bounds
-    cameraX = Math.max(0, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
-    cameraY = Math.max(0, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
+    const clampedX = Math.max(0, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
+    const clampedY = Math.max(0, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
+    // Smooth camera interpolation to prevent jitter from server reconciliation
+    const CAMERA_LERP = 0.25;
+    if (cameraX === 0 && cameraY === 0 && !_cameraInitialized) {
+      cameraX = clampedX;
+      cameraY = clampedY;
+      _cameraInitialized = true;
+    } else {
+      cameraX += (clampedX - cameraX) * CAMERA_LERP;
+      cameraY += (clampedY - cameraY) * CAMERA_LERP;
+    }
   }
 
   // Clear canvas
@@ -4669,6 +4680,7 @@ function render() {
     ctx.fillStyle = bloodColors[c];
     bloodStains.forEach((stain) => {
       if (stain.color !== c) return;
+      if (!isInViewport(stain.x, stain.y)) return;
       ctx.globalAlpha = stain.opacity * 0.7;
       ctx.beginPath();
       ctx.arc(stain.x, stain.y, stain.size, 0, Math.PI * 2);

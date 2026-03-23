@@ -203,7 +203,7 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			spreadAngle := baseAngle + (rand.Float64()-0.5)*2*GameConfig.ShotgunSpread
 			pelletDirX := math.Cos(spreadAngle)
 			pelletDirY := math.Sin(spreadAngle)
-			speed := GameConfig.BulletSpeed * 0.9
+			speed := GameConfig.BulletSpeed * GameConfig.ShotgunBulletSpeed
 
 			bullet := &Bullet{
 				ID:        nextEntityID(),

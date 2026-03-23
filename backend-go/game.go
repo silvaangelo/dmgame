@@ -347,7 +347,11 @@ func updateGame(game *Game) []playerStateSnapshot {
 	{
 		n := 0
 		for _, b := range game.Bullets {
-			if !bulletsToRemove[b.ID] && now-b.CreatedAt < GameConfig.BulletLifetime {
+			bulletLife := GameConfig.BulletLifetime
+			if b.Weapon == WeaponShotgun {
+				bulletLife = GameConfig.ShotgunBulletLifetime
+			}
+			if !bulletsToRemove[b.ID] && now-b.CreatedAt < bulletLife {
 				game.Bullets[n] = b
 				n++
 			}

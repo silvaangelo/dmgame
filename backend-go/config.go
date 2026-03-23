@@ -33,6 +33,8 @@ var GameConfig = struct {
 	ShotgunPellets  int
 	ShotgunSpread   float64
 	ShotgunAmmo     int
+	ShotgunBulletLifetime int64
+	ShotgunBulletSpeed float64
 	// Knife
 	KnifeCooldown   int64
 	KnifeDamage     int
@@ -131,10 +133,10 @@ var GameConfig = struct {
 	LMSPlayerHP:     20,
 	PlayerSpeed:     9,
 	PlayerRadius:    20,
-	ShotsPerMag:     35,
-	ShotCooldown:    55,
+	ShotsPerMag:     45,
+	ShotCooldown:    40,
 	ReloadTime:      1950,
-	MachinegunReloadTime: 2000,
+	MachinegunReloadTime: 1800,
 	ShotgunReloadTime:    2200,
 	SniperReloadTime:     2800,
 	BulletSpeed:     22,
@@ -142,7 +144,7 @@ var GameConfig = struct {
 	ArenaWidth:      4000,
 	ArenaHeight:     4000,
 	// Machinegun
-	MachinegunCooldown: 55,
+	MachinegunCooldown: 40,
 	MachinegunDamage:   1,
 	MachinegunRecoil:   0.10,
 	// Shotgun
@@ -151,6 +153,8 @@ var GameConfig = struct {
 	ShotgunPellets:  8,
 	ShotgunSpread:   0.40,
 	ShotgunAmmo:     10,
+	ShotgunBulletLifetime: 700,
+	ShotgunBulletSpeed: 0.65,
 	// Knife
 	KnifeCooldown:   180,
 	KnifeDamage:     5,
@@ -173,7 +177,7 @@ var GameConfig = struct {
 	SniperCooldown:    900,
 	SniperDamage:      10,
 	SniperBulletSpeed: 48,
-	SniperAmmo:        7,
+	SniperAmmo:        10,
 	// Shield
 	ShieldDuration: 15000,
 	ShieldAbsorb:   5,
