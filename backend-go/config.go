@@ -124,7 +124,7 @@ var GameConfig = struct {
 	UsernameMaxLen int
 	UsernamePattern *regexp.Regexp
 }{
-	TickRate:        35,
+	TickRate:        60,
 	MaxPlayers:      10,
 	MinPlayers:      2,
 	QueueCountdown:  10,

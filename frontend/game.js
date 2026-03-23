@@ -298,7 +298,7 @@ const GAME_CONFIG = {
   ARENA_HEIGHT: 4000,
   PLAYER_RADIUS: 20,
   PLAYER_SPEED: 9,
-  SHOTS_PER_MAGAZINE: 25,
+  SHOTS_PER_MAGAZINE: 45,
   MAX_BLOOD_STAINS: 80,
   MAX_PARTICLES: 100,
   MAX_EXPLOSIONS: 8,
@@ -4754,8 +4754,37 @@ function render() {
   }
 
   players.forEach((p, index) => {
-    // Don't render dead players
-    if (p.hp <= 0) return;
+    // Dead player corpse: show fading body for a short time after death
+    let isDead = p.hp <= 0;
+    if (isDead) {
+      // Track when the player died for fade-out
+      if (!p._deathTime) p._deathTime = Date.now();
+      const elapsed = Date.now() - p._deathTime;
+      const CORPSE_FADE_MS = 1500;
+      if (elapsed > CORPSE_FADE_MS) return; // fully faded — skip
+      const corpseAlpha = Math.max(0, 1 - elapsed / CORPSE_FADE_MS) * 0.5;
+      // Render a grey, faded corpse silhouette
+      const corpseX = p.x;
+      const corpseY = p.y;
+      if (!isOnScreen(corpseX, corpseY)) return;
+      ctx.globalAlpha = corpseAlpha;
+      ctx.fillStyle = "#444";
+      ctx.beginPath();
+      ctx.arc(corpseX, corpseY, 14, 0, Math.PI * 2);
+      ctx.fill();
+      // "X" eyes
+      ctx.strokeStyle = "#888";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(corpseX - 5, corpseY - 4); ctx.lineTo(corpseX - 2, corpseY - 1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX - 2, corpseY - 4); ctx.lineTo(corpseX - 5, corpseY - 1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX + 2, corpseY - 4); ctx.lineTo(corpseX + 5, corpseY - 1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX + 5, corpseY - 4); ctx.lineTo(corpseX + 2, corpseY - 1); ctx.stroke();
+      ctx.globalAlpha = 1.0;
+      return;
+    } else {
+      // Clear death timestamp when alive
+      p._deathTime = null;
+    }
 
     let renderX = p.x;
     let renderY = p.y;
@@ -4945,7 +4974,7 @@ function render() {
       ctx.stroke();
       // Bouncing arrow pointing down at the player
       const bounce = Math.sin(Date.now() / 250) * 3;
-      const arrowY = renderY - 42 + bounce;
+      const arrowY = renderY - 38 + bounce;
       ctx.fillStyle = `rgba(255, 200, 80, ${0.7 + pulse * 0.3})`;
       ctx.beginPath();
       ctx.moveTo(renderX, arrowY + 8);
@@ -4955,19 +4984,17 @@ function render() {
       ctx.fill();
     }
 
-    // Health bar above player
-    const barWidth = 44;
-    const barHeight = 6;
+    // ---- Above-player HUD (compact) ----
+    const isLocal = p.id === playerId;
+    const barWidth = isLocal ? 40 : 28;
+    const barHeight = isLocal ? 5 : 3;
     const barX = renderX - barWidth / 2;
-    const barY = renderY - 30;
+    const barY = renderY - 25;
     const hpPercent = p.hp / maxHp;
 
-    // Background with strong outline
-    ctx.fillStyle = "rgba(0,0,0,0.75)";
-    ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+    // HP bar background
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
 
     // HP fill
     const hpColor =
@@ -4975,56 +5002,57 @@ function render() {
     ctx.fillStyle = hpColor;
     ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
 
-    // Armor bar (golden, stacked below HP bar)
+    // Armor pips (small dots beside HP bar)
     if (p.armor > 0) {
-      const armorBarY = barY + barHeight + 2;
-      const armorPercent = p.armor / 3;
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(barX - 1, armorBarY, barWidth + 2, 4);
-      ctx.fillStyle = "#ddaa22";
-      ctx.fillRect(barX, armorBarY + 1, barWidth * armorPercent, 3);
+      for (let a = 0; a < p.armor; a++) {
+        ctx.fillStyle = "#ddaa22";
+        ctx.beginPath();
+        ctx.arc(barX + barWidth + 4 + a * 5, barY + barHeight / 2, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    // Username
-    ctx.font = "bold 22px 'Rajdhani', sans-serif";
-    ctx.textAlign = "center";
-    // Stroke outline for maximum readability
-    ctx.strokeStyle = "rgba(0,0,0,0.9)";
-    ctx.lineWidth = 3;
-    ctx.strokeText(p.username, renderX, renderY - 37);
-    ctx.fillStyle = p.id === playerId ? "#ffcc66" : "#e0ece0";
-    ctx.fillText(p.username, renderX, renderY - 37);
-    ctx.textAlign = "start";
-
-    // Score + ammo above player (local player only)
-    if (p.id === playerId) {
+    // Username — small for enemies, slightly larger for local
+    if (isLocal) {
+      ctx.font = "bold 12px 'Rajdhani', sans-serif";
       ctx.textAlign = "center";
-      // Score
-      ctx.font = "bold 15px 'Share Tech Mono', monospace";
-      const scoreColor = (p.score || 0) >= 50 ? "#ffcc00" : "#ff6b35";
-      ctx.strokeStyle = "rgba(0,0,0,0.85)";
-      ctx.lineWidth = 3;
-      ctx.strokeText("⭐" + (p.score || 0), renderX, renderY - 52);
-      ctx.fillStyle = scoreColor;
-      ctx.fillText("⭐" + (p.score || 0), renderX, renderY - 52);
-      // Ammo
-      const weaponMaxAmmo = p.weapon === "shotgun" ? 10 : p.weapon === "sniper" ? 7 : 35;
-      const ammoText = p.shots + "/" + weaponMaxAmmo;
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 2;
+      ctx.strokeText(p.username, renderX, barY - 3);
+      ctx.fillStyle = "#ffcc66";
+      ctx.fillText(p.username, renderX, barY - 3);
+      ctx.textAlign = "start";
+    } else {
+      ctx.font = "10px 'Rajdhani', sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "rgba(0,0,0,0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeText(p.username, renderX, barY - 2);
+      ctx.fillStyle = "#bbccbb";
+      ctx.fillText(p.username, renderX, barY - 2);
+      ctx.textAlign = "start";
+    }
+
+    // Local player: ammo below body (compact)
+    if (isLocal) {
+      ctx.textAlign = "center";
+      const weaponMaxAmmo = p.weapon === "shotgun" ? 10 : p.weapon === "sniper" ? 10 : 45;
+      const ammoText = p.reloading ? "reloading..." : p.shots + "/" + weaponMaxAmmo;
       const ammoColor = p.reloading ? "#ff6b35" : (p.shots <= 5 ? "#ff8844" : "#ddeedd");
-      ctx.font = "bold 13px 'Share Tech Mono', monospace";
-      ctx.strokeStyle = "rgba(0,0,0,0.85)";
-      ctx.lineWidth = 3;
-      ctx.strokeText(ammoText, renderX, renderY - 65);
+      ctx.font = "bold 11px 'Share Tech Mono', monospace";
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 2;
+      ctx.strokeText(ammoText, renderX, renderY + 27);
       ctx.fillStyle = ammoColor;
-      ctx.fillText(ammoText, renderX, renderY - 65);
+      ctx.fillText(ammoText, renderX, renderY + 27);
       ctx.textAlign = "start";
     }
 
     // Bounty skull on the leading player
     if (bountyLeaderId === p.id) {
-      ctx.font = "16px serif";
+      ctx.font = "14px serif";
       ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, p.id === playerId ? renderY - 78 : renderY - 56);
+      ctx.fillText("💀", renderX, barY - 16);
       ctx.textAlign = "start";
     }
 
