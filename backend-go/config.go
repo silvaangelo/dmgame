@@ -124,7 +124,7 @@ var GameConfig = struct {
 	UsernameMaxLen int
 	UsernamePattern *regexp.Regexp
 }{
-	TickRate:        60,
+	TickRate:        40,
 	MaxPlayers:      10,
 	MinPlayers:      2,
 	QueueCountdown:  10,
@@ -191,8 +191,8 @@ var GameConfig = struct {
 	ArmorMax:    3,
 	// Dash
 	DashCooldown:   1000,
-	DashDuration:   150,
-	DashSpeed:      42,
+	DashDuration:   250,
+	DashSpeed:      26,
 	DashInvincible: true,
 	// Bombs
 	BombSpawnInterval: 3000,

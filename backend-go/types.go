@@ -73,7 +73,8 @@ type Player struct {
 	Armor int `msgpack:"armor"`
 
 	// Respawn
-	WaitingForRespawn bool `msgpack:"-"`
+	WaitingForRespawn bool  `msgpack:"-"`
+	DeathTime         int64 `msgpack:"-"`
 
 	// Dash
 	DashCooldownUntil int64   `msgpack:"-"`

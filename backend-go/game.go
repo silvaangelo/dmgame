@@ -170,6 +170,15 @@ func updateGame(game *Game) []playerStateSnapshot {
 		})
 	}
 
+	// ── Auto-respawn dead players after 3 seconds ──
+	for _, player := range game.Players {
+		if player.WaitingForRespawn && player.DeathTime > 0 {
+			if now-player.DeathTime >= 3000 {
+				respawnPlayer(player, game)
+			}
+		}
+	}
+
 	// ── Bullet physics ──
 	bulletsToRemove := make(map[string]bool)
 

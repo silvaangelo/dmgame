@@ -234,6 +234,14 @@ function handleBinaryState(buf) {
   previousBulletPositions = newBulletPositions;
 
   players = parsedPlayers;
+  // Track death timestamps: mark newly dead players, clear alive ones
+  players.forEach(function(p) {
+    if (p.hp <= 0) {
+      if (!playerDeathTimes.has(p.id)) playerDeathTimes.set(p.id, Date.now());
+    } else {
+      playerDeathTimes.delete(p.id);
+    }
+  });
   bullets = parsedBullets.concat(bullets.filter(function(b) { return b.predicted; }));
   bullets = bullets.filter(function(b) {
     if (!b.predicted) return true;
@@ -452,6 +460,8 @@ let killEffects = [];
 
 // Death animation particles (replaces instant despawn)
 let deathAnimations = [];
+// Track death timestamps separately (survives players array replacement)
+const playerDeathTimes = new Map();
 
 // Dynamic arena zone (shrinking safe zone)
 let arenaZone = null; // { x, y, w, h } or null if not active
@@ -2177,6 +2187,11 @@ function connect() {
           lightningBolts = [];
           pageFlashIntensity = 0;
           document.body.style.filter = "";
+          // Clear auto-respawn timer
+          if (autoRespawnTimer) {
+            clearInterval(autoRespawnTimer);
+            autoRespawnTimer = null;
+          }
           // Hide death overlay
           const deathOv = document.getElementById("deathOverlay");
           if (deathOv) deathOv.style.display = "none";
@@ -2254,6 +2269,8 @@ function connect() {
               }
             }
           }
+          // Start auto-respawn countdown
+          startAutoRespawnTimer();
           const phrase = DEATH_PHRASES[Math.floor(Math.random() * DEATH_PHRASES.length)]
             .replace("{killer}", data.killer);
           showToast(phrase, "#d94a4a");
@@ -2535,6 +2552,14 @@ function connect() {
       previousBulletPositions = newBulletPositions;
 
       players = parsedPlayers;
+      // Track death timestamps: mark newly dead players, clear alive ones
+      players.forEach(function(p) {
+        if (p.hp <= 0) {
+          if (!playerDeathTimes.has(p.id)) playerDeathTimes.set(p.id, Date.now());
+        } else {
+          playerDeathTimes.delete(p.id);
+        }
+      });
       bullets = parsedBullets.concat(bullets.filter(function(b) { return b.predicted; }));
       bullets = bullets.filter(function(b) {
         if (!b.predicted) return true;
@@ -2821,9 +2846,38 @@ function doJoin() {
 
 // ===== RESPAWN =====
 
+let autoRespawnTimer = null;
+let autoRespawnCountdown = 3;
+
 function doRespawn() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(serialize({ type: "requestRespawn" }));
+  // Clear auto-respawn timer since player clicked manually
+  if (autoRespawnTimer) {
+    clearInterval(autoRespawnTimer);
+    autoRespawnTimer = null;
+  }
+}
+
+function startAutoRespawnTimer() {
+  // Clear any existing timer
+  if (autoRespawnTimer) {
+    clearInterval(autoRespawnTimer);
+    autoRespawnTimer = null;
+  }
+  autoRespawnCountdown = 3;
+  const btn = document.getElementById("deathRespawnBtn");
+  if (btn) btn.textContent = "⚔ RESPAWN (" + autoRespawnCountdown + ")";
+  autoRespawnTimer = setInterval(function() {
+    autoRespawnCountdown--;
+    if (btn) btn.textContent = "⚔ RESPAWN (" + autoRespawnCountdown + ")";
+    if (autoRespawnCountdown <= 0) {
+      clearInterval(autoRespawnTimer);
+      autoRespawnTimer = null;
+      if (btn) btn.textContent = "⚔ RESPAWN";
+      doRespawn();
+    }
+  }, 1000);
 }
 
 // On page load: connect WebSocket + listen for Enter
@@ -2926,14 +2980,14 @@ document.addEventListener("keydown", (e) => {
     if (Date.now() >= dashCooldownUntil) {
       ws.send(serialize({ type: "dash" }));
       dashCooldownUntil = Date.now() + 1000; // mirror server cooldown (1s)
-      // Create dash trail for local player
+      // Create burst of afterimage ghosts for local player dash
       const localP = players.find((p) => p.id === playerId);
       if (localP) {
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 8; i++) {
           dashTrails.push({
-            x: predictedX + (Math.random() - 0.5) * 6,
-            y: predictedY + (Math.random() - 0.5) * 6,
-            alpha: 0.7,
+            x: predictedX + (Math.random() - 0.5) * 8,
+            y: predictedY + (Math.random() - 0.5) * 8,
+            alpha: 0.6 + Math.random() * 0.2,
             skin: localP.skin || 0,
           });
         }
@@ -3953,7 +4007,7 @@ function renderCrateDestroyEffects() {
 
 function updateDashTrails() {
   for (let i = dashTrails.length - 1; i >= 0; i--) {
-    dashTrails[i].alpha -= 0.04;
+    dashTrails[i].alpha -= 0.025;
     if (dashTrails[i].alpha <= 0) {
       dashTrails.splice(i, 1);
     }
@@ -4755,35 +4809,38 @@ function render() {
 
   players.forEach((p, index) => {
     // Dead player corpse: show fading body for a short time after death
-    let isDead = p.hp <= 0;
-    if (isDead) {
-      // Track when the player died for fade-out
-      if (!p._deathTime) p._deathTime = Date.now();
-      const elapsed = Date.now() - p._deathTime;
-      const CORPSE_FADE_MS = 1500;
+    if (p.hp <= 0) {
+      const deathTime = playerDeathTimes.get(p.id);
+      if (!deathTime) return; // no recorded death time
+      const elapsed = Date.now() - deathTime;
+      const CORPSE_FADE_MS = 2500;
       if (elapsed > CORPSE_FADE_MS) return; // fully faded — skip
-      const corpseAlpha = Math.max(0, 1 - elapsed / CORPSE_FADE_MS) * 0.5;
-      // Render a grey, faded corpse silhouette
+      const corpseAlpha = Math.max(0, 1 - elapsed / CORPSE_FADE_MS) * 0.55;
       const corpseX = p.x;
       const corpseY = p.y;
       if (!isOnScreen(corpseX, corpseY)) return;
       ctx.globalAlpha = corpseAlpha;
-      ctx.fillStyle = "#444";
+      // Draw fallen body shape
+      ctx.fillStyle = "#3a3a3a";
       ctx.beginPath();
-      ctx.arc(corpseX, corpseY, 14, 0, Math.PI * 2);
+      ctx.arc(corpseX, corpseY, 13, 0, Math.PI * 2);
       ctx.fill();
-      // "X" eyes
-      ctx.strokeStyle = "#888";
+      // X eyes
+      ctx.strokeStyle = "#777";
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(corpseX - 5, corpseY - 4); ctx.lineTo(corpseX - 2, corpseY - 1); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(corpseX - 2, corpseY - 4); ctx.lineTo(corpseX - 5, corpseY - 1); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(corpseX + 2, corpseY - 4); ctx.lineTo(corpseX + 5, corpseY - 1); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(corpseX + 5, corpseY - 4); ctx.lineTo(corpseX + 2, corpseY - 1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX - 5, corpseY - 3); ctx.lineTo(corpseX - 2, corpseY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX - 2, corpseY - 3); ctx.lineTo(corpseX - 5, corpseY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX + 2, corpseY - 3); ctx.lineTo(corpseX + 5, corpseY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(corpseX + 5, corpseY - 3); ctx.lineTo(corpseX + 2, corpseY); ctx.stroke();
+      // Small skull icon above corpse
+      if (elapsed < 2000) {
+        ctx.font = "10px serif";
+        ctx.textAlign = "center";
+        ctx.fillText("💀", corpseX, corpseY - 16);
+        ctx.textAlign = "start";
+      }
       ctx.globalAlpha = 1.0;
       return;
-    } else {
-      // Clear death timestamp when alive
-      p._deathTime = null;
     }
 
     let renderX = p.x;
@@ -4823,26 +4880,38 @@ function render() {
       ctx.stroke();
     }
 
-    // Dash visual — fast motion blur ring
+    // Dash visual — afterimage ghosts + motion trail
     if (p.dashing) {
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = "rgba(255, 255, 100, 0.7)";
-      ctx.lineWidth = 3;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1.0;
-      // Create trail particles for other players dashing
-      if (p.id !== playerId && Math.random() < 0.5) {
-        dashTrails.push({
-          x: renderX + (Math.random() - 0.5) * 10,
-          y: renderY + (Math.random() - 0.5) * 10,
-          alpha: 0.5,
-          skin: p.skin || 0,
-        });
+      // Speed lines behind player
+      const dashAngle = p.aimAngle || 0;
+      ctx.globalAlpha = 0.3;
+      for (let sl = 0; sl < 4; sl++) {
+        const offsetAngle = dashAngle + Math.PI + (Math.random() - 0.5) * 0.8;
+        const dist = 10 + Math.random() * 20;
+        const lx = renderX + Math.cos(offsetAngle) * dist;
+        const ly = renderY + Math.sin(offsetAngle) * dist;
+        ctx.strokeStyle = "rgba(255, 255, 150, 0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx + Math.cos(offsetAngle) * 12, ly + Math.sin(offsetAngle) * 12);
+        ctx.stroke();
       }
+      ctx.globalAlpha = 1.0;
+      // Pulsing energy ring
+      const dashPulse = 0.5 + 0.5 * Math.sin(Date.now() / 50);
+      ctx.strokeStyle = `rgba(255, 255, 100, ${dashPulse * 0.6})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
+      ctx.stroke();
+      // Generate afterimage ghosts
+      dashTrails.push({
+        x: renderX + (Math.random() - 0.5) * 4,
+        y: renderY + (Math.random() - 0.5) * 4,
+        alpha: 0.6,
+        skin: p.skin || 0,
+      });
     }
 
     // Armor visual — golden outline

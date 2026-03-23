@@ -26,8 +26,9 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
 	// Drop half of victim's score as orbs
 	dropScoreOrbs(victim, game)
 
-	// Mark victim as waiting for manual respawn
+	// Mark victim as waiting for respawn (auto after 3s or manual click)
 	victim.WaitingForRespawn = true
+	victim.DeathTime = unixMs()
 
 	if killer != nil && killer.ID != victim.ID {
 		killer.Kills++
