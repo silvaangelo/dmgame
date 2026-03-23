@@ -411,7 +411,7 @@ var spriteSniper = new Image();
 var spritesLoaded = false;
 (function preloadSprites() {
   var loaded = 0;
-  function onLoad() { loaded++; if (loaded >= 2) spritesLoaded = true; }
+  function onLoad() { loaded++; if (loaded >= 3) spritesLoaded = true; }
   spriteRifle.onload = onLoad; spriteRifle.onerror = onLoad;
   spriteRifle.src = "assets/sprites/player-rifle-idle.png";
   spriteShotgun.onload = onLoad; spriteShotgun.onerror = onLoad;
