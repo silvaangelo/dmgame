@@ -407,6 +407,7 @@ const SKINS = [
 // Preload the two base player sprites (rifle + shotgun)
 var spriteRifle = new Image();
 var spriteShotgun = new Image();
+var spriteSniper = new Image();
 var spritesLoaded = false;
 (function preloadSprites() {
   var loaded = 0;
@@ -415,6 +416,8 @@ var spritesLoaded = false;
   spriteRifle.src = "assets/sprites/player-rifle-idle.png";
   spriteShotgun.onload = onLoad; spriteShotgun.onerror = onLoad;
   spriteShotgun.src = "assets/sprites/player-shotgun-idle.png";
+  spriteSniper.onload = onLoad; spriteSniper.onerror = onLoad;
+  spriteSniper.src = "assets/sprites/player-sniper-idle.png";
 })();
 
 // Sprite render dimensions (scaled to match player hitbox)
@@ -423,6 +426,7 @@ var SPRITE_RENDER_H = 70 / (313 / 207); // maintain aspect ratio ≈ 46
 
 function getPlayerSprite(skinIndex, weapon) {
   if (weapon === "shotgun") return spriteShotgun;
+  if (weapon === "sniper") return spriteSniper;
   return spriteRifle;
 }
 
