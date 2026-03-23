@@ -304,11 +304,7 @@ func spawnLightning(game *Game) {
 /* ================= SPAWN TIMERS (checked every tick) ================= */
 
 func checkSpawnTimers(game *Game, now int64) {
-	// Obstacle spawn
-	if now-game.LastObstacleSpawn >= GameConfig.ObstacleSpawnInterval {
-		game.LastObstacleSpawn = now
-		spawnRandomObstacle(game)
-	}
+	// Obstacle spawn disabled (no obstacles in game)
 
 	// Pickup spawn
 	if now-game.LastPickupSpawn >= GameConfig.PickupSpawnInterval {

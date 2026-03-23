@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -217,7 +218,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			skinVal := safeInt(m, "skin", 0)
+			skinVal := safeInt(m, "skin", -1)
+			if skinVal < 0 || skinVal > 11 {
+				skinVal = rand.Intn(12)
+			}
 			now := unixMs()
 
 			game.mu.Lock()
@@ -392,7 +396,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		case "selectSkin":
 			skinIndex := safeInt(m, "skin", -1)
-			if skinIndex >= 0 && skinIndex <= 7 {
+			if skinIndex >= 0 && skinIndex <= 11 {
 				game.mu.Lock()
 				p.Skin = skinIndex
 				game.mu.Unlock()

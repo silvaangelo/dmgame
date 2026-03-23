@@ -70,24 +70,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 	// ── Check spawn timers ──
 	checkSpawnTimers(game, now)
 
-	// ── Build spatial grid for obstacles + group index ──
+	// ── Build spatial grid for obstacles (disabled — no obstacles) ──
 	globalObstacleGrid.Clear()
-	obstacleGrid := globalObstacleGrid
-	groupIndex := make(map[string][]*Obstacle) // GroupID → alive siblings
-	for _, obs := range game.Obstacles {
-		if !obs.Destroyed {
-			obstacleGrid.Insert(&SpatialEntry{
-				ID:   obs.ID,
-				X:    obs.X,
-				Y:    obs.Y,
-				Size: obs.Size,
-				Data: obs,
-			})
-			if obs.GroupID != "" {
-				groupIndex[obs.GroupID] = append(groupIndex[obs.GroupID], obs)
-			}
-		}
-	}
 
 	// ── Player movement ──
 	for _, player := range game.Players {
@@ -106,13 +90,9 @@ func updateGame(game *Game) []playerStateSnapshot {
 			// Move X
 			player.X += player.DashDirX * dashSpeed
 			player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
-			resolveCollisions(player, obstacleGrid, playerRadius, true)
-			player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
 
 			// Move Y
 			player.Y += player.DashDirY * dashSpeed
-			player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
-			resolveCollisions(player, obstacleGrid, playerRadius, false)
 			player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
 			continue // Skip normal movement during dash
 		}
@@ -127,8 +107,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 			player.X += speed
 		}
 		player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
-		resolveCollisions(player, obstacleGrid, playerRadius, true)
-		player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
 
 		// Move Y axis
 		if player.Keys.W {
@@ -137,8 +115,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 		if player.Keys.S {
 			player.Y += speed
 		}
-		player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
-		resolveCollisions(player, obstacleGrid, playerRadius, false)
 		player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
 	}
 
@@ -193,57 +169,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			continue
 		}
 
-		// Swept collision with obstacles
-		prevBx := bullet.X - bullet.DX
-		prevBy := bullet.Y - bullet.DY
-		sweepMinX := math.Min(prevBx, bullet.X)
-		sweepMinY := math.Min(prevBy, bullet.Y)
-		sweepMaxX := math.Max(prevBx, bullet.X)
-		sweepMaxY := math.Max(prevBy, bullet.Y)
-		sweepR := math.Max(math.Abs(bullet.DX), math.Abs(bullet.DY)) + 40
-		nearbyObs := obstacleGrid.QueryRadius(
-			(prevBx+bullet.X)*0.5, (prevBy+bullet.Y)*0.5, sweepR,
-		)
-
-		var hitObstacle *Obstacle
-		for _, e := range nearbyObs {
-			o := e.Data.(*Obstacle)
-			if sweepMaxX >= o.X && sweepMinX <= o.X+o.Size &&
-				sweepMaxY >= o.Y && sweepMinY <= o.Y+o.Size {
-				hitObstacle = o
-				break
-			}
-		}
-
-		if hitObstacle != nil {
-			hitObstacle.Destroyed = true
-			bulletsToRemove[bullet.ID] = true
-			destroyedIDs := []string{hitObstacle.ID}
-
-			// Group wall cleanup (O(1) via groupIndex)
-			if hitObstacle.GroupID != "" {
-				siblings := groupIndex[hitObstacle.GroupID]
-				alive := 0
-				var lastAlive *Obstacle
-				for _, o := range siblings {
-					if !o.Destroyed && o.ID != hitObstacle.ID {
-						alive++
-						lastAlive = o
-					}
-				}
-				if alive <= 1 && lastAlive != nil {
-					lastAlive.Destroyed = true
-					destroyedIDs = append(destroyedIDs, lastAlive.ID)
-				}
-			}
-
-			broadcast(game, map[string]interface{}{
-				"type":         "obstacleDestroyed",
-				"obstacleId":   hitObstacle.ID,
-				"destroyedIds": destroyedIDs,
-			})
-			continue
-		}
+		// Bullet-obstacle collision disabled (no obstacles)
 
 		// Loot crate collision (spatial grid lookup)
 		crateHalf := GameConfig.LootCrateSize / 2

@@ -178,8 +178,8 @@ func resetPersistentRound(game *Game) {
 
 	game.RoundEnded = false
 
-	// Regenerate obstacles
-	game.Obstacles = generateObstacles()
+	// Obstacles removed from the game
+	game.Obstacles = make([]*Obstacle, 0)
 	game.Bullets = make([]*Bullet, 0)
 	game.Pickups = make([]*Pickup, 0)
 	game.Orbs = make([]*Orb, 0)

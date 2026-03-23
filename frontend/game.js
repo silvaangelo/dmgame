@@ -304,6 +304,7 @@ function esc(str) {
 const GAME_CONFIG = {
   ARENA_WIDTH: 4000,
   ARENA_HEIGHT: 4000,
+  ARENA_PADDING: 200,
   PLAYER_RADIUS: 20,
   PLAYER_SPEED: 9,
   SHOTS_PER_MAGAZINE: 45,
@@ -325,7 +326,7 @@ const GAME_CONFIG = {
 // Camera state
 let cameraX = 0;
 let cameraY = 0;
-const CAMERA_SCALE = 0.65; // Zoom out to see more of the arena
+const CAMERA_SCALE = 1.1; // Zoomed in to see sprites better
 let _cameraInitialized = false;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
@@ -396,15 +397,36 @@ const SKINS = [
   { name: "Gold", primary: "#d9a04a", secondary: "#8a6a2a" },
   { name: "Arctic", primary: "#b0c8d0", secondary: "#708898" },
   { name: "Shadow", primary: "#4a4a5a", secondary: "#2a2a3a" },
+  { name: "Forest", primary: "#2a8a3a", secondary: "#1a5a2a" },
+  { name: "Coral", primary: "#e07040", secondary: "#a04828" },
+  { name: "Navy", primary: "#3a4a8a", secondary: "#2a2a5a" },
+  { name: "Rose", primary: "#d94a8a", secondary: "#8a2a5a" },
 ];
 
+// ===== SPRITE PRELOADING =====
+// Preload the two base player sprites (rifle + shotgun)
+var spriteRifle = new Image();
+var spriteShotgun = new Image();
+var spritesLoaded = false;
+(function preloadSprites() {
+  var loaded = 0;
+  function onLoad() { loaded++; if (loaded >= 2) spritesLoaded = true; }
+  spriteRifle.onload = onLoad; spriteRifle.onerror = onLoad;
+  spriteRifle.src = "assets/sprites/player-rifle-idle.png";
+  spriteShotgun.onload = onLoad; spriteShotgun.onerror = onLoad;
+  spriteShotgun.src = "assets/sprites/player-shotgun-idle.png";
+})();
+
+// Sprite render dimensions (scaled to match player hitbox)
+var SPRITE_RENDER_W = 70;
+var SPRITE_RENDER_H = 70 / (313 / 207); // maintain aspect ratio ≈ 46
+
+function getPlayerSprite(skinIndex, weapon) {
+  if (weapon === "shotgun") return spriteShotgun;
+  return spriteRifle;
+}
+
 // Weapon definitions
-const WEAPON_CYCLE = ["machinegun", "shotgun", "sniper"];
-const WEAPON_NAMES = {
-  machinegun: "🔫 Metralhadora",
-  shotgun: "🔫 Shotgun",
-  sniper: "🎯 Sniper",
-};
 const WEAPON_COOLDOWNS = {
   machinegun: 45,
   shotgun: 500,
@@ -421,17 +443,17 @@ let playerId;
 let loggedInUsername = "";
 let players = [];
 let bullets = [];
-let obstacles = [];
 let pickups = [];
 let mouseX = window.innerWidth / 2;
 let mouseY = window.innerHeight / 2;
+let screenMouseX = window.innerWidth / 2;
+let screenMouseY = window.innerHeight / 2;
 let previousBulletCount = 0;
 let wasReloading = false;
 let explosions = [];
 let bloodParticles = [];
 let bloodStains = [];
 let muzzleFlashes = [];
-let knifeSlashes = [];
 let shellCasings = [];
 let impactSparks = [];
 let dustClouds = [];
@@ -497,13 +519,6 @@ function getCachedDOM() {
   return _cachedDOM;
 }
 
-// Pre-rendered obstacle canvas (viewport-sized with padding, ~4× less VRAM than full arena)
-let obstacleCanvas = null;
-let obstacleCanvasDirty = true;
-const OBS_CANVAS_PAD = 400; // extra pixels around viewport before re-render
-let obsCanvasCamX = -9999; // camera pos used for last obstacle render
-let obsCanvasCamY = -9999;
-
 // Kill feed dirty flag (avoid innerHTML comparison)
 let killFeedDirty = true;
 
@@ -517,37 +532,8 @@ let gridPatternCache = null;
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
 
-// Skins
-let selectedSkin = 0;
-let currentGameMode = "deathmatch"; // single mode
 let maxHp = 8; // updated from server on game start
 
-// Viral phrases
-const WINNER_PHRASES = [
-  "{winner} AMASSOU GERAL! 💀",
-  "{winner} DEU SHOW DE HORRORES! 🔥",
-  "{winner} É O BRABO! 👑",
-  "{winner} DESTRUIU TODO MUNDO! 💣",
-  "{winner} SIMPLESMENTE IMPARÁVEL! ⚡",
-  "{winner} PASSOU O RODO! 🧹",
-  "{winner} É CRAQUE DEMAIS! 🎯",
-  "{winner} COMEU TODO MUNDO! 😤",
-];
-const LOSER_PHRASES = [
-  "Você foi amassado por {winner} 😭",
-  "Que surra! {winner} te humilhou 💀",
-  "{winner} passou por cima de você 🚜",
-  "Tenta de novo... {winner} te destruiu 😈",
-  "{winner} te fez de saco de pancada 🥊",
-  "GG! {winner} é bom demais pra você 🫠",
-  "Volta pro tutorial! {winner} te amassou 📚",
-];
-const KILL_PHRASES = [
-  "{killer} eliminou {victim}",
-  "{killer} destruiu {victim}",
-  "{killer} detonou {victim}",
-  "{killer} acabou com {victim}",
-];
 const SELF_KILL_PHRASES = [
   "Você eliminou {victim}! 🔥",
   "{victim} não teve chance! 💀",
@@ -557,11 +543,6 @@ const DEATH_PHRASES = [
   "{killer} te pegou! 😵",
   "Você foi eliminado por {killer}! 💀",
   "{killer} te destruiu! Volta mais forte! 💪",
-];
-const RESPAWN_PHRASES = [
-  "💀 Respawnando...",
-  "💀 Voltando pra luta...",
-  "💀 Aguenta aí...",
 ];
 
 // Client-side prediction variables
@@ -603,9 +584,12 @@ resizeCanvas();
 // ===== MOUSE INPUT — aiming and shooting =====
 let lastAimSendTime = 0;
 canvas.addEventListener("mousemove", function(e) {
+  // Store raw screen coords for per-frame recalculation
+  screenMouseX = e.clientX;
+  screenMouseY = e.clientY;
   // Convert screen coords to world coords via camera scale + offset
-  mouseX = e.clientX / CAMERA_SCALE + cameraX;
-  mouseY = e.clientY / CAMERA_SCALE + cameraY;
+  mouseX = screenMouseX / CAMERA_SCALE + cameraX;
+  mouseY = screenMouseY / CAMERA_SCALE + cameraY;
   if (ws && gameReady) {
     const now = performance.now();
     if (now - lastAimSendTime >= 33) { // Throttle aim to ~30 msg/sec
@@ -647,31 +631,6 @@ const wsUrl = `${wsProtocol}//${location.host}/socket`;
 const assetBase = location.origin;
 
 // ===== PARTICLE SYSTEMS =====
-
-// Explosion system
-function createExplosion(x, y) {
-  const particles = [];
-  const particleCount = GAME_CONFIG.EXPLOSION_PARTICLE_COUNT;
-
-  for (let i = 0; i < particleCount; i++) {
-    const angle = (Math.PI * 2 * i) / particleCount;
-    const speed = 2 + Math.random() * 3;
-    particles.push({
-      x: x,
-      y: y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 1.0,
-      size: 3 + Math.random() * 3,
-      color: `hsl(${Math.random() * 60 + 10}, 100%, 50%)`,
-    });
-  }
-
-  explosions.push({
-    particles: particles,
-    frame: 0,
-  });
-}
 
 // Blood particle system
 function createBlood(x, y) {
@@ -1022,69 +981,6 @@ function renderMuzzleFlashes() {
     ctx.lineTo(8, 2);
     ctx.closePath();
     ctx.fill();
-
-    ctx.globalAlpha = 1.0;
-    ctx.restore();
-  });
-}
-
-// Knife slash effect system
-function createKnifeSlash(x, y, angle) {
-  knifeSlashes.push({
-    x: x,
-    y: y,
-    angle: angle,
-    timestamp: Date.now(),
-    duration: 250,
-  });
-}
-
-function renderKnifeSlashes() {
-  const now = Date.now();
-  compactInPlace(knifeSlashes, (slash) => now - slash.timestamp < slash.duration);
-
-  knifeSlashes.forEach((slash) => {
-    const progress = (now - slash.timestamp) / slash.duration;
-    const alpha = (1 - progress) * 0.8;
-    const sweepAngle = Math.PI * 0.7;
-    const baseAngle = slash.angle - sweepAngle / 2;
-    const currentSweep = sweepAngle * Math.min(progress * 2, 1);
-    const radius = 22 + progress * 14;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-
-    // Outer slash arc
-    ctx.strokeStyle = "#dde0e0";
-    ctx.lineWidth = 3 * (1 - progress) + 1;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.arc(slash.x, slash.y, radius, baseAngle, baseAngle + currentSweep);
-    ctx.stroke();
-
-    // Inner bright arc
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1.5 * (1 - progress);
-    ctx.beginPath();
-    ctx.arc(
-      slash.x,
-      slash.y,
-      radius - 3,
-      baseAngle + currentSweep * 0.1,
-      baseAngle + currentSweep * 0.9,
-    );
-    ctx.stroke();
-
-    // Slash tip spark
-    if (progress < 0.5) {
-      const tipAngle = baseAngle + currentSweep;
-      const tipX = slash.x + Math.cos(tipAngle) * radius;
-      const tipY = slash.y + Math.sin(tipAngle) * radius;
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(tipX, tipY, 2 * (1 - progress * 2), 0, Math.PI * 2);
-      ctx.fill();
-    }
 
     ctx.globalAlpha = 1.0;
     ctx.restore();
@@ -1633,49 +1529,10 @@ function applyInput(x, y, keys, weapon, speedBoosted) {
   if (keys.a) newX -= speed;
   if (keys.d) newX += speed;
   newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
-  for (const obs of obstacles) {
-    if (obs.destroyed) continue;
-    const cx = Math.max(obs.x, Math.min(newX, obs.x + obs.size));
-    const cy = Math.max(obs.y, Math.min(newY, obs.y + obs.size));
-    const dx = newX - cx;
-    const dy = newY - cy;
-    const distSq = dx * dx + dy * dy;
-    if (distSq < radiusSq) {
-      if (distSq > 0.0001) {
-        const dist = Math.sqrt(distSq);
-        newX += (dx / dist) * (playerRadius - dist);
-      } else {
-        // Exactly overlapping — push away from obstacle center
-        newX = obs.x + obs.size / 2 < newX
-          ? obs.x + obs.size + playerRadius
-          : obs.x - playerRadius;
-      }
-    }
-  }
-  newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
 
-  // Y axis movement + collision (push-out resolution)
+  // Y axis movement
   if (keys.w) newY -= speed;
   if (keys.s) newY += speed;
-  newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
-  for (const obs of obstacles) {
-    if (obs.destroyed) continue;
-    const cx = Math.max(obs.x, Math.min(newX, obs.x + obs.size));
-    const cy = Math.max(obs.y, Math.min(newY, obs.y + obs.size));
-    const dx = newX - cx;
-    const dy = newY - cy;
-    const distSq = dx * dx + dy * dy;
-    if (distSq < radiusSq) {
-      if (distSq > 0.0001) {
-        const dist = Math.sqrt(distSq);
-        newY += (dy / dist) * (playerRadius - dist);
-      } else {
-        newY = obs.y + obs.size / 2 < newY
-          ? obs.y + obs.size + playerRadius
-          : obs.y - playerRadius;
-      }
-    }
-  }
   newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
 
   return { x: newX, y: newY };
@@ -1685,8 +1542,6 @@ function applyInput(x, y, keys, weapon, speedBoosted) {
 
 let audioCtx = null;
 const audioBuffers = {};
-let readyAlarmSource = null;
-let readyAlarmGain = null;
 const activeGameSources = [];
 let masterVolume = 0.7; // 0.0 – 1.0, persisted in localStorage
 let gameEnded = false; // prevents new game sounds after match ends
@@ -1794,55 +1649,6 @@ function stopAllGameSounds() {
   activeGameSources.length = 0;
 }
 
-function playKnifeSound(x, y) {
-  if (!audioCtx) return;
-  if (audioCtx.state === "suspended") audioCtx.resume();
-  const osc = audioCtx.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.setValueAtTime(200, audioCtx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.12);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
-  const dx = x - predictedX;
-  const panVal = Math.max(
-    -1,
-    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)),
-  );
-  const panner = audioCtx.createStereoPanner();
-  panner.pan.value = panVal;
-  osc.connect(gain);
-  gain.connect(panner);
-  panner.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + 0.12);
-}
-
-function startReadyAlarm() {
-  if (!audioCtx || !audioBuffers.readyalarm) return;
-  stopReadyAlarm();
-  readyAlarmSource = audioCtx.createBufferSource();
-  readyAlarmSource.buffer = audioBuffers.readyalarm;
-  readyAlarmSource.loop = true;
-  readyAlarmGain = audioCtx.createGain();
-  readyAlarmGain.gain.value = 0.4;
-  readyAlarmSource.connect(readyAlarmGain);
-  readyAlarmGain.connect(audioCtx.destination);
-  readyAlarmSource.start(0);
-}
-
-function stopReadyAlarm() {
-  if (readyAlarmSource) {
-    try {
-      readyAlarmSource.stop();
-    } catch (e) {
-      /* already stopped */
-    }
-    readyAlarmSource = null;
-    readyAlarmGain = null;
-  }
-}
-
 // ===== UI FUNCTIONS =====
 
 let previousHP = 8;
@@ -1871,7 +1677,6 @@ function showStartScreen() {
   bloodParticles = [];
   bloodStains = [];
   muzzleFlashes = [];
-  knifeSlashes = [];
   shellCasings = [];
   impactSparks = [];
   dustClouds = [];
@@ -1886,7 +1691,6 @@ function showStartScreen() {
   screenShake = { intensity: 0, decay: 0.92 };
   killFeedEntries = [];
   killFeedDirty = true;
-  obstacleCanvasDirty = true;
   _cachedDOM = null;
   previousPlayerStates.clear();
   gameReady = false;
@@ -1932,7 +1736,6 @@ function enterGame(data) {
   try { localStorage.setItem("dm_username", data.username); } catch { /* private browsing */ }
 
   players = data.players || [];
-  obstacles = data.obstacles || [];
   orbs = (data.orbs || []).map(function(o) {
     if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
     return o;
@@ -1943,7 +1746,6 @@ function enterGame(data) {
   if (data.maxHp) maxHp = data.maxHp;
   if (data.timerRemaining != null) roundTimeRemaining = data.timerRemaining;
 
-  obstacleCanvasDirty = true;
   _cachedDOM = null;
   gameReady = true;
 
@@ -2201,28 +2003,6 @@ function connect() {
       return;
     }
 
-    // ===== OBSTACLES =====
-    if (data.type === "newObstacle") {
-      if (data.obstacle) {
-        obstacles.push(data.obstacle);
-        obstacleCanvasDirty = true;
-      }
-      return;
-    }
-
-    if (data.type === "obstacleDestroyed") {
-      const ids = data.destroyedIds || [data.obstacleId];
-      for (const oid of ids) {
-        const obstacle = obstacles.find(function(o) { return o.id === oid; });
-        if (obstacle) {
-          createImpactSparks(obstacle.x + obstacle.size / 2, obstacle.y + obstacle.size / 2);
-          obstacle.destroyed = true;
-        }
-      }
-      obstacleCanvasDirty = true;
-      return;
-    }
-
     // ===== ZONE WARNING =====
     if (data.type === "zoneWarning") {
       zoneWarningShown = true;
@@ -2385,15 +2165,6 @@ function connect() {
     // ===== CHAT =====
     if (data.type === "chatMessage") {
       addKillFeedEntry(data.username, data.message, "chat");
-      return;
-    }
-
-    // ===== EMOTE =====
-    if (data.type === "emote") {
-      var emIdx = data.emote;
-      if (emIdx >= 0 && emIdx < EMOTE_LIST.length) {
-        playerEmotes[data.playerId] = { emoji: EMOTE_LIST[emIdx], time: Date.now() };
-      }
       return;
     }
 
@@ -2719,7 +2490,6 @@ function connect() {
       if (deathOv2) deathOv2.style.display = "none";
 
       // Reset game state for new round
-      obstacles = data.obstacles || [];
       orbs = (data.orbs || []).map(function(o) {
         if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
         return o;
@@ -2731,7 +2501,6 @@ function connect() {
       bloodParticles = [];
       bloodStains = [];
       muzzleFlashes = [];
-      knifeSlashes = [];
       shellCasings = [];
       impactSparks = [];
       dustClouds = [];
@@ -2746,14 +2515,12 @@ function connect() {
       screenShake = { intensity: 0, decay: 0.92 };
       killFeedEntries = [];
       killFeedDirty = true;
-      obstacleCanvasDirty = true;
       _cachedDOM = null;
       previousPlayerStates.clear();
       floatingNumbers = [];
       lowHPPulseTime = 0;
       arenaZone = null;
       roundTimeRemaining = 300;
-      playerEmotes = {};
 
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -2827,7 +2594,7 @@ function doJoin() {
 
   // Send join directly via WebSocket (no registration needed)
   function sendJoin() {
-    ws.send(serialize({ type: "join", username: trimmed, skin: selectedSkin }));
+    ws.send(serialize({ type: "join", username: trimmed, skin: 0 }));
   }
 
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -2902,15 +2669,6 @@ function startAutoRespawnTimer() {
   }
 })();
 
-// ===== HUD DISPLAY =====
-// HUD removed — score/ammo now rendered on canvas above player.
-// updateShotUI is kept as a no-op for any callers.
-
-let lastShotUIUpdate = 0;
-function updateShotUI() {
-  // No-op: HUD elements removed. Info is drawn on canvas directly.
-}
-
 // ===== INPUT =====
 
 const keysPressed = new Set();
@@ -2965,12 +2723,6 @@ document.addEventListener("keydown", (e) => {
   // R key to manually reload
   if (mappedKey === "r") {
     ws.send(serialize({ type: "reload" }));
-    return;
-  }
-
-  // T key for emote wheel
-  if (mappedKey === "t") {
-    showEmoteWheel();
     return;
   }
 
@@ -3602,90 +3354,6 @@ function showRevengeAnimation() {
   }
 }
 
-// ===== EMOTE SYSTEM =====
-var playerEmotes = {}; // { playerId: { emoji, time } }
-var EMOTE_LIST = ["\ud83d\ude02", "\ud83d\udc4f", "\ud83d\udc80", "\ud83d\udd25", "\ud83d\udcaa"];
-var EMOTE_DURATION = 2500;
-
-function showEmoteWheel() {
-  var existing = document.getElementById("emoteWheel");
-  if (existing) { existing.remove(); return; }
-
-  var wheel = document.createElement("div");
-  wheel.id = "emoteWheel";
-  wheel.style.cssText = [
-    "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:1050;",
-    "display:flex;gap:8px;padding:10px 16px;",
-    "background:rgba(10,15,10,0.9);border:1px solid rgba(74,106,74,0.5);border-radius:8px;",
-    "backdrop-filter:blur(8px);animation:screenFadeIn 0.2s ease-out;"
-  ].join("");
-
-  EMOTE_LIST.forEach(function(emoji, i) {
-    var btn = document.createElement("div");
-    btn.textContent = emoji;
-    btn.style.cssText = "font-size:32px;cursor:pointer;padding:6px 10px;border-radius:6px;transition:all 0.15s;user-select:none;";
-    btn.onmouseenter = function() { btn.style.background = "rgba(255,107,53,0.3)"; btn.style.transform = "scale(1.2)"; };
-    btn.onmouseleave = function() { btn.style.background = "transparent"; btn.style.transform = "scale(1)"; };
-    btn.onclick = function() {
-      if (ws && ws.readyState === 1) {
-        ws.send(serialize({ type: "emote", emote: i }));
-        // Show locally immediately
-        var lp = players.find(function(p) { return p.id === playerId; });
-        if (lp) playerEmotes[playerId] = { emoji: emoji, time: Date.now() };
-      }
-      wheel.remove();
-    };
-    wheel.appendChild(btn);
-  });
-
-  document.body.appendChild(wheel);
-  // Auto-close after 3 seconds
-  setTimeout(function() { if (wheel.parentNode) wheel.remove(); }, 3000);
-}
-
-function renderEmotes(ctx) {
-  var now = Date.now();
-  for (var pid in playerEmotes) {
-    var em = playerEmotes[pid];
-    if (now - em.time > EMOTE_DURATION) { delete playerEmotes[pid]; continue; }
-    var p = players.find(function(pl) { return pl.id === pid; });
-    if (!p || p.hp <= 0) continue;
-
-    var elapsed = now - em.time;
-    var alpha = elapsed < 300 ? elapsed / 300 : elapsed > EMOTE_DURATION - 500 ? (EMOTE_DURATION - elapsed) / 500 : 1;
-    var bobY = Math.sin(elapsed * 0.003) * 3;
-    var sx = p.x;
-    var sy = p.y - 45 + bobY;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    // Bubble background
-    ctx.fillStyle = "rgba(10,15,10,0.75)";
-    var bx = sx - 20, by = sy - 18, bw = 40, bh = 36, br = 10;
-    ctx.beginPath();
-    ctx.moveTo(bx + br, by);
-    ctx.lineTo(bx + bw - br, by);
-    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + br);
-    ctx.lineTo(bx + bw, by + bh - br);
-    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - br, by + bh);
-    ctx.lineTo(bx + br, by + bh);
-    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - br);
-    ctx.lineTo(bx, by + br);
-    ctx.quadraticCurveTo(bx, by, bx + br, by);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "rgba(74,106,74,0.5)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // Emoji
-    ctx.font = "24px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(em.emoji, sx, sy);
-    ctx.restore();
-  }
-}
-
 // ===== VOLUME CONTROL =====
 
 function initVolumeSlider() {
@@ -3743,23 +3411,6 @@ function syncVolumeControls() {
   if (lobbyIcon) lobbyIcon.textContent = iconStr;
   if (hudSlider) hudSlider.value = val;
   if (hudIcon) hudIcon.textContent = iconStr;
-}
-
-// ===== SKINS =====
-
-function initSkinSelector() {
-  const container = document.getElementById("skinOptions");
-  if (!container) return;
-  container.innerHTML = SKINS.map((skin, i) => {
-    const isSelected = i === selectedSkin;
-    return `<div class="skin-option ${isSelected ? "selected" : ""}" style="background: ${skin.primary};" onclick="selectSkin(${i})" title="${skin.name}"></div>`;
-  }).join("");
-}
-
-function selectSkin(index) {
-  selectedSkin = index;
-  if (ws) ws.send(serialize({ type: "selectSkin", skin: index }));
-  initSkinSelector();
 }
 
 // ===== LEADERBOARD =====
@@ -4017,11 +3668,21 @@ function updateDashTrails() {
 function renderDashTrails() {
   dashTrails.forEach((trail) => {
     const skin = SKINS[trail.skin] || SKINS[0];
-    ctx.globalAlpha = trail.alpha * 0.5;
-    ctx.fillStyle = skin.primary;
-    ctx.beginPath();
-    ctx.arc(trail.x, trail.y, 13, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = trail.alpha * 0.4;
+    // Use sprite for dash ghost if available
+    var trailSprite = getPlayerSprite(trail.skin, trail.weapon || "machinegun");
+    if (trailSprite && trailSprite.complete && trailSprite.naturalWidth > 0) {
+      ctx.save();
+      ctx.translate(trail.x, trail.y);
+      ctx.rotate(trail.aimAngle || 0);
+      ctx.drawImage(trailSprite, -SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = skin.primary;
+      ctx.beginPath();
+      ctx.arc(trail.x, trail.y, 13, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1.0;
   });
 }
@@ -4414,74 +4075,6 @@ function ensureGridCanvas() {
   gc.stroke();
 }
 
-function ensureObstacleCanvas() {
-  // Re-render if dirty or camera moved beyond the padding
-  const needsRender = obstacleCanvasDirty ||
-    Math.abs(cameraX - obsCanvasCamX) > OBS_CANVAS_PAD * 0.5 ||
-    Math.abs(cameraY - obsCanvasCamY) > OBS_CANVAS_PAD * 0.5;
-  if (obstacleCanvas && !needsRender) return;
-
-  const cw = GAME_CONFIG.VIEWPORT_WIDTH + OBS_CANVAS_PAD * 2;
-  const ch = GAME_CONFIG.VIEWPORT_HEIGHT + OBS_CANVAS_PAD * 2;
-  if (!obstacleCanvas) {
-    obstacleCanvas = document.createElement("canvas");
-    obstacleCanvas.width = cw;
-    obstacleCanvas.height = ch;
-  } else if (obstacleCanvas.width !== cw || obstacleCanvas.height !== ch) {
-    obstacleCanvas.width = cw;
-    obstacleCanvas.height = ch;
-  }
-
-  // Compute the world region this canvas covers
-  const ox = Math.max(0, Math.floor(cameraX - OBS_CANVAS_PAD));
-  const oy = Math.max(0, Math.floor(cameraY - OBS_CANVAS_PAD));
-  obsCanvasCamX = cameraX;
-  obsCanvasCamY = cameraY;
-
-  const oc = obstacleCanvas.getContext("2d");
-  oc.clearRect(0, 0, cw, ch);
-
-  // Store origin offset for drawing back to main canvas
-  obstacleCanvas._ox = ox;
-  obstacleCanvas._oy = oy;
-
-  obstacles.forEach((obstacle) => {
-    if (obstacle.destroyed) return;
-    // Skip obstacles outside this canvas region
-    const rx = obstacle.x - ox;
-    const ry = obstacle.y - oy;
-    if (rx + obstacle.size < 0 || rx > cw || ry + obstacle.size < 0 || ry > ch) return;
-
-    if (obstacle.type === "tree") {
-      oc.fillStyle = "#5a4a2a";
-      oc.fillRect(rx + obstacle.size * 0.4, ry + obstacle.size * 0.5, obstacle.size * 0.2, obstacle.size * 0.5);
-      oc.fillStyle = "#2a5a2a";
-      oc.beginPath();
-      oc.arc(rx + obstacle.size * 0.5, ry + obstacle.size * 0.3, obstacle.size * 0.35, 0, Math.PI * 2);
-      oc.fill();
-      oc.fillStyle = "#2a6a2a";
-      oc.beginPath();
-      oc.arc(rx + obstacle.size * 0.3, ry + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
-      oc.fill();
-      oc.beginPath();
-      oc.arc(rx + obstacle.size * 0.7, ry + obstacle.size * 0.4, obstacle.size * 0.25, 0, Math.PI * 2);
-      oc.fill();
-    } else {
-      oc.fillStyle = "#555545";
-      oc.fillRect(rx, ry, obstacle.size, obstacle.size);
-      oc.strokeStyle = "#444434";
-      oc.lineWidth = 1;
-      oc.strokeRect(rx, ry, obstacle.size, obstacle.size);
-      oc.strokeStyle = "#666656";
-      oc.beginPath();
-      oc.moveTo(rx + 2, ry + obstacle.size / 2);
-      oc.lineTo(rx + obstacle.size - 2, ry + obstacle.size / 2);
-      oc.stroke();
-    }
-  });
-  obstacleCanvasDirty = false;
-}
-
 // Update interpolated positions for smooth movement
 function updateInterpolation() {
   playerTargets.forEach((target) => {
@@ -4542,18 +4135,6 @@ function _renderMinimapContent(mc, framePlayer) {
   mc.strokeStyle = "rgba(255,255,255,0.3)";
   mc.lineWidth = 1;
   mc.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
-
-  // Draw obstacles as small dark rectangles
-  for (let i = 0; i < obstacles.length; i++) {
-    const ob = obstacles[i];
-    mc.fillStyle = "rgba(80,80,80,0.6)";
-    mc.fillRect(
-      ob.x * scaleX,
-      ob.y * scaleY,
-      ob.width * scaleX,
-      ob.height * scaleY
-    );
-  }
 
   // Draw orbs as small cyan dots
   for (let i = 0; i < orbs.length; i++) {
@@ -4642,9 +4223,10 @@ function render() {
   if (framePlayer) {
     const targetCamX = predictedX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
     const targetCamY = predictedY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
-    // Clamp camera to arena bounds
-    const clampedX = Math.max(0, Math.min(GAME_CONFIG.ARENA_WIDTH - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
-    const clampedY = Math.max(0, Math.min(GAME_CONFIG.ARENA_HEIGHT - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
+    // Clamp camera to arena bounds (with padding so edge players stay visible)
+    const pad = GAME_CONFIG.ARENA_PADDING;
+    const clampedX = Math.max(-pad, Math.min(GAME_CONFIG.ARENA_WIDTH + pad - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
+    const clampedY = Math.max(-pad, Math.min(GAME_CONFIG.ARENA_HEIGHT + pad - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
     // Smooth camera interpolation to prevent jitter from server reconciliation
     const CAMERA_LERP = 0.25;
     if (cameraX === 0 && cameraY === 0 && !_cameraInitialized) {
@@ -4655,6 +4237,10 @@ function render() {
       cameraX += (clampedX - cameraX) * CAMERA_LERP;
       cameraY += (clampedY - cameraY) * CAMERA_LERP;
     }
+    // Recompute world-space mouse from screen coords every frame
+    // Prevents sprite flip during dash when camera moves but mouse doesn't
+    mouseX = screenMouseX / CAMERA_SCALE + cameraX;
+    mouseY = screenMouseY / CAMERA_SCALE + cameraY;
   }
 
   // Clear canvas
@@ -4674,16 +4260,47 @@ function render() {
   ctx.fillRect(0, 0, GAME_CONFIG.VIEWPORT_WIDTH + 40, GAME_CONFIG.VIEWPORT_HEIGHT + 40);
   ctx.restore();
 
-  // Draw arena boundary (dark outside the arena)
-  ctx.save();
-  ctx.translate(-Math.floor(cameraX), -Math.floor(cameraY));
-  ctx.fillStyle = "#111";
-  // Top
-  if (cameraY < 0) ctx.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, -cameraY);
-  // Bottom
-  const bottomY = GAME_CONFIG.ARENA_HEIGHT - cameraY;
-  if (bottomY < GAME_CONFIG.VIEWPORT_HEIGHT) ctx.fillRect(0, GAME_CONFIG.ARENA_HEIGHT, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.VIEWPORT_HEIGHT - bottomY);
-  ctx.restore();
+  // Draw arena boundary — out-of-bounds overlay + border line
+  {
+    const aw = GAME_CONFIG.ARENA_WIDTH;
+    const ah = GAME_CONFIG.ARENA_HEIGHT;
+    const pad = GAME_CONFIG.ARENA_PADDING;
+    const cx = Math.floor(cameraX);
+    const cy = Math.floor(cameraY);
+    const vw = GAME_CONFIG.VIEWPORT_WIDTH;
+    const vh = GAME_CONFIG.VIEWPORT_HEIGHT;
+
+    ctx.save();
+    ctx.translate(-cx, -cy);
+
+    // Visible range in world coords
+    const visL = cx - 2, visT = cy - 2, visR = cx + vw + 2, visB = cy + vh + 2;
+
+    // 1) Dark void beyond the padded area
+    ctx.fillStyle = "#111";
+    if (visT < -pad) ctx.fillRect(visL, visT, visR - visL, -pad - visT);
+    if (visB > ah + pad) ctx.fillRect(visL, ah + pad, visR - visL, visB - (ah + pad));
+    if (visL < -pad) ctx.fillRect(visL, -pad, -pad - visL, ah + 2 * pad);
+    if (visR > aw + pad) ctx.fillRect(aw + pad, -pad, visR - (aw + pad), ah + 2 * pad);
+
+    // 2) Semi-transparent overlay on the padding zone (outside playable, inside void)
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    // Top strip
+    if (visT < 0) ctx.fillRect(Math.max(visL, -pad), Math.max(visT, -pad), Math.min(visR, aw + pad) - Math.max(visL, -pad), Math.min(0, visB) - Math.max(visT, -pad));
+    // Bottom strip
+    if (visB > ah) ctx.fillRect(Math.max(visL, -pad), Math.max(ah, visT), Math.min(visR, aw + pad) - Math.max(visL, -pad), Math.min(visB, ah + pad) - Math.max(ah, visT));
+    // Left strip (between top/bottom)
+    if (visL < 0) ctx.fillRect(Math.max(visL, -pad), Math.max(visT, 0), Math.min(0, visR) - Math.max(visL, -pad), Math.min(visB, ah) - Math.max(visT, 0));
+    // Right strip (between top/bottom)
+    if (visR > aw) ctx.fillRect(Math.max(aw, visL), Math.max(visT, 0), Math.min(visR, aw + pad) - Math.max(aw, visL), Math.min(visB, ah) - Math.max(visT, 0));
+
+    // 3) Playable boundary line
+    ctx.strokeStyle = "rgba(255,60,60,0.55)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, 0, aw, ah);
+
+    ctx.restore();
+  }
 
   // Screen shake offset
   updateScreenShake();
@@ -4697,7 +4314,6 @@ function render() {
   updateInterpolation();
 
   // Update UI and effects
-  updateShotUI();
   updateExplosions();
   updateMuzzleFlashes();
   updateShellCasings();
@@ -4748,23 +4364,6 @@ function render() {
 
   // Render dust clouds (ground level)
   renderDustClouds();
-
-  // Render obstacles from cached offscreen canvas (viewport-sized, padded)
-  ensureObstacleCanvas();
-  if (obstacleCanvas) {
-    const ox = obstacleCanvas._ox || 0;
-    const oy = obstacleCanvas._oy || 0;
-    // Compute the overlap between the viewport and the obstacle canvas region
-    const srcX = Math.max(0, Math.floor(cameraX) - ox);
-    const srcY = Math.max(0, Math.floor(cameraY) - oy);
-    const dstX = ox + srcX; // world-space X
-    const dstY = oy + srcY; // world-space Y
-    const drawW = Math.min(obstacleCanvas.width - srcX, GAME_CONFIG.VIEWPORT_WIDTH + 1);
-    const drawH = Math.min(obstacleCanvas.height - srcY, GAME_CONFIG.VIEWPORT_HEIGHT + 1);
-    if (drawW > 0 && drawH > 0) {
-      ctx.drawImage(obstacleCanvas, srcX, srcY, drawW, drawH, dstX, dstY, drawW, drawH);
-    }
-  }
 
   // Render pickups
   renderPickups();
@@ -4911,6 +4510,8 @@ function render() {
         y: renderY + (Math.random() - 0.5) * 4,
         alpha: 0.6,
         skin: p.skin || 0,
+        weapon: p.weapon || "machinegun",
+        aimAngle: gunAngle,
       });
     }
 
@@ -4958,218 +4559,108 @@ function render() {
       ctx.stroke();
     }
 
-    // Draw weapon
-    ctx.save();
-    ctx.translate(renderX, renderY);
-    ctx.rotate(gunAngle);
-
-    if (p.weapon === "machinegun") {
-      // Machine gun body
-      ctx.fillStyle = "#333";
-      ctx.fillRect(4, -2.5, 20, 5);
-      // Muzzle
-      ctx.fillStyle = "#555";
-      ctx.fillRect(24, -3, 5, 6);
-      // Magazine
-      ctx.fillStyle = "#2a2a2a";
-      ctx.fillRect(10, 2, 6, 5);
-      // Stock hint
-      ctx.fillStyle = "#2a2a2a";
-      ctx.fillRect(-2, -1.5, 6, 3);
-    } else if (p.weapon === "shotgun") {
-      // Shotgun body
-      ctx.fillStyle = "#3a2a1a";
-      ctx.fillRect(4, -3, 20, 6);
-      // Double barrel
-      ctx.fillStyle = "#444";
-      ctx.fillRect(24, -3.5, 5, 3);
-      ctx.fillRect(24, 0.5, 5, 3);
-      // Stock
-      ctx.fillStyle = "#2a1a0a";
-      ctx.fillRect(-4, -2.5, 8, 5);
-    } else if (p.weapon === "sniper") {
-      // Sniper rifle — long barrel
-      ctx.fillStyle = "#2a2a2a";
-      ctx.fillRect(4, -2, 30, 4);
-      // Scope
-      ctx.fillStyle = "#4488ff";
-      ctx.fillRect(14, -5, 4, 3);
-      // Muzzle
-      ctx.fillStyle = "#555";
-      ctx.fillRect(34, -1.5, 4, 3);
-      // Stock
-      ctx.fillStyle = "#3a2a1a";
-      ctx.fillRect(-4, -2, 8, 4);
-    }
-
-    ctx.restore();
-
-    // Player body - outer ring
-    ctx.fillStyle = darkColor;
-    ctx.beginPath();
-    ctx.arc(renderX, renderY, 16, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Player body - inner
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(renderX, renderY, 13, 0, Math.PI * 2);
-    ctx.fill();
-
-    // First character initial on the ball
-    if (p.username) {
-      ctx.font = "bold 14px 'Rajdhani', sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255,255,255,0.9)";
-      ctx.fillText(p.username.charAt(0).toUpperCase(), renderX, renderY + 1);
-      ctx.textBaseline = "alphabetic";
-    }
-
-    // Prominent highlight for local player — pulsing glow ring + arrow
-    if (p.id === playerId) {
-      const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300);
-      // Outer glow
-      ctx.strokeStyle = `rgba(255, 170, 68, ${pulse * 0.4})`;
-      ctx.lineWidth = 4;
+    // Draw player sprite (replaces circle body + weapon)
+    var spriteImg = getPlayerSprite(skinIndex, p.weapon);
+    if (spriteImg && spriteImg.complete && spriteImg.naturalWidth > 0) {
+      ctx.save();
+      ctx.translate(renderX, renderY);
+      ctx.rotate(gunAngle);
+      // Draw sprite centered on player, offset slightly so gun points forward
+      ctx.drawImage(spriteImg, -SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+      ctx.restore();
+    } else {
+      // Fallback: draw circle body + weapon if sprites not loaded
+      ctx.save();
+      ctx.translate(renderX, renderY);
+      ctx.rotate(gunAngle);
+      if (p.weapon === "shotgun") {
+        ctx.fillStyle = "#3a2a1a";
+        ctx.fillRect(4, -3, 20, 6);
+        ctx.fillStyle = "#444";
+        ctx.fillRect(24, -3.5, 5, 3);
+        ctx.fillRect(24, 0.5, 5, 3);
+      } else if (p.weapon === "sniper") {
+        ctx.fillStyle = "#2a2a2a";
+        ctx.fillRect(4, -2, 30, 4);
+        ctx.fillStyle = "#4488ff";
+        ctx.fillRect(14, -5, 4, 3);
+      } else {
+        ctx.fillStyle = "#333";
+        ctx.fillRect(4, -2.5, 20, 5);
+        ctx.fillStyle = "#555";
+        ctx.fillRect(24, -3, 5, 6);
+      }
+      ctx.restore();
+      // Fallback circle body
+      ctx.fillStyle = darkColor;
       ctx.beginPath();
-      ctx.arc(renderX, renderY, 22, 0, Math.PI * 2);
-      ctx.stroke();
-      // Inner ring
-      ctx.strokeStyle = `rgba(255, 200, 80, ${0.5 + pulse * 0.5})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
-      ctx.stroke();
-      // Bouncing arrow pointing down at the player
-      const bounce = Math.sin(Date.now() / 250) * 3;
-      const arrowY = renderY - 38 + bounce;
-      ctx.fillStyle = `rgba(255, 200, 80, ${0.7 + pulse * 0.3})`;
-      ctx.beginPath();
-      ctx.moveTo(renderX, arrowY + 8);
-      ctx.lineTo(renderX - 6, arrowY);
-      ctx.lineTo(renderX + 6, arrowY);
-      ctx.closePath();
+      ctx.arc(renderX, renderY, 16, 0, Math.PI * 2);
       ctx.fill();
-    }
-
-    // ---- Above-player HUD (compact) ----
-    const isLocal = p.id === playerId;
-    const barWidth = isLocal ? 40 : 28;
-    const barHeight = isLocal ? 5 : 3;
-    const barX = renderX - barWidth / 2;
-    const barY = renderY - 25;
-    const hpPercent = p.hp / maxHp;
-
-    // HP bar background
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
-
-    // HP fill
-    const hpColor =
-      hpPercent > 0.5 ? "#4ad94a" : hpPercent > 0.25 ? "#d9a04a" : "#d94a4a";
-    ctx.fillStyle = hpColor;
-    ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
-
-    // Armor pips (small dots beside HP bar)
-    if (p.armor > 0) {
-      for (let a = 0; a < p.armor; a++) {
-        ctx.fillStyle = "#ddaa22";
-        ctx.beginPath();
-        ctx.arc(barX + barWidth + 4 + a * 5, barY + barHeight / 2, 1.5, 0, Math.PI * 2);
-        ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 13, 0, Math.PI * 2);
+      ctx.fill();
+      if (p.username) {
+        ctx.font = "bold 14px 'Rajdhani', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillText(p.username.charAt(0).toUpperCase(), renderX, renderY + 1);
+        ctx.textBaseline = "alphabetic";
       }
     }
 
-    // Username — small for enemies, slightly larger for local
-    if (isLocal) {
-      ctx.font = "bold 12px 'Rajdhani', sans-serif";
-      ctx.textAlign = "center";
-      ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.lineWidth = 2;
-      ctx.strokeText(p.username, renderX, barY - 3);
-      ctx.fillStyle = "#ffcc66";
-      ctx.fillText(p.username, renderX, barY - 3);
-      ctx.textAlign = "start";
-    } else {
-      ctx.font = "10px 'Rajdhani', sans-serif";
-      ctx.textAlign = "center";
-      ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.lineWidth = 1.5;
-      ctx.strokeText(p.username, renderX, barY - 2);
-      ctx.fillStyle = "#bbccbb";
-      ctx.fillText(p.username, renderX, barY - 2);
-      ctx.textAlign = "start";
-    }
-
-    // Local player: ammo below body (compact)
-    if (isLocal) {
-      ctx.textAlign = "center";
-      const weaponMaxAmmo = p.weapon === "shotgun" ? 10 : p.weapon === "sniper" ? 10 : 45;
-      const ammoText = p.reloading ? "reloading..." : p.shots + "/" + weaponMaxAmmo;
-      const ammoColor = p.reloading ? "#ff6b35" : (p.shots <= 5 ? "#ff8844" : "#ddeedd");
-      ctx.font = "bold 11px 'Share Tech Mono', monospace";
-      ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.lineWidth = 2;
-      ctx.strokeText(ammoText, renderX, renderY + 27);
-      ctx.fillStyle = ammoColor;
-      ctx.fillText(ammoText, renderX, renderY + 27);
-      ctx.textAlign = "start";
-    }
-
-    // Bounty skull on the leading player
-    if (bountyLeaderId === p.id) {
-      ctx.font = "14px serif";
-      ctx.textAlign = "center";
-      ctx.fillText("💀", renderX, barY - 16);
-      ctx.textAlign = "start";
-    }
+    // ---- Dot above player head (green = local, red = others) ----
+    var dotColor = (p.id === playerId) ? "#33ff55" : "#ff3333";
+    ctx.fillStyle = dotColor;
+    ctx.shadowColor = dotColor;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(renderX, renderY - 22, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
 
     // Golden crown on the #1 player (highest score)
     if (crownLeaderId === p.id) {
-      const crownY = renderY - 26;
+      const crownY = renderY - 34;
       const crownBob = Math.sin(Date.now() / 400) * 1.5;
       ctx.save();
       ctx.translate(renderX, crownY + crownBob);
-      // Crown body
       ctx.fillStyle = "#ffd700";
       ctx.beginPath();
-      ctx.moveTo(-10, 4);
-      ctx.lineTo(-10, -2);
-      ctx.lineTo(-7, 1);
-      ctx.lineTo(-3, -6);
+      ctx.moveTo(-8, 3);
+      ctx.lineTo(-8, -1);
+      ctx.lineTo(-5, 1);
+      ctx.lineTo(-2, -5);
       ctx.lineTo(0, -1);
-      ctx.lineTo(3, -6);
-      ctx.lineTo(7, 1);
-      ctx.lineTo(10, -2);
-      ctx.lineTo(10, 4);
+      ctx.lineTo(2, -5);
+      ctx.lineTo(5, 1);
+      ctx.lineTo(8, -1);
+      ctx.lineTo(8, 3);
       ctx.closePath();
       ctx.fill();
-      // Crown base
       ctx.fillStyle = "#daa520";
-      ctx.fillRect(-10, 3, 20, 3);
-      // Gem dots
-      ctx.fillStyle = "#ff4444";
-      ctx.beginPath();
-      ctx.arc(-3, -1, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#4488ff";
-      ctx.beginPath();
-      ctx.arc(3, -1, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#44ff44";
-      ctx.beginPath();
-      ctx.arc(0, -2, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      // Glow effect
+      ctx.fillRect(-8, 2, 16, 2);
       ctx.shadowColor = "#ffd700";
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 6;
       ctx.fillStyle = "rgba(255, 215, 0, 0.15)";
       ctx.beginPath();
-      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.restore();
+    }
+
+    // Username below player
+    if (p.username) {
+      ctx.font = "bold 10px 'Rajdhani', sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 2;
+      ctx.strokeText(p.username, renderX, renderY + 28);
+      ctx.fillStyle = (p.id === playerId) ? "#ffcc66" : "#bbccbb";
+      ctx.fillText(p.username, renderX, renderY + 28);
+      ctx.textAlign = "start";
     }
 
     // Restore alpha after invisibility
@@ -5246,9 +4737,6 @@ function render() {
   // Render muzzle flashes
   renderMuzzleFlashes();
 
-  // Render knife slashes
-  renderKnifeSlashes();
-
   // Render impact sparks
   renderImpactSparks();
 
@@ -5270,9 +4758,6 @@ function render() {
 
   // Render death animations (ragdoll particles)
   renderDeathAnimations();
-
-  // Render emotes above players
-  renderEmotes(ctx);
 
   // === End world-space rendering — restore camera transform ===
   ctx.restore(); // Restore camera translate+shake
@@ -5307,6 +4792,64 @@ function render() {
     ctx.beginPath();
     ctx.arc(crossX, crossY, 1.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // ===== BOTTOM-CENTER HUD: Ammo + Score =====
+  if (framePlayer && gameReady) {
+    const localP = framePlayer;
+    const hudY = canvas.height - 30;
+    const hudCenterX = canvas.width / 2;
+
+    // Background bar
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    const hudW = 320, hudH = 36;
+    const hudRX = hudCenterX - hudW / 2, hudRY = hudY - hudH / 2;
+    const r = 6;
+    ctx.beginPath();
+    ctx.moveTo(hudRX + r, hudRY);
+    ctx.lineTo(hudRX + hudW - r, hudRY);
+    ctx.quadraticCurveTo(hudRX + hudW, hudRY, hudRX + hudW, hudRY + r);
+    ctx.lineTo(hudRX + hudW, hudRY + hudH - r);
+    ctx.quadraticCurveTo(hudRX + hudW, hudRY + hudH, hudRX + hudW - r, hudRY + hudH);
+    ctx.lineTo(hudRX + r, hudRY + hudH);
+    ctx.quadraticCurveTo(hudRX, hudRY + hudH, hudRX, hudRY + hudH - r);
+    ctx.lineTo(hudRX, hudRY + r);
+    ctx.quadraticCurveTo(hudRX, hudRY, hudRX + r, hudRY);
+    ctx.closePath();
+    ctx.fill();
+
+    // HP section (left)
+    const hpPercent = localP.hp / maxHp;
+    const hpColor = hpPercent > 0.5 ? "#4ad94a" : hpPercent > 0.25 ? "#d9a04a" : "#d94a4a";
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(hudRX + 8, hudY - 4, 80, 8);
+    ctx.fillStyle = hpColor;
+    ctx.fillRect(hudRX + 8, hudY - 4, 80 * hpPercent, 8);
+    ctx.font = "bold 11px 'Share Tech Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(localP.hp + "/" + maxHp, hudRX + 48, hudY - 8);
+
+    // Ammo section (center)
+    const weaponMaxAmmo = localP.weapon === "shotgun" ? 10 : localP.weapon === "sniper" ? 10 : 45;
+    const ammoText = localP.reloading ? "RELOADING" : localP.shots + " / " + weaponMaxAmmo;
+    const ammoColor = localP.reloading ? "#ff6b35" : (localP.shots <= 5 ? "#ff8844" : "#ddeedd");
+    ctx.font = "bold 13px 'Share Tech Mono', monospace";
+    ctx.fillStyle = ammoColor;
+    ctx.textAlign = "center";
+    ctx.fillText(ammoText, hudCenterX, hudY + 4);
+
+    // Score section (right)
+    ctx.font = "bold 12px 'Rajdhani', sans-serif";
+    ctx.fillStyle = "#ffcc66";
+    ctx.textAlign = "center";
+    ctx.fillText("⭐ " + (localP.score || 0), hudRX + hudW - 45, hudY + 4);
+
+    // Kills
+    ctx.fillStyle = "#ff6b53";
+    ctx.fillText("💀 " + (localP.kills || 0), hudRX + hudW - 45, hudY - 10);
+
+    ctx.textAlign = "start";
   }
 
   // Kill feed
