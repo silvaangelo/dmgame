@@ -76,7 +76,8 @@ function parseBinaryState(buf) {
     var bx = dv.getInt16(off, true); off += 2;
     var by = dv.getInt16(off, true); off += 2;
     var bw = dv.getUint8(off); off += 1;
-    parsedBullets.push({ id: "b" + bsid, x: bx, y: by, weapon: BINARY_WEAPON_MAP[bw] || "machinegun" });
+    var bAngle = dv.getFloat32(off, true); off += 4;
+    parsedBullets.push({ id: "b" + bsid, x: bx, y: by, weapon: BINARY_WEAPON_MAP[bw] || "machinegun", angle: bAngle });
   }
 
   // Pickups
@@ -408,21 +409,50 @@ const SKINS = [
 var spriteRifle = new Image();
 var spriteShotgun = new Image();
 var spriteSniper = new Image();
+// Bullet sprites
+var spriteRifleBullet = new Image();
+var spriteShotgunBullet = new Image();
+var spriteSniperBullet = new Image();
 var spritesLoaded = false;
 (function preloadSprites() {
   var loaded = 0;
-  function onLoad() { loaded++; if (loaded >= 3) spritesLoaded = true; }
+  var total = 6;
+  function onLoad() { loaded++; if (loaded >= total) spritesLoaded = true; }
   spriteRifle.onload = onLoad; spriteRifle.onerror = onLoad;
   spriteRifle.src = "assets/sprites/player-rifle-idle.png";
   spriteShotgun.onload = onLoad; spriteShotgun.onerror = onLoad;
   spriteShotgun.src = "assets/sprites/player-shotgun-idle.png";
   spriteSniper.onload = onLoad; spriteSniper.onerror = onLoad;
   spriteSniper.src = "assets/sprites/player-sniper-idle.png";
+  spriteRifleBullet.onload = onLoad; spriteRifleBullet.onerror = onLoad;
+  spriteRifleBullet.src = "assets/sprites/rifle-bullet.png";
+  spriteShotgunBullet.onload = onLoad; spriteShotgunBullet.onerror = onLoad;
+  spriteShotgunBullet.src = "assets/sprites/shotgun-bullet.png";
+  spriteSniperBullet.onload = onLoad; spriteSniperBullet.onerror = onLoad;
+  spriteSniperBullet.src = "assets/sprites/sniper-bullet.png";
 })();
 
 // Sprite render dimensions (scaled to match player hitbox)
 var SPRITE_RENDER_W = 70;
-var SPRITE_RENDER_H = 70 / (313 / 207); // maintain aspect ratio ≈ 46
+var SPRITE_RENDER_H = 70 / (283 / 160); // maintain aspect ratio ≈ 39.6
+
+// Muzzle position in sprite-local coordinates (origin = player center)
+// All sprites are 283×160 with muzzle at pixel (272, 118)
+var SPRITE_DRAW_OX = -SPRITE_RENDER_W * 0.35;  // draw offset X
+var SPRITE_DRAW_OY = -SPRITE_RENDER_H / 2;     // draw offset Y
+var SPRITE_SCALE_X = SPRITE_RENDER_W / 283;
+var SPRITE_SCALE_Y = SPRITE_RENDER_H / 160;
+var MUZZLE_OFFSET = { x: SPRITE_DRAW_OX + 272 * SPRITE_SCALE_X, y: SPRITE_DRAW_OY + 118 * SPRITE_SCALE_Y };
+
+// Get muzzle world position given player center and aim angle
+function getMuzzlePosition(px, py, angle, weapon) {
+  var cos = Math.cos(angle);
+  var sin = Math.sin(angle);
+  return {
+    x: px + MUZZLE_OFFSET.x * cos - MUZZLE_OFFSET.y * sin,
+    y: py + MUZZLE_OFFSET.x * sin + MUZZLE_OFFSET.y * cos
+  };
+}
 
 function getPlayerSprite(skinIndex, weapon) {
   if (weapon === "shotgun") return spriteShotgun;
@@ -944,8 +974,8 @@ function updateExplosions() {
 // Muzzle flash system
 function createMuzzleFlash(x, y, dirX, dirY) {
   muzzleFlashes.push({
-    x: x + dirX * 15,
-    y: y + dirY * 15,
+    x: x,
+    y: y,
     life: 1.0,
     angle: Math.atan2(dirY, dirX),
     timestamp: Date.now(),
@@ -1866,21 +1896,23 @@ function tryShoot() {
 
   ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
 
+  // Compute muzzle position from sprite data
+  const aimAngle = Math.atan2(dirY, dirX);
+  const muzzle = getMuzzlePosition(predictedX, predictedY, aimAngle, weapon);
+
   // Client-side muzzle flash and effects
-  const flashX = predictedX + dirX * 30;
-  const flashY = predictedY + dirY * 30;
-  createMuzzleFlash(flashX, flashY, dirX, dirY);
+  createMuzzleFlash(muzzle.x, muzzle.y, dirX, dirY);
 
   // Shell casing
-  const casingAngle = Math.atan2(dirY, dirX) + Math.PI / 2;
+  const casingAngle = aimAngle + Math.PI / 2;
   createShellCasing(predictedX, predictedY, casingAngle);
 
   // Client-side predicted bullet (removed on next server state)
   const bulletSpeed = weapon === "sniper" ? 48 : 15;
   bullets.push({
     id: "predicted-" + Math.random().toString(36).slice(2),
-    x: predictedX + dirX * 20,
-    y: predictedY + dirY * 20,
+    x: muzzle.x,
+    y: muzzle.y,
     dx: dirX * bulletSpeed,
     dy: dirY * bulletSpeed,
     weapon: weapon,
@@ -4680,54 +4712,43 @@ function render() {
       b.y += b.dy;
     }
 
-    if (b.weapon === "shotgun") {
-      // Shotgun pellet - small white-yellow
-      ctx.fillStyle = "#ffe866";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (b.weapon === "sniper") {
-      // Sniper tracer - bright blue laser line
-      ctx.strokeStyle = "#44aaff";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y);
-      const trailLen = 22;
-      // Use dx/dy for predicted bullets, or compute from previous position
-      let angle;
-      if (b.dx !== undefined && b.dy !== undefined) {
-        angle = Math.atan2(b.dy, b.dx);
-      } else {
-        const prev = previousBulletPositions.get(b.id);
-        if (prev && (prev.x !== b.x || prev.y !== b.y)) {
-          angle = Math.atan2(b.y - prev.y, b.x - prev.x);
-          b._lastAngle = angle;
-        } else {
-          angle = b._lastAngle !== undefined ? b._lastAngle : 0;
-        }
-      }
-      ctx.lineTo(b.x - Math.cos(angle) * trailLen, b.y - Math.sin(angle) * trailLen);
-      ctx.stroke();
-      // Core dot
-      ctx.fillStyle = "#88ccff";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      // Glow
-      ctx.fillStyle = "rgba(68,170,255,0.3)";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 8, 0, Math.PI * 2);
-      ctx.fill();
+    // Compute bullet travel angle for sprite rotation
+    let angle;
+    if (b.dx !== undefined && b.dy !== undefined) {
+      // Client-predicted bullet: use velocity
+      angle = Math.atan2(b.dy, b.dx);
+    } else if (b.angle !== undefined) {
+      // Server bullet: use protocol-provided angle
+      angle = b.angle;
     } else {
-      // Machine gun tracer - yellow
+      angle = 0;
+    }
+
+    // Pick sprite and size per weapon
+    let bulletSprite, bw, bh;
+    if (b.weapon === "shotgun") {
+      bulletSprite = spriteShotgunBullet;
+      bw = 10; bh = 10;
+    } else if (b.weapon === "sniper") {
+      bulletSprite = spriteSniperBullet;
+      bw = 28; bh = 10;
+    } else {
+      // machinegun / minigun / default
+      bulletSprite = spriteRifleBullet;
+      bw = 16; bh = 8;
+    }
+
+    if (bulletSprite.complete && bulletSprite.naturalWidth > 0) {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(angle);
+      ctx.drawImage(bulletSprite, -bw / 2, -bh / 2, bw, bh);
+      ctx.restore();
+    } else {
+      // Fallback: simple dot while sprite loads
       ctx.fillStyle = "#ffcc44";
       ctx.beginPath();
       ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      // Small glow
-      ctx.fillStyle = "rgba(255,200,50,0.2)";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
       ctx.fill();
     }
   });

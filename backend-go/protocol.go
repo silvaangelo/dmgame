@@ -25,7 +25,7 @@ const (
 	binaryMarker  = 0x42
 	headerBytes   = 8
 	playerBytes   = 29
-	bulletBytes   = 7
+	bulletBytes   = 11
 	pickupBytes   = 7
 	orbBytes      = 6
 	crateBytes    = 7
@@ -174,6 +174,9 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		}
 		buf[off] = bwc
 		off++
+		bAngle := float32(math.Atan2(b.DY, b.DX))
+		binary.LittleEndian.PutUint32(buf[off:], math.Float32bits(bAngle))
+		off += 4
 	}
 
 	// Pickups

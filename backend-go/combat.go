@@ -6,6 +6,24 @@ import (
 	"time"
 )
 
+/* ================= MUZZLE OFFSET ================= */
+
+// Muzzle offsets in sprite-local coords (x=forward along gun, y=perpendicular).
+// Derived from source sprite 283×160 rendered at 70×39.6, draw origin at (-24.5, -19.8).
+// All weapons share the same muzzle pixel: (272, 118).
+const (
+	muzzleOffsetX = 42.8
+	muzzleOffsetY = 9.4
+)
+
+// muzzlePosition returns the world-space muzzle point given player center and aim direction.
+func muzzlePosition(px, py, dirX, dirY float64, weapon WeaponType) (float64, float64) {
+	angle := math.Atan2(dirY, dirX)
+	cos := math.Cos(angle)
+	sin := math.Sin(angle)
+	return px + muzzleOffsetX*cos - muzzleOffsetY*sin, py + muzzleOffsetX*sin + muzzleOffsetY*cos
+}
+
 /* ================= KILL STREAKS ================= */
 
 var streakThresholds = []struct {
@@ -150,11 +168,12 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			startReload(player, GameConfig.SniperReloadTime, GameConfig.SniperAmmo)
 		}
 
+		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponSniper)
 		bullet := &Bullet{
 			ID:        nextEntityID(),
 			ShortID:   game.NextShortID,
-			X:         player.X,
-			Y:         player.Y,
+			X:         mzX,
+			Y:         mzY,
 			DX:        dirX * GameConfig.SniperBulletSpeed,
 			DY:        dirY * GameConfig.SniperBulletSpeed,
 			Team:      0,
@@ -200,6 +219,7 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	if player.Weapon == WeaponShotgun {
 		pelletCount := GameConfig.ShotgunPellets
 		baseAngle := math.Atan2(dirY, dirX)
+		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponShotgun)
 		for i := 0; i < pelletCount; i++ {
 			spreadAngle := baseAngle + (rand.Float64()-0.5)*2*GameConfig.ShotgunSpread
 			pelletDirX := math.Cos(spreadAngle)
@@ -209,8 +229,8 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			bullet := &Bullet{
 				ID:        nextEntityID(),
 				ShortID:   game.NextShortID,
-				X:         player.X,
-				Y:         player.Y,
+				X:         mzX,
+				Y:         mzY,
 				DX:        pelletDirX * speed,
 				DY:        pelletDirY * speed,
 				Team:      0,
@@ -233,11 +253,12 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	finalDirX := dirX*cos - dirY*sin
 	finalDirY := dirX*sin + dirY*cos
 
+	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
 	bullet := &Bullet{
 		ID:        nextEntityID(),
 		ShortID:   game.NextShortID,
-		X:         player.X,
-		Y:         player.Y,
+		X:         mzX,
+		Y:         mzY,
 		DX:        finalDirX * GameConfig.BulletSpeed,
 		DY:        finalDirY * GameConfig.BulletSpeed,
 		Team:      0,

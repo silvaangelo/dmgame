@@ -173,12 +173,13 @@ func updateGame(game *Game) []playerStateSnapshot {
 
 		// Loot crate collision (spatial grid lookup)
 		crateHalf := GameConfig.LootCrateSize / 2
+		crateHitMargin := 6.0 // extra margin to make crates easier to hit
 		var hitCrate *LootCrate
-		nearbyCrates := crateGrid.QueryRadius(bullet.X, bullet.Y, crateHalf+5)
+		nearbyCrates := crateGrid.QueryRadius(bullet.X, bullet.Y, crateHalf+crateHitMargin+5)
 		for _, e := range nearbyCrates {
 			c := e.Data.(*LootCrate)
-			if bullet.X >= c.X-crateHalf && bullet.X <= c.X+crateHalf &&
-				bullet.Y >= c.Y-crateHalf && bullet.Y <= c.Y+crateHalf {
+			if bullet.X >= c.X-crateHalf-crateHitMargin && bullet.X <= c.X+crateHalf+crateHitMargin &&
+				bullet.Y >= c.Y-crateHalf-crateHitMargin && bullet.Y <= c.Y+crateHalf+crateHitMargin {
 				hitCrate = c
 				break
 			}
@@ -199,8 +200,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 		}
 
 		// Player hit detection
-		hitRadiusSq := math.Pow(GameConfig.PlayerRadius*1.2, 2)
-		nearbyPlayers := playerGrid.QueryRadius(bullet.X, bullet.Y, GameConfig.PlayerRadius*1.5)
+		hitRadiusSq := math.Pow(GameConfig.PlayerRadius*1.05, 2)
+		nearbyPlayers := playerGrid.QueryRadius(bullet.X, bullet.Y, GameConfig.PlayerRadius*1.3)
 		var enemy *Player
 		for _, e := range nearbyPlayers {
 			p := e.Data.(*Player)
