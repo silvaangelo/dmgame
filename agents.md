@@ -33,27 +33,22 @@ The frontend (`frontend/game.js`) is served directly as a static file with no bu
 
 ### 3. Compact Binary State Format
 
-The 35 Hz state broadcast uses a **custom binary protocol** (not MessagePack) for state frames, handled in `backend-go/protocol.go` → `EncodeBinaryState()`.
+The 40 Hz state broadcast uses a **custom binary protocol** (not MessagePack) for state frames, handled in `backend-go/protocol.go` → `EncodeBinaryState()`.
 
 ```
 Marker byte: 0x42
-Header:      [marker u8][flags u8][seq u32LE][playerCount u16LE]
-Per player:  [shortId u16LE][x f32LE][y f32LE][hp u8][shots u8]
-             [reloading u8][lastInput u16LE][aimAngle f32LE]
+Header:      [marker u8][flags u8][seq u32LE][playerCount u16LE]  (8 bytes)
+Per player:  [shortId u16LE][x f32LE][y f32LE][hp i8][shots u8]  (25 bytes each)
+             [reloading u8][lastInput u32LE][aimAngle f32LE]
              [weaponCode u8][kills u16LE][skin u8]
-             [speedBoosted u8][shielded u8][invisible u8][regen u8]
-Per bullet:  [shortId u16LE][x f32LE][y f32LE][weaponCode u8]
-Per pickup:  [shortId u16LE][x f32LE][y f32LE][typeCode u8]
-Per orb:     [shortId u16LE][x f32LE][y f32LE]
-Per crate:   [shortId u16LE][x f32LE][y f32LE]
-Zone:        [x f32LE][y f32LE][w f32LE][h f32LE]  (optional, flags bit 0)
+Per bullet:  [bulletCount u16LE] header, then per bullet:          (11 bytes each)
+             [shortId u16LE][x i16LE][y i16LE][weaponCode u8][angle f32LE]
 ```
 
-Weapon codes: `0=machinegun 1=shotgun 2=knife 3=minigun 4=sniper`
-Pickup type codes: `0=health 1=ammo 2=speed 3=minigun 4=shield 5=invisibility 6=regen`
+Weapon codes: `0=machinegun 1=shotgun 4=sniper`
 
 If you add a field to the player state, you must update:
-- `backend-go/protocol.go` → `EncodeBinaryState()`
+- `backend-go/protocol.go` → `EncodeBinaryState()` (and update `playerBytes` constant)
 - `frontend/game.js` → `parseBinaryState()` (byte offset mapping)
 
 ### 4. Control/Msgpack Messages Use `map[string]interface{}`
@@ -76,18 +71,21 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 
 ### Backend Modules (`backend-go/`)
 
-| File          | Responsibility                                        | Key Exports                                   |
-| ------------- | ----------------------------------------------------- | --------------------------------------------- |
-| `main.go`     | HTTP server, static files, WebSocket upgrade, startup | `main()`                                      |
-| `socket.go`   | WebSocket connection handler, message routing         | `handleWebSocket()`, `startHeartbeat()`       |
-| `game.go`     | Game loop, physics, combat, spawning, round system    | `updateGame()`, `shoot()`, `startGameLoop()`  |
-| `types.go`    | All type definitions                                  | `Player`, `Bullet`, `Game`, `Room`, …         |
-| `config.go`   | All game constants                                    | `GameConfig`, `WeaponCycle`, `ObstacleConfig` |
+| File          | Responsibility                                        | Key Exports                                       |
+| ------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| `main.go`     | HTTP server, static files, WebSocket upgrade, startup | `main()`                                          |
+| `socket.go`   | WebSocket connection handler, message routing         | `handleWebSocket()`, `startHeartbeat()`           |
+| `game.go`     | Game loop, physics, collision resolution, viewport    | `updateGame()`, `resolveCollisions()`, `startGameLoop()` |
+| `combat.go`   | Shooting, reload, muzzle/head position, kill handling | `shoot()`, `reloadWeapon()`, `handleKill()`       |
+| `round.go`    | Round timer, reset, player join/leave, respawn        | `startRoundTimer()`, `endRound()`, `addPlayerToGame()` |
+| `maps.go`     | Hand-designed map definitions, obstacle generation    | `PickRandomMap()`, `GenerateObstaclesFromMap()`   |
+| `types.go`    | All type definitions                                  | `Player`, `Bullet`, `Game`, `Obstacle`, …         |
+| `config.go`   | All game constants                                    | `GameConfig`, `WeaponCycle`                       |
 | `protocol.go` | MessagePack + binary state encoding                   | `Serialize()`, `Deserialize()`, `EncodeBinaryState()` |
-| `state.go`    | Global mutable state                                  | `getPersistentGame()`, `setPersistentGame()`  |
-| `utils.go`    | Broadcast, serialization helpers                      | `broadcast()`, `sendMsg()`, `sendBinary()`    |
-| `database.go` | JSON file persistence for stats & match history       | `initDatabase()`, `updateStats()`             |
-| `spatial.go`  | Spatial hash grid for O(1) collision queries          | `SpatialGrid`, `Insert()`, `QueryRect()`      |
+| `state.go`    | Global mutable state                                  | `getPersistentGame()`, `setPersistentGame()`      |
+| `utils.go`    | Broadcast, serialization helpers                      | `broadcast()`, `sendBinary()`                     |
+| `database.go` | JSON file persistence for stats & match history       | `initDatabase()`, `updateStats()`                 |
+| `spatial.go`  | Spatial hash grid for O(1) collision queries          | `SpatialGrid`, `Insert()`, `QueryRect()`          |
 
 ### Frontend Files (`frontend/`)
 
@@ -104,17 +102,18 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 ### Adding a New Weapon
 
 1. Add weapon constants to `backend-go/config.go` (`GameConfig`)
-2. Add weapon to `WeaponCycle` in `backend-go/config.go` (unless powerup-only)
-3. Add weapon code to `weaponCodes` map in `backend-go/protocol.go` → `EncodeBinaryState()`
-4. Add weapon handling in `backend-go/game.go` → `shoot()` (cooldown, damage, behavior)
-5. Add weapon cycling in `backend-go/socket.go` → `switchWeapon` handler
-6. Add weapon code mapping in `frontend/game.js` → `BINARY_WEAPON_MAP` constant
-7. Add weapon rendering in `frontend/game.js` → player draw section
-8. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
+2. Add weapon type constant to `backend-go/types.go`
+3. Add weapon to `WeaponCycle` in `backend-go/config.go` (unless powerup-only)
+4. Add weapon code to `weaponCodes` map in `backend-go/protocol.go` (and update `playerBytes`/`bulletBytes` if needed)
+5. Add weapon handling in `backend-go/combat.go` → `shoot()` (cooldown, damage, behavior)
+6. Add weapon cycling in `backend-go/socket.go` → `switchWeapon` handler
+7. Add weapon code mapping in `frontend/game.js` → `BINARY_WEAPON_MAP` constant
+8. Add weapon rendering in `frontend/game.js` → player draw section
+9. Add weapon name/icon in `frontend/game.js` → `updateShotUI()` and `addKillFeedEntry()`
 
 ### Adding a New Game Event
 
-1. Define the event in the backend where it occurs (e.g., `game.go`)
+1. Define the event in the backend where it occurs (e.g., `combat.go`, `round.go`)
 2. Call `broadcast(game, map[string]interface{}{"type": "myEvent", ...})` to send it
 3. Handle in `frontend/game.js` → `ws.onmessage` handler with `if (data.type === "myEvent")`
 

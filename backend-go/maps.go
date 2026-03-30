@@ -4,9 +4,7 @@ import "math/rand"
 
 // MapDef defines a hand-designed arena map with fixed obstacle placements.
 type MapDef struct {
-	Name   string
-	Width  float64
-	Height float64
+	Name string
 	// Walls are defined as rectangles: {X, Y, Width, Height}
 	Walls []MapRect
 }
@@ -57,9 +55,7 @@ func mapDustyard() MapDef {
 	b := BlockSize // 40 px per block
 
 	return MapDef{
-		Name:   "Dustyard",
-		Width:  1600,
-		Height: 1600,
+		Name: "Dustyard",
 		Walls: []MapRect{
 			// ══════ CORNER BUNKERS (rotational symmetry) ══════
 			// Top-left L-shaped bunker

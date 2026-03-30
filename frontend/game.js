@@ -12,7 +12,7 @@ var shortIdMap = {};
 var myShortId = 0;
 
 var BINARY_MARKER = 0x42;
-var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 2: "knife", 4: "sniper" };
+var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 4: "sniper" };
 
 function isBinaryState(buf) {
   if (!(buf instanceof ArrayBuffer) || buf.byteLength < 8) return false;
@@ -29,7 +29,7 @@ function parseBinaryState(buf) {
   var seq = dv.getUint32(off, true); off += 4;
   var playerCount = dv.getUint16(off, true); off += 2;
 
-  // Players (26 bytes each)
+  // Players (25 bytes each)
   var parsedPlayers = [];
   for (var i = 0; i < playerCount; i++) {
     var sid = dv.getUint16(off, true); off += 2;
@@ -247,14 +247,10 @@ const GAME_CONFIG = {
   SHOTS_PER_MAGAZINE: 35,
   MAX_BLOOD_STAINS: 80,
   MAX_PARTICLES: 100,
-  MAX_EXPLOSIONS: 8,
   MAX_BLOOD_EFFECTS: 10,
   MAX_IMPACT_SPARKS: 12,
   MUZZLE_FLASH_DURATION: 100,
-  EXPLOSION_PARTICLE_COUNT: 12,
   BLOOD_PARTICLE_COUNT: 8,
-  KILLS_TO_WIN: 999,
-  KNIFE_SPEED_BONUS: 1.6,
   VIEWPORT_WIDTH: window.innerWidth,
   VIEWPORT_HEIGHT: window.innerHeight,
 };
@@ -287,30 +283,6 @@ function capInPlace(arr, max) {
     arr.copyWithin(0, excess);
     arr.length = max;
   }
-}
-
-/** Simple object pool — acquire reuses recycled objects, release returns them. */
-function createPool(factory) {
-  const free = [];
-  return {
-    acquire() { return free.length > 0 ? free.pop() : factory(); },
-    release(obj) { free.push(obj); },
-    releaseAll(arr) { for (let i = 0; i < arr.length; i++) free.push(arr[i]); },
-    size() { return free.length; },
-  };
-}
-
-// Particle pools for the most-allocated types
-const particlePool = createPool(() => ({
-  x: 0, y: 0, vx: 0, vy: 0, life: 0, size: 0, color: "", rotation: 0, rotSpeed: 0, effectType: "", opacity: 0,
-}));
-
-function acquireParticle(x, y, vx, vy, life, size, color) {
-  const p = particlePool.acquire();
-  p.x = x; p.y = y; p.vx = vx; p.vy = vy;
-  p.life = life; p.size = size; p.color = color;
-  p.rotation = 0; p.rotSpeed = 0; p.effectType = ""; p.opacity = 0;
-  return p;
 }
 
 // ===== OFFSCREEN CULLING HELPERS =====
@@ -502,7 +474,6 @@ let reloadDuration = 0;  // ms — set per weapon when reload starts
 let lastEmptyClickTime = 0;
 let lowAmmoWarningShown = false;
 let reloadFlashAlpha = 0;
-let explosions = [];
 let bloodParticles = [];
 let bloodStains = [];
 let muzzleFlashes = [];
@@ -534,12 +505,7 @@ let killEffects = [];
 // Death animation particles (replaces instant despawn)
 let deathAnimations = [];
 // Track death timestamps separately (survives players array replacement)
-const playerDeathTimes = new Map();
-
-// Round timer
-let roundTimeRemaining = 300; // seconds
-
-// Cached DOM elements (avoid getElementById in hot paths)
+const playerDeathTimes = new Map();\n\n// Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
 function getCachedDOM() {
   if (!_cachedDOM) {
@@ -935,24 +901,7 @@ function renderDeathAnimations() {
   ctx.globalAlpha = 1.0;
 }
 
-function updateExplosions() {
-  for (let i = 0; i < explosions.length; i++) {
-    const explosion = explosions[i];
-    explosion.frame++;
-    for (let j = 0; j < explosion.particles.length; j++) {
-      const p = explosion.particles[j];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.15; // Gravity
-      p.vx *= 0.98; // Air resistance
-      p.life -= 0.02;
-    }
-  }
-
-  // Remove dead explosions (in-place)
-  compactInPlace(explosions, (e) => e.particles.some((p) => p.life > 0));
-  capInPlace(explosions, GAME_CONFIG.MAX_EXPLOSIONS);
-
+function updateBloodParticles() {
   // Update blood particles
   for (let i = 0; i < bloodParticles.length; i++) {
     const blood = bloodParticles[i];
@@ -1395,22 +1344,7 @@ function updateScreenShake() {
   }
 }
 
-function renderExplosions() {
-  for (let i = 0; i < explosions.length; i++) {
-    const explosion = explosions[i];
-    for (let j = 0; j < explosion.particles.length; j++) {
-      const p = explosion.particles[j];
-      if (p.life > 0 && isOnScreen(p.x, p.y)) {
-        ctx.globalAlpha = p.life;
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-      }
-    }
-  }
-
+function renderBloodParticles() {
   // Render blood particles
   for (let i = 0; i < bloodParticles.length; i++) {
     const blood = bloodParticles[i];
@@ -1496,7 +1430,6 @@ let audioCtx = null;
 const audioBuffers = {};
 const activeGameSources = [];
 let masterVolume = 0.7; // 0.0 – 1.0, persisted in localStorage
-let gameEnded = false; // prevents new game sounds after match ends
 try { const saved = localStorage.getItem("masterVolume"); if (saved !== null) masterVolume = parseFloat(saved); } catch (_) { /* ignore */ }
 let machinegunSoundIndex = 0;
 
@@ -1621,7 +1554,6 @@ function showStartScreen() {
   gameObstacles = [];
   wallLookup = null;
   mapDecorations = [];
-  explosions = [];
   bloodParticles = [];
   bloodStains = [];
   muzzleFlashes = [];
@@ -1688,7 +1620,6 @@ function enterGame(data) {
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
   if (data.maxHp) maxHp = data.maxHp;
-  if (data.timerRemaining != null) roundTimeRemaining = data.timerRemaining;
 
   _cachedDOM = null;
   gameReady = true;
@@ -1964,13 +1895,6 @@ function connect() {
       return;
     }
 
-    // ===== ZONE WARNING =====
-    if (data.type === "zoneWarning") {
-      zoneWarningShown = true;
-      showToast("⚠️ ZONE SHRINKING!", "#ff4444");
-      return;
-    }
-
     // ===== HEADSHOT EVENT =====
     if (data.type === "headshot") {
       // Track this player as recently headshotted for gold damage number
@@ -2044,7 +1968,7 @@ function connect() {
 
     // ===== STATE UPDATE (35 Hz) =====
     if (data.type === "state") {
-      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 4: "sniper" };
+      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 4: "sniper" };
       const usernameMap = new Map();
       players.forEach(function(pl) { usernameMap.set(pl.id, pl.username); });
 
@@ -2254,7 +2178,6 @@ function connect() {
 
     // ===== GAME TIMER =====
     if (data.type === "gameTimer") {
-      roundTimeRemaining = data.remaining;
       var timerEl = document.getElementById("timerDisplay");
       if (timerEl) {
         var mins = Math.floor(data.remaining / 60);
@@ -2357,7 +2280,6 @@ function connect() {
 
       // Reset game state for new round
       bullets = [];
-      explosions = [];
       bloodParticles = [];
       bloodStains = [];
       muzzleFlashes = [];
@@ -2376,7 +2298,6 @@ function connect() {
       previousPlayerStates.clear();
       floatingNumbers = [];
       lowHPPulseTime = 0;
-      roundTimeRemaining = 300;
 
       gameObstacles = data.obstacles || [];
       wallLookup = null;
@@ -3749,7 +3670,7 @@ function render() {
   updateInterpolation();
 
   // Update UI and effects
-  updateExplosions();
+  updateBloodParticles();
   updateMuzzleFlashes();
   updateShellCasings();
   updateImpactSparks();
@@ -4094,8 +4015,8 @@ function render() {
   // Render shell casings
   renderShellCasings();
 
-  // Render explosions
-  renderExplosions();
+  // Render blood particles
+  renderBloodParticles();
 
   // Render muzzle flashes
   renderMuzzleFlashes();

@@ -1,36 +1,29 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	statsFile      = "data/stats.json"
-	historyFile    = "data/history.json"
-	usersFile      = "data/users.json"
+	statsFile         = "data/stats.json"
+	historyFile       = "data/history.json"
 	maxHistoryEntries = 100
 )
 
 var (
-	dbMu         sync.RWMutex
+	dbMu sync.RWMutex
 	stats        = make(map[string]*PlayerStats)
 	matchHistory []*MatchHistoryEntry
-	users        = make(map[string]*RegisteredUser) // token -> user
 
 	statsSaveTimer   *time.Timer
-	historySaveTimer  *time.Timer
-	usersSaveTimer    *time.Timer
+	historySaveTimer *time.Timer
 )
 
-// initDatabase loads stats, history, and users from disk.
+// initDatabase loads stats and history from disk.
 func initDatabase() {
 	if err := os.MkdirAll("data", 0o755); err != nil {
 		log.Printf("⚠️ Failed to create data directory: %v", err)
@@ -51,15 +44,6 @@ func initDatabase() {
 			matchHistory = nil
 		} else {
 			log.Printf("📜 Loaded %d match history entries", len(matchHistory))
-		}
-	}
-
-	// Load users
-	if data, err := os.ReadFile(usersFile); err == nil {
-		var loaded map[string]*RegisteredUser
-		if err := json.Unmarshal(data, &loaded); err == nil {
-			users = loaded
-			log.Printf("👤 Loaded %d registered users", len(users))
 		}
 	}
 }
@@ -92,7 +76,7 @@ func updateStats(username string, kills, deaths int, won bool) {
 		}
 	}
 
-	// KDE bonus
+	// KD bonus
 	kd := float64(existing.Kills)
 	if existing.Deaths > 0 {
 		kd = float64(existing.Kills) / float64(existing.Deaths)
@@ -118,24 +102,6 @@ func saveStats() {
 			log.Printf("Failed to save stats: %v", err)
 		}
 	})
-}
-
-// getLeaderboard returns the top players by MMR.
-func getLeaderboard(limit int) []*PlayerStats {
-	dbMu.RLock()
-	defer dbMu.RUnlock()
-
-	all := make([]*PlayerStats, 0, len(stats))
-	for _, s := range stats {
-		all = append(all, s)
-	}
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].MMR > all[j].MMR
-	})
-	if len(all) > limit {
-		all = all[:limit]
-	}
-	return all
 }
 
 func saveHistory() {
@@ -166,83 +132,4 @@ func addMatchHistory(entry *MatchHistoryEntry) {
 		matchHistory = matchHistory[:maxHistoryEntries]
 	}
 	saveHistory()
-}
-
-// getMatchHistory returns match history for a specific player.
-func getMatchHistory(username string, limit int) []*MatchHistoryEntry {
-	dbMu.RLock()
-	defer dbMu.RUnlock()
-
-	var result []*MatchHistoryEntry
-	for _, entry := range matchHistory {
-		for _, p := range entry.Players {
-			if p.Username == username {
-				result = append(result, entry)
-				break
-			}
-		}
-		if len(result) >= limit {
-			break
-		}
-	}
-	return result
-}
-
-/* ================= USER REGISTRATION ================= */
-
-func saveUsers() {
-	if usersSaveTimer != nil {
-		usersSaveTimer.Stop()
-	}
-	usersSaveTimer = time.AfterFunc(2*time.Second, func() {
-		dbMu.RLock()
-		data, err := json.Marshal(users)
-		dbMu.RUnlock()
-		if err != nil {
-			log.Printf("Failed to marshal users: %v", err)
-			return
-		}
-		if err := os.WriteFile(usersFile, data, 0o644); err != nil {
-			log.Printf("Failed to save users: %v", err)
-		}
-	})
-}
-
-func generateToken(username string) string {
-	h := sha256.New()
-	h.Write([]byte(username + fmt.Sprintf("%d", time.Now().UnixNano())))
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-// registerUser creates a new user account if the username isn't taken.
-func registerUser(username string) *RegisteredUser {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-
-	// Check if username already exists
-	lowerUsername := strings.ToLower(username)
-	for _, user := range users {
-		if strings.ToLower(user.Username) == lowerUsername {
-			return nil // Username taken
-		}
-	}
-
-	token := generateToken(username)
-	user := &RegisteredUser{
-		Username:  username,
-		Token:     token,
-		CreatedAt: time.Now().UnixMilli(),
-		LastSeen:  time.Now().UnixMilli(),
-	}
-	users[token] = user
-	saveUsers()
-	log.Printf("👤 Registered new user: %s", username)
-	return user
-}
-
-// getUserByToken retrieves a user by their token.
-func getUserByToken(token string) *RegisteredUser {
-	dbMu.RLock()
-	defer dbMu.RUnlock()
-	return users[token]
 }

@@ -18,12 +18,6 @@ var (
 	globalPlayerGrid   = NewSpatialGrid(cellSize)
 )
 
-/* ================= HELPERS ================= */
-
-func getPlayerSpeed(player *Player) float64 {
-	return GameConfig.PlayerSpeed
-}
-
 /* ================= GAME LOOP ================= */
 
 // playerStateSnapshot holds a pre-encoded binary state frame for one player.
@@ -62,15 +56,9 @@ func updateGame(game *Game) []playerStateSnapshot {
 		}
 	}
 
-	// ── Check spawn timers ──
-	checkSpawnTimers(game, now)
-
 	// ── Build spatial grid for obstacles ──
 	globalObstacleGrid.Clear()
 	for _, o := range game.Obstacles {
-		if o.Destroyed {
-			continue
-		}
 		globalObstacleGrid.Insert(&SpatialEntry{
 			ID:   o.ID,
 			X:    o.X,
@@ -89,7 +77,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 		playerRadius := GameConfig.PlayerRadius
 		margin := playerRadius
 
-		speed := getPlayerSpeed(player)
+		speed := GameConfig.PlayerSpeed
 
 		// Move X axis first
 		if player.Keys.A {
@@ -156,9 +144,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 		hitObstacle := false
 		for _, e := range nearbyObs {
 			o := e.Data.(*Obstacle)
-			if o.Destroyed {
-				continue
-			}
 			if bullet.X >= o.X && bullet.X <= o.X+o.Size &&
 				bullet.Y >= o.Y && bullet.Y <= o.Y+o.Size {
 				hitObstacle = true
@@ -322,7 +307,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 
 		buf := EncodeBinaryState(&BinaryStateInput{
 			Seq:     seq,
-			IsDelta: false,
 			Players: visPlayers,
 			Bullets: visBullets,
 		})
@@ -420,13 +404,10 @@ func initPersistentGame() *Game {
 		Obstacles:   obstacles,
 		Started:     true,
 		RoundEnded:  false,
-		GameMode:    GameModeDeathmatch,
-		MatchStartTime:     now,
-		LastObstacleSpawn:  now,
-		RoundStartTime:     now,
+		MatchStartTime: now,
+		RoundStartTime: now,
 	}
 
-	games.Store(game.ID, game)
 	setPersistentGame(game)
 
 	fmt.Printf("🌍 Persistent game world initialized — map %q (%d obstacles, arena %.0fx%.0f)\n",

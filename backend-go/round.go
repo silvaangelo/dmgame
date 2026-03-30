@@ -177,9 +177,6 @@ func resetPersistentRound(game *Game) {
 	game.Bullets = make([]*Bullet, 0)
 	game.StateSequence = 0
 
-	now := unixMs()
-	game.LastObstacleSpawn = now
-
 	// Reset all player stats
 	for _, p := range game.Players {
 		p.Kills = 0
@@ -191,7 +188,6 @@ func resetPersistentRound(game *Game) {
 		p.Shots = GameConfig.ShotsPerMag
 		p.Reloading = false
 		p.Weapon = WeaponMachinegun
-		p.SpeedBoostUntil = 0
 		p.Keys = Keys{}
 
 		// Reset MVP tracking
@@ -281,12 +277,11 @@ func serializeObstacles(obstacles []*Obstacle) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(obstacles))
 	for _, o := range obstacles {
 		entry := map[string]interface{}{
-			"id":        o.ID,
-			"x":         o.X,
-			"y":         o.Y,
-			"size":      o.Size,
-			"destroyed": o.Destroyed,
-			"type":      o.Type,
+			"id":   o.ID,
+			"x":    o.X,
+			"y":    o.Y,
+			"size": o.Size,
+			"type": o.Type,
 		}
 		if o.GroupID != "" {
 			entry["groupId"] = o.GroupID
@@ -351,7 +346,6 @@ func addPlayerToGame(player *Player, game *Game) {
 	player.Weapon = WeaponMachinegun
 	player.Keys = Keys{}
 	player.WaitingForRespawn = false
-	player.Ready = true
 
 	game.Players = append(game.Players, player)
 
@@ -445,14 +439,10 @@ func respawnPlayer(player *Player, game *Game) {
 	player.Reloading = false
 	player.Keys = Keys{}
 	player.Weapon = WeaponMachinegun
-	player.SpeedBoostUntil = 0
 
 	// Push out of obstacles
 	pr := GameConfig.PlayerRadius
 	for _, obs := range game.Obstacles {
-		if obs.Destroyed {
-			continue
-		}
 		closestX := clamp(player.X, obs.X, obs.X+obs.Size)
 		closestY := clamp(player.Y, obs.Y, obs.Y+obs.Size)
 		dx := player.X - closestX
@@ -495,19 +485,4 @@ func requestRespawn(player *Player, game *Game) {
 		return
 	}
 	respawnPlayer(player, game)
-}
-
-// min/max helpers for int
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

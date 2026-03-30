@@ -69,9 +69,6 @@ func muzzleBlockedByWall(px, py, mx, my float64) bool {
 		nearby := globalObstacleGrid.QueryRadius(sx, sy, 60)
 		for _, e := range nearby {
 			o := e.Data.(*Obstacle)
-			if o.Destroyed {
-				continue
-			}
 			if sx >= o.X && sx <= o.X+o.Size && sy >= o.Y && sy <= o.Y+o.Size {
 				return true
 			}
@@ -228,18 +225,16 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			return
 		}
 		bullet := &Bullet{
-			ID:            nextEntityID(),
-			ShortID:       game.NextShortID,
-			X:             mzX,
-			Y:             mzY,
-			DX:            finalDirX * GameConfig.SniperBulletSpeed,
-			DY:            finalDirY * GameConfig.SniperBulletSpeed,
-			Team:          0,
-			PlayerID:      player.ID,
-			Damage:        GameConfig.SniperDamage,
-			Weapon:        WeaponSniper,
-			CreatedAt:     now,
-			ShooterMoving: moving,
+			ID:        nextEntityID(),
+			ShortID:   game.NextShortID,
+			X:         mzX,
+			Y:         mzY,
+			DX:        finalDirX * GameConfig.SniperBulletSpeed,
+			DY:        finalDirY * GameConfig.SniperBulletSpeed,
+			PlayerID:  player.ID,
+			Damage:    GameConfig.SniperDamage,
+			Weapon:    WeaponSniper,
+			CreatedAt: now,
 		}
 		game.NextShortID++
 		game.Bullets = append(game.Bullets, bullet)
@@ -303,18 +298,16 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			speed := GameConfig.BulletSpeed * GameConfig.ShotgunBulletSpeed
 
 			bullet := &Bullet{
-				ID:            nextEntityID(),
-				ShortID:       game.NextShortID,
-				X:             mzX,
-				Y:             mzY,
-				DX:            pelletDirX * speed,
-				DY:            pelletDirY * speed,
-				Team:          0,
-				PlayerID:      player.ID,
-				Damage:        GameConfig.ShotgunDamage,
-				Weapon:        WeaponShotgun,
-				CreatedAt:     now,
-				ShooterMoving: moving,
+					ID:        nextEntityID(),
+					ShortID:   game.NextShortID,
+					X:         mzX,
+					Y:         mzY,
+					DX:        pelletDirX * speed,
+					DY:        pelletDirY * speed,
+					PlayerID:  player.ID,
+					Damage:    GameConfig.ShotgunDamage,
+					Weapon:    WeaponShotgun,
+					CreatedAt: now,
 			}
 			game.NextShortID++
 			game.Bullets = append(game.Bullets, bullet)
@@ -352,18 +345,16 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		return
 	}
 	bullet := &Bullet{
-		ID:            nextEntityID(),
-		ShortID:       game.NextShortID,
-		X:             mzX,
-		Y:             mzY,
-		DX:            finalDirX * GameConfig.BulletSpeed,
-		DY:            finalDirY * GameConfig.BulletSpeed,
-		Team:          0,
-		PlayerID:      player.ID,
-		Damage:        damage,
-		Weapon:        WeaponMachinegun,
-		CreatedAt:     now,
-		ShooterMoving: moving,
+		ID:        nextEntityID(),
+		ShortID:   game.NextShortID,
+		X:         mzX,
+		Y:         mzY,
+		DX:        finalDirX * GameConfig.BulletSpeed,
+		DY:        finalDirY * GameConfig.BulletSpeed,
+		PlayerID:  player.ID,
+		Damage:    damage,
+		Weapon:    WeaponMachinegun,
+		CreatedAt: now,
 	}
 	game.NextShortID++
 	game.Bullets = append(game.Bullets, bullet)
@@ -396,9 +387,6 @@ func startReload(player *Player, reloadTimeMs int64, refillAmount int) {
 
 func reloadWeapon(player *Player) {
 	if player.Reloading || player.HP <= 0 {
-		return
-	}
-	if player.Weapon == WeaponKnife {
 		return
 	}
 

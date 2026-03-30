@@ -22,24 +22,22 @@ func Deserialize(raw []byte) (map[string]interface{}, error) {
 /* ================= BINARY STATE PROTOCOL ================= */
 
 const (
-	binaryMarker  = 0x42
-	headerBytes   = 8
-	playerBytes   = 25
-	bulletBytes   = 11
+	binaryMarker = 0x42
+	headerBytes  = 8
+	playerBytes  = 25
+	bulletBytes  = 11
 )
 
 // Weapon code mapping
 var weaponCodes = map[WeaponType]uint8{
 	WeaponMachinegun: 0,
 	WeaponShotgun:    1,
-	WeaponKnife:      2,
 	WeaponSniper:     4,
 }
 
 // BinaryStateInput holds the data needed to encode a binary state message.
 type BinaryStateInput struct {
 	Seq     uint32
-	IsDelta bool
 	Players []*Player
 	Bullets []*Bullet
 }
@@ -56,11 +54,7 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 	// Header
 	buf[off] = binaryMarker
 	off++
-	flags := uint8(0)
-	if input.IsDelta {
-		flags |= 1
-	}
-	buf[off] = flags
+	buf[off] = 0 // flags (reserved)
 	off++
 	binary.LittleEndian.PutUint32(buf[off:], input.Seq)
 	off += 4
@@ -99,8 +93,6 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		off += 2
 		buf[off] = byte(p.Skin)
 		off++
-
-
 	}
 
 	// Bullets
@@ -130,9 +122,4 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 // putFloat32LE writes a float32 in little-endian format.
 func putFloat32LE(buf []byte, v float32) {
 	binary.LittleEndian.PutUint32(buf, math.Float32bits(v))
-}
-
-// nowMs returns current time in milliseconds.
-func nowMs() int64 {
-	return unixMs()
 }

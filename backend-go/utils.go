@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"strconv"
@@ -36,16 +35,6 @@ func broadcast(game *Game, msg interface{}) {
 	for _, p := range game.Players {
 		sendRaw(p, data)
 	}
-}
-
-// sendMsg sends a msgpack-encoded message to a single player.
-func sendMsg(p *Player, msg interface{}) {
-	data, err := Serialize(msg)
-	if err != nil {
-		log.Printf("sendMsg serialize error: %v", err)
-		return
-	}
-	sendRaw(p, data)
 }
 
 // sendRaw sends pre-encoded bytes to a player's WebSocket.
@@ -96,36 +85,12 @@ func serializePlayers(game *Game) []map[string]interface{} {
 // isPositionClear checks if a circular area is free of obstacles.
 func isPositionClear(x, y float64, obstacles []*Obstacle, radius float64) bool {
 	for _, o := range obstacles {
-		if o.Destroyed {
-			continue
-		}
 		// AABB vs circle check
 		closestX := math.Max(o.X, math.Min(x, o.X+o.Size))
 		closestY := math.Max(o.Y, math.Min(y, o.Y+o.Size))
 		dx := x - closestX
 		dy := y - closestY
 		if dx*dx+dy*dy < radius*radius {
-			return false
-		}
-	}
-	return true
-}
-
-// isPositionClearGrid is the spatial-grid-accelerated version of isPositionClear.
-// Uses O(1) grid lookups instead of iterating all obstacles.
-func isPositionClearGrid(x, y float64, grid *SpatialGrid, radius float64) bool {
-	nearby := grid.QueryRadius(x, y, radius+60) // 60 = max obstacle size margin
-	rSq := radius * radius
-	for _, e := range nearby {
-		o := e.Data.(*Obstacle)
-		if o.Destroyed {
-			continue
-		}
-		closestX := math.Max(o.X, math.Min(x, o.X+o.Size))
-		closestY := math.Max(o.Y, math.Min(y, o.Y+o.Size))
-		dx := x - closestX
-		dy := y - closestY
-		if dx*dx+dy*dy < rSq {
 			return false
 		}
 	}
@@ -175,16 +140,6 @@ func broadcastOnlineList() {
 	}
 }
 
-// findPlayerInGame finds a player in the game by ID.
-func findPlayerInGame(game *Game, playerID string) *Player {
-	for _, p := range game.Players {
-		if p.ID == playerID {
-			return p
-		}
-	}
-	return nil
-}
-
 // removePlayerFromSlice removes a player from a slice by ID.
 func removePlayerFromSlice(players []*Player, playerID string) []*Player {
 	result := make([]*Player, 0, len(players))
@@ -194,11 +149,6 @@ func removePlayerFromSlice(players []*Player, playerID string) []*Player {
 		}
 	}
 	return result
-}
-
-// logf is a formatted logger.
-func logf(format string, args ...interface{}) {
-	log.Printf(format, args...)
 }
 
 // clamp restricts a value to a range.
@@ -217,19 +167,6 @@ func distance(x1, y1, x2, y2 float64) float64 {
 	dx := x1 - x2
 	dy := y1 - y2
 	return math.Sqrt(dx*dx + dy*dy)
-}
-
-// formatMsg creates a message map with the given type.
-func formatMsg(msgType string, fields ...interface{}) map[string]interface{} {
-	msg := map[string]interface{}{
-		"type": msgType,
-	}
-	for i := 0; i+1 < len(fields); i += 2 {
-		if key, ok := fields[i].(string); ok {
-			msg[key] = fields[i+1]
-		}
-	}
-	return msg
 }
 
 // safeString returns a value from the map as string, or default.
@@ -276,35 +213,4 @@ func safeFloat(m map[string]interface{}, key string, def float64) float64 {
 // safeInt returns a value from the map as int, or default.
 func safeInt(m map[string]interface{}, key string, def int) int {
 	return int(safeFloat(m, key, float64(def)))
-}
-
-// safeBool returns a value from the map as bool, or default.
-func safeBool(m map[string]interface{}, key string, def bool) bool {
-	if v, ok := m[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return def
-}
-
-// killStreakMessages - Portuguese kill streak messages
-var killStreakMessages = []struct {
-	Kills   int
-	Message string
-}{
-	{3, "🔥 %s — Triplica! Tá pegando fogo!"},
-	{5, "⚡ %s — Penta Kill! Imparável!"},
-	{7, "💀 %s — Lendário! Ninguém segura!"},
-	{10, "👑 %s — GODLIKE! %s é um DEUS!"},
-}
-
-func getKillStreakMessage(kills int, username string) string {
-	var msg string
-	for _, ks := range killStreakMessages {
-		if kills >= ks.Kills {
-			msg = fmt.Sprintf(ks.Message, username, username)
-		}
-	}
-	return msg
 }

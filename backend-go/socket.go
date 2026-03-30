@@ -231,7 +231,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				ShortID:  game.NextShortID,
 				Username: username,
 				Conn:     conn,
-				Team:     0,
 				X:        0,
 				Y:        0,
 				HP:       GameConfig.PlayerHP,
@@ -242,14 +241,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				LastProcessedInput: 0,
 				Kills:  0,
 				Deaths: 0,
-				Ready:  true,
 				AimAngle: 0,
 				Weapon:   WeaponMachinegun,
 				Skin:     skinVal,
 
-				SpeedBoostUntil: 0,
-				KillStreak:      0,
-				LastKilledBy:    "",
+				KillStreak:   0,
+				LastKilledBy: "",
 
 				WaitingForRespawn: false,
 				MsgCount:          0,
@@ -264,7 +261,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			allPlayers[newPlayer.ID] = &TrackedPlayer{
 				ID:       newPlayer.ID,
 				Username: newPlayer.Username,
-				Status:   "in-game",
 				Conn:     conn,
 				ConnMu:   &newPlayer.ConnMu,
 			}
@@ -505,5 +501,4 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
 

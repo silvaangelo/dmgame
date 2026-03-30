@@ -6,8 +6,6 @@ import (
 
 // Global mutable state
 var (
-	rooms   sync.Map // map[string]*Room
-	games   sync.Map // map[string]*Game
 	allPlayersMu sync.RWMutex
 	allPlayers   = make(map[string]*TrackedPlayer)
 
