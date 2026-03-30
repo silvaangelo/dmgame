@@ -479,6 +479,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Cancel any active reload when switching weapons
+			if p.Reloading {
+				p.Reloading = false
+				if p.ReloadTimer != nil {
+					p.ReloadTimer.Stop()
+					p.ReloadTimer = nil
+				}
+			}
+
 			// Clamp ammo to new weapon's max
 			var maxAmmo int
 			switch p.Weapon {

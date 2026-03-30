@@ -29,29 +29,29 @@ func PickRandomMap() MapDef {
 	return AllMaps[rand.Intn(len(AllMaps))]
 }
 
-// mapDustyard — compact 1600×1600 arena with tactical cover.
+// mapDustyard — competitive 1600×1600 arena with 3-lane layout.
 //
-// Layout guide (each unit = 40 px block):
+// Design: Mirror-symmetric about both axes for competitive fairness.
+// Features: 3 distinct lanes (left, mid, right), chokepoints, peek pillars,
+// a central contested zone, and rotational cover in corners.
 //
-//	 ┌──────────────────────────────────────────┐
-//	 │           T        T                      │
-//	 │     ████           ██████                 │
-//	 │     ████                                  │
-//	 │              ██                           │
-//	 │        ████  ██         ████              │
-//	 │                                           │
-//	 │  ██              ████████                 │
-//	 │  ██              ██    ██                 │
-//	 │  ██                                       │
-//	 │                                           │
-//	 │        ████████                ██         │
-//	 │                                ██         │
-//	 │               ██████                      │
-//	 │                                           │
-//	 │     ██████              ████              │
-//	 │                         ████              │
-//	 │           T         T                     │
-//	 └──────────────────────────────────────────┘
+//  ┌────────────────────────────────────────────┐
+//  │  ┌──┐              ████              ┌──┐  │
+//  │  └──┘   ▓▓                     ▓▓   └──┘  │
+//  │         ▓▓    ██         ██    ▓▓         │
+//  │                                            │
+//  │    ██                             ██       │
+//  │    ██   ████                ████   ██      │
+//  │              ██  ┌────┐  ██                │
+//  │              ██  │ MID│  ██                │
+//  │              ██  └────┘  ██                │
+//  │    ██   ████                ████   ██      │
+//  │    ██                             ██       │
+//  │                                            │
+//  │         ▓▓    ██         ██    ▓▓         │
+//  │  ┌──┐   ▓▓                     ▓▓   ┌──┐  │
+//  │  └──┘              ████              └──┘  │
+//  └────────────────────────────────────────────┘
 //
 func mapDustyard() MapDef {
 	b := BlockSize // 40 px per block
@@ -61,67 +61,90 @@ func mapDustyard() MapDef {
 		Width:  1600,
 		Height: 1600,
 		Walls: []MapRect{
-			// ── Arena border walls (thin decorative inner border — optional) ──
+			// ══════ CORNER BUNKERS (rotational symmetry) ══════
+			// Top-left L-shaped bunker
+			{X: 80, Y: 80, W: 3 * b, H: b},
+			{X: 80, Y: 80, W: b, H: 3 * b},
 
-			// ── TOP-LEFT CLUSTER: L-shaped cover ──
-			{X: 120, Y: 120, W: 2 * b, H: 3 * b},   // vertical bar
-			{X: 120, Y: 120, W: 4 * b, H: b},         // horizontal cap
+			// Top-right L-shaped bunker (mirrored)
+			{X: 1280, Y: 80, W: 3 * b, H: b},
+			{X: 1440, Y: 80, W: b, H: 3 * b},
 
-			// ── TOP-CENTER: horizontal wall ──
-			{X: 500, Y: 180, W: 5 * b, H: b},
+			// Bottom-left L-shaped bunker (mirrored)
+			{X: 80, Y: 1400, W: b, H: 3 * b},
+			{X: 80, Y: 1480, W: 3 * b, H: b},
 
-			// ── TOP-RIGHT: corner box ──
-			{X: 1200, Y: 100, W: 3 * b, H: 2 * b},
+			// Bottom-right L-shaped bunker (mirrored)
+			{X: 1280, Y: 1480, W: 3 * b, H: b},
+			{X: 1440, Y: 1400, W: b, H: 3 * b},
 
-			// ── LEFT MID: tall vertical wall ──
-			{X: 80, Y: 500, W: b, H: 4 * b},
+			// ══════ TOP & BOTTOM LANE WALLS (horizontal control) ══════
+			// Top center wall (creates chokepoint)
+			{X: 640, Y: 160, W: 4 * b, H: b},
+			// Bottom center wall (mirror)
+			{X: 640, Y: 1400, W: 4 * b, H: b},
 
-			// ── CENTER-LEFT: cross-shaped cover ──
-			{X: 380, Y: 480, W: 4 * b, H: b},         // horizontal
-			{X: 460, Y: 400, W: b, H: 3 * b},          // vertical
+			// ══════ LEFT & RIGHT LANE WALLS (vertical control) ══════
+			// Left lane tall wall (north)
+			{X: 280, Y: 400, W: b, H: 3 * b},
+			// Left lane tall wall (south)
+			{X: 280, Y: 1080, W: b, H: 3 * b},
+			// Right lane tall wall (north)
+			{X: 1280, Y: 400, W: b, H: 3 * b},
+			// Right lane tall wall (south)
+			{X: 1280, Y: 1080, W: b, H: 3 * b},
 
-			// ── CENTER: the "mid" crate cluster ──
-			{X: 700, Y: 700, W: 2 * b, H: 2 * b},     // center box
-			{X: 640, Y: 780, W: b, H: 2 * b},          // left pillar
-			{X: 840, Y: 680, W: b, H: 2 * b},          // right pillar
+			// ══════ MID LANE INFRASTRUCTURE ══════
+			// Left of mid — approach cover (north)
+			{X: 480, Y: 520, W: 3 * b, H: b},
+			// Left of mid — approach cover (south)
+			{X: 480, Y: 1040, W: 3 * b, H: b},
+			// Right of mid — approach cover (north)
+			{X: 920, Y: 520, W: 3 * b, H: b},
+			// Right of mid — approach cover (south)
+			{X: 920, Y: 1040, W: 3 * b, H: b},
 
-			// ── CENTER-RIGHT: horizontal wall ──
-			{X: 1000, Y: 600, W: 5 * b, H: b},
+			// ══════ CENTER BOX (contested mid zone) ══════
+			// Center box — left wall
+			{X: 680, Y: 720, W: b, H: 2 * b},
+			// Center box — right wall
+			{X: 880, Y: 720, W: b, H: 2 * b},
+			// Center box — top
+			{X: 720, Y: 700, W: 2 * b, H: b},
+			// Center box — bottom
+			{X: 720, Y: 860, W: 2 * b, H: b},
 
-			// ── RIGHT MID: T-shaped cover ──
-			{X: 1350, Y: 500, W: b, H: 3 * b},         // vertical
-			{X: 1270, Y: 580, W: 3 * b, H: b},         // horizontal
+			// ══════ INNER LANE CONNECTORS ══════
+			// NW connector (between left & mid lane)
+			{X: 400, Y: 320, W: 2 * b, H: b},
+			// NE connector
+			{X: 1080, Y: 320, W: 2 * b, H: b},
+			// SW connector
+			{X: 400, Y: 1240, W: 2 * b, H: b},
+			// SE connector
+			{X: 1080, Y: 1240, W: 2 * b, H: b},
 
-			// ── BOTTOM-LEFT: box + wing ──
-			{X: 160, Y: 1100, W: 3 * b, H: 2 * b},    // box
-			{X: 280, Y: 1020, W: b, H: 2 * b},         // wing
+			// ══════ PEEK PILLARS (quick peek / jiggle peek spots) ══════
+			// NW pillar
+			{X: 560, Y: 360, W: b, H: b},
+			// NE pillar
+			{X: 1000, Y: 360, W: b, H: b},
+			// SW pillar
+			{X: 560, Y: 1200, W: b, H: b},
+			// SE pillar
+			{X: 1000, Y: 1200, W: b, H: b},
+			// Mid-left pillar
+			{X: 600, Y: 780, W: b, H: b},
+			// Mid-right pillar
+			{X: 960, Y: 780, W: b, H: b},
 
-			// ── BOTTOM-CENTER: long wall with gap ──
-			{X: 500, Y: 1150, W: 4 * b, H: b},
-			{X: 720, Y: 1150, W: 3 * b, H: b},
-
-			// ── BOTTOM-RIGHT: L-shaped cover (mirror of top-left) ──
-			{X: 1240, Y: 1280, W: 4 * b, H: b},        // horizontal
-			{X: 1240, Y: 1280, W: b, H: 3 * b},         // vertical drop
-
-			// ── LOWER-RIGHT: box ──
-			{X: 1380, Y: 1050, W: 2 * b, H: 2 * b},
-
-			// ── MID-LEFT: angled cover near spawn area ──
-			{X: 260, Y: 740, W: 3 * b, H: b},
-			{X: 260, Y: 780, W: b, H: 2 * b},
-
-			// ── UPPER-RIGHT passage wall ──
-			{X: 1050, Y: 280, W: b, H: 3 * b},
-
-			// ── LOWER-LEFT passage wall ──
-			{X: 480, Y: 1350, W: b, H: 3 * b},
-
-			// ── Scattered pillars for quick peeks ──
-			{X: 750, Y: 350, W: b, H: b},    // pillar NE of center
-			{X: 350, Y: 1000, W: b, H: b},   // pillar SW
-			{X: 1100, Y: 950, W: b, H: b},   // pillar SE
-			{X: 900, Y: 1350, W: b, H: b},   // pillar S
+			// ══════ SIDE COVER (prevents boring straight-line sightlines) ══════
+			// Left side cover (mid height)
+			{X: 120, Y: 700, W: 2 * b, H: b},
+			{X: 120, Y: 860, W: 2 * b, H: b},
+			// Right side cover (mid height)
+			{X: 1360, Y: 700, W: 2 * b, H: b},
+			{X: 1360, Y: 860, W: 2 * b, H: b},
 		},
 	}
 }

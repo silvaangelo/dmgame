@@ -78,7 +78,7 @@ var GameConfig = struct {
 	ReadyCountdown:  3,
 	PlayerHP:        100,
 	LMSPlayerHP:     150,
-	PlayerSpeed:     9,
+	PlayerSpeed:     10.5,
 	PlayerRadius:    20,
 	ShotsPerMag:     35,
 	ShotCooldown:    90,

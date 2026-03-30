@@ -243,8 +243,8 @@ const GAME_CONFIG = {
   ARENA_HEIGHT: 4000,
   ARENA_PADDING: 200,
   PLAYER_RADIUS: 20,
-  PLAYER_SPEED: 9,
-  SHOTS_PER_MAGAZINE: 45,
+  PLAYER_SPEED: 10.5,
+  SHOTS_PER_MAGAZINE: 35,
   MAX_BLOOD_STAINS: 80,
   MAX_PARTICLES: 100,
   MAX_EXPLOSIONS: 8,
@@ -371,13 +371,12 @@ var spritesLoaded = false;
 var txGrass = new Image();
 var txWall = new Image();
 var txStoneGround = new Image();
-var txStruct = new Image();
 var txProps = new Image();
 var txPlant = new Image();
 var texturesLoaded = false;
 (function preloadTextures() {
   var loaded = 0;
-  var total = 6;
+  var total = 5;
   function onTexLoad() {
     loaded++;
     if (loaded >= total) {
@@ -394,8 +393,6 @@ var texturesLoaded = false;
   txWall.src = "assets/pixel-art-textures/TX%20Tileset%20Wall.png";
   txStoneGround.onload = onTexLoad; txStoneGround.onerror = onTexLoad;
   txStoneGround.src = "assets/pixel-art-textures/TX%20Tileset%20Stone%20Ground.png";
-  txStruct.onload = onTexLoad; txStruct.onerror = onTexLoad;
-  txStruct.src = "assets/pixel-art-textures/TX%20Struct.png";
   txProps.onload = onTexLoad; txProps.onerror = onTexLoad;
   txProps.src = "assets/pixel-art-textures/TX%20Props.png";
   txPlant.onload = onTexLoad; txPlant.onerror = onTexLoad;
@@ -431,6 +428,32 @@ function getMuzzlePosition(px, py, angle, weapon) {
     x: px + MUZZLE_OFFSET.x * cos - MUZZLE_OFFSET.y * sin,
     y: py + MUZZLE_OFFSET.x * sin + MUZZLE_OFFSET.y * cos
   };
+}
+
+// Client-side muzzle-wall check — mirrors server's muzzleBlockedByWall().
+// Steps along the line from player center to muzzle tip and checks if any
+// point intersects an obstacle. Prevents "ghost shots" where the client
+// fires effects but the server refunds the bullet.
+function isMuzzleBlockedByWall(px, py, mx, my) {
+  var dx = mx - px;
+  var dy = my - py;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1) return false;
+  var stepSize = 10;
+  var steps = Math.ceil(dist / stepSize);
+  for (var si = 1; si <= steps; si++) {
+    var t = si / steps;
+    var sx = px + dx * t;
+    var sy = py + dy * t;
+    for (var oi = 0; oi < gameObstacles.length; oi++) {
+      var o = gameObstacles[oi];
+      if (o.destroyed) continue;
+      if (sx >= o.x && sx <= o.x + o.size && sy >= o.y && sy <= o.y + o.size) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // Get head world position given player center, aim angle, and weapon
@@ -474,6 +497,11 @@ let screenMouseX = window.innerWidth / 2;
 let screenMouseY = window.innerHeight / 2;
 let previousBulletCount = 0;
 let wasReloading = false;
+let reloadStartTime = 0;
+let reloadDuration = 0;  // ms — set per weapon when reload starts
+let lastEmptyClickTime = 0;
+let lowAmmoWarningShown = false;
+let reloadFlashAlpha = 0;
 let explosions = [];
 let bloodParticles = [];
 let bloodStains = [];
@@ -1480,7 +1508,7 @@ function initAudio() {
   loadAudioBuffer("machinegun-5", `${assetBase}/assets/shot/machinegun-5.wav`);
   loadAudioBuffer("shotgun-shot", `${assetBase}/assets/shot/shotgun.mp3`);
   loadAudioBuffer("sniper-shot", `${assetBase}/assets/shot/sniper.mp3`);
-  loadAudioBuffer("reload", `${assetBase}/assets/reload.ogg`);
+  loadAudioBuffer("reload", `${assetBase}/assets/reload.mp3`);
   loadAudioBuffer("scream", `${assetBase}/assets/scream.wav`);
   loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
   loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
@@ -1620,6 +1648,12 @@ function showStartScreen() {
   pendingDeathWeapon.clear();
   pendingHeadshot.clear();
   recentHeadshots.clear();
+  wasReloading = false;
+  reloadStartTime = 0;
+  reloadDuration = 0;
+  lastEmptyClickTime = 0;
+  lowAmmoWarningShown = false;
+  reloadFlashAlpha = 0;
 }
 
 function enterGame(data) {
@@ -1749,6 +1783,19 @@ function tryShoot() {
   if (!isMouseDown || !gameReady || roundEnded) return;
   const localPlayer = players.find(function(p) { return p.id === playerId; });
   if (!localPlayer || localPlayer.hp <= 0) return;
+
+  // Empty magazine feedback: dry-fire click when trying to shoot with 0 ammo
+  if (localPlayer.shots <= 0 && !localPlayer.reloading) {
+    const now = Date.now();
+    if (now - lastEmptyClickTime > 400) {
+      lastEmptyClickTime = now;
+      // Auto-trigger reload on empty mag
+      ws.send(serialize({ type: "reload" }));
+      reloadFlashAlpha = 1.0;
+    }
+    return;
+  }
+
   if (localPlayer.reloading) return;
 
   const weapon = localPlayer.weapon || "machinegun";
@@ -1770,11 +1817,17 @@ function tryShoot() {
   dirX = Math.cos(assistedAngle);
   dirY = Math.sin(assistedAngle);
 
-  ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
-
   // Compute muzzle position from sprite data
   const aimAngle = Math.atan2(dirY, dirX);
   const muzzle = getMuzzlePosition(predictedX, predictedY, aimAngle, weapon);
+
+  // Client-side muzzle-wall check: don't shoot if muzzle is inside a wall
+  // (matches server-side muzzleBlockedByWall — prevents ghost shots)
+  if (isMuzzleBlockedByWall(predictedX, predictedY, muzzle.x, muzzle.y)) {
+    return;
+  }
+
+  ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
 
   // Client-side muzzle flash and effects
   createMuzzleFlash(muzzle.x, muzzle.y, dirX, dirY);
@@ -2138,6 +2191,32 @@ function connect() {
           playPositionalSound("scream", predictedX, predictedY, 0.25);
         }
         previousHP = currentPlayer.hp;
+
+        // ── Reload sound & feedback ──
+        if (currentPlayer.reloading && !wasReloading) {
+          // Just started reloading — play reload sound
+          playSound("reload", 0.6);
+          reloadStartTime = Date.now();
+          // Set reload duration per weapon (approx match server values)
+          if (currentPlayer.weapon === "shotgun") reloadDuration = 2200;
+          else if (currentPlayer.weapon === "sniper") reloadDuration = 2800;
+          else reloadDuration = 1800;
+          reloadFlashAlpha = 1.0;
+        }
+        if (!currentPlayer.reloading && wasReloading) {
+          // Reload just completed — brief flash
+          reloadFlashAlpha = 0.8;
+        }
+        wasReloading = currentPlayer.reloading;
+
+        // ── Low ammo warning tracking ──
+        const wpnMaxAmmo = currentPlayer.weapon === "shotgun" ? 8 : currentPlayer.weapon === "sniper" ? 5 : 35;
+        const lowAmmoThreshold = Math.max(1, Math.ceil(wpnMaxAmmo * 0.2));
+        if (currentPlayer.shots <= lowAmmoThreshold && currentPlayer.shots > 0 && !currentPlayer.reloading) {
+          lowAmmoWarningShown = true;
+        } else {
+          lowAmmoWarningShown = false;
+        }
 
         const lastProcessed = currentPlayer.lastProcessedInput || 0;
         pendingInputs = pendingInputs.filter(function(i) { return i.sequence > lastProcessed; });
@@ -3209,7 +3288,7 @@ function ensureGridCanvas() {
   }
 }
 
-// Generate scattered visual decorations (plants, grass tufts) across the arena
+// Generate scattered visual decorations (plants, grass tufts, props) across the arena
 function generateMapDecorations() {
   mapDecorations = [];
   var aw = GAME_CONFIG.ARENA_WIDTH || 1600;
@@ -3221,17 +3300,27 @@ function generateMapDecorations() {
     return (seed - 1) / 2147483646;
   }
   // Decoration types: source regions from TX Plant.png (32px tile grid)
-  // Row 4 col 2 = small grass (px 64,128), Row 5 col 1 = bush (px 32,160)
-  // Row 5 col 2 = small plant (px 64,160), Row 4 col 4 = grass tuft (px 128,128)
-  var decoSpecs = [
+  var plantSpecs = [
     { sx: 64,  sy: 128, sw: 32, sh: 32, dw: 20, dh: 20 },
     { sx: 128, sy: 128, sw: 32, sh: 32, dw: 22, dh: 22 },
     { sx: 192, sy: 128, sw: 32, sh: 32, dw: 18, dh: 18 },
     { sx: 64,  sy: 160, sw: 32, sh: 32, dw: 26, dh: 26 },
     { sx: 128, sy: 160, sw: 32, sh: 32, dw: 24, dh: 24 },
   ];
-  // Place ~50 decorations
-  for (var i = 0; i < 50; i++) {
+
+  // Props decorations from TX Props.png (512x512, 32px tile grid)
+  // These are placed near walls for visual flair
+  var propSpecs = [
+    { sx: 0,   sy: 320, sw: 32, sh: 32, dw: 18, dh: 18, sheet: "props" },   // small stone/debris
+    { sx: 32,  sy: 320, sw: 32, sh: 32, dw: 20, dh: 20, sheet: "props" },   // pebbles
+    { sx: 64,  sy: 320, sw: 32, sh: 32, dw: 16, dh: 16, sheet: "props" },   // small rubble
+    { sx: 96,  sy: 320, sw: 32, sh: 32, dw: 14, dh: 14, sheet: "props" },   // tiny stone
+    { sx: 0,   sy: 352, sw: 32, sh: 32, dw: 22, dh: 22, sheet: "props" },   // scattered rocks
+    { sx: 32,  sy: 352, sw: 32, sh: 32, dw: 20, dh: 20, sheet: "props" },   // debris pile
+  ];
+
+  // Place ~60 plant decorations randomly
+  for (var i = 0; i < 60; i++) {
     var dx = srand() * (aw - 120) + 60;
     var dy = srand() * (ah - 120) + 60;
     // Skip if overlapping any wall
@@ -3243,8 +3332,35 @@ function generateMapDecorations() {
       }
     }
     if (skip) continue;
-    var spec = decoSpecs[Math.floor(srand() * decoSpecs.length)];
-    mapDecorations.push({ x: dx, y: dy, sx: spec.sx, sy: spec.sy, sw: spec.sw, sh: spec.sh, dw: spec.dw, dh: spec.dh, alpha: 0.35 + srand() * 0.3 });
+    var spec = plantSpecs[Math.floor(srand() * plantSpecs.length)];
+    mapDecorations.push({ x: dx, y: dy, sx: spec.sx, sy: spec.sy, sw: spec.sw, sh: spec.sh, dw: spec.dw, dh: spec.dh, alpha: 0.35 + srand() * 0.3, sheet: "plant" });
+  }
+
+  // Place props near wall edges for rubble/debris look
+  for (var wi = 0; wi < gameObstacles.length; wi++) {
+    var wo = gameObstacles[wi];
+    if (wo.destroyed) continue;
+    // ~40% chance to place a prop near each wall tile
+    if (srand() > 0.4) continue;
+    // Pick a random exposed side
+    var side = Math.floor(srand() * 4);
+    var px, py;
+    var bs = wo.size || 40;
+    if (side === 0) { px = wo.x + srand() * bs; py = wo.y - 8 - srand() * 10; }       // north
+    else if (side === 1) { px = wo.x + srand() * bs; py = wo.y + bs + 4 + srand() * 8; } // south
+    else if (side === 2) { px = wo.x - 8 - srand() * 10; py = wo.y + srand() * bs; }    // west
+    else { px = wo.x + bs + 4 + srand() * 8; py = wo.y + srand() * bs; }                 // east
+    // Don't place if inside another wall
+    var overlaps = false;
+    for (var oi = 0; oi < gameObstacles.length; oi++) {
+      var oo = gameObstacles[oi];
+      if (px > oo.x - 4 && px < oo.x + oo.size + 4 && py > oo.y - 4 && py < oo.y + oo.size + 4) {
+        overlaps = true; break;
+      }
+    }
+    if (overlaps) continue;
+    var pspec = propSpecs[Math.floor(srand() * propSpecs.length)];
+    mapDecorations.push({ x: px, y: py, sx: pspec.sx, sy: pspec.sy, sw: pspec.sw, sh: pspec.sh, dw: pspec.dw, dh: pspec.dh, alpha: 0.4 + srand() * 0.3, sheet: "props" });
   }
 }
 
@@ -3510,10 +3626,12 @@ function renderObstacles() {
   }
 }
 
-// Render ground decorations (plants, grass tufts — visual only)
+// Render ground decorations (plants, grass tufts, props — visual only)
 function renderDecorations() {
   if (!mapDecorations.length) return;
-  if (!txPlant.complete || txPlant.naturalWidth === 0) return;
+  var hasPlant = txPlant.complete && txPlant.naturalWidth > 0;
+  var hasProps = txProps.complete && txProps.naturalWidth > 0;
+  if (!hasPlant && !hasProps) return;
   var cx = Math.floor(cameraX);
   var cy = Math.floor(cameraY);
   var vw = GAME_CONFIG.VIEWPORT_WIDTH;
@@ -3523,8 +3641,10 @@ function renderDecorations() {
     // Viewport cull
     if (d.x + d.dw < cx - 20 || d.x - d.dw > cx + vw + 20) continue;
     if (d.y + d.dh < cy - 20 || d.y - d.dh > cy + vh + 20) continue;
+    var sheet = (d.sheet === "props") ? txProps : txPlant;
+    if (!sheet.complete || sheet.naturalWidth === 0) continue;
     ctx.globalAlpha = d.alpha;
-    ctx.drawImage(txPlant, d.sx, d.sy, d.sw, d.sh, d.x - d.dw / 2, d.y - d.dh / 2, d.dw, d.dh);
+    ctx.drawImage(sheet, d.sx, d.sy, d.sw, d.sh, d.x - d.dw / 2, d.y - d.dh / 2, d.dw, d.dh);
   }
   ctx.globalAlpha = 1;
 }
@@ -3869,6 +3989,43 @@ function render() {
       ctx.fillText(p.username, renderX, renderY + 28);
       ctx.textAlign = "start";
     }
+
+    // ── Reload indicator (circular arc above player) ──
+    if (p.reloading) {
+      var reloadArcY = renderY - 30;
+      var reloadArcR = 10;
+      // Estimate progress based on time (rough visual, not exact sync)
+      var rDur = p.weapon === "shotgun" ? 2200 : p.weapon === "sniper" ? 2800 : 1800;
+      var rElapsed = 0;
+      if (p.id === playerId && reloadStartTime > 0) {
+        rElapsed = Date.now() - reloadStartTime;
+      } else {
+        // For other players, use a 50% estimate animation
+        rElapsed = (Date.now() % rDur);
+      }
+      var rProgress = Math.min(1, rElapsed / rDur);
+
+      // Background arc
+      ctx.strokeStyle = "rgba(0,0,0,0.4)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(renderX, reloadArcY, reloadArcR, -Math.PI / 2, Math.PI * 1.5);
+      ctx.stroke();
+      // Progress arc
+      ctx.strokeStyle = (p.id === playerId) ? "#ff8833" : "#ff6644";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(renderX, reloadArcY, reloadArcR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rProgress);
+      ctx.stroke();
+      // "R" text
+      ctx.font = "bold 8px 'Share Tech Mono', monospace";
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("R", renderX, reloadArcY);
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "start";
+    }
   });
 
   // Render bullets — update predicted bullets and check wall collision
@@ -3969,8 +4126,16 @@ function render() {
   if (framePlayer) {
     const crossX = (mouseX - cameraX) * CAMERA_SCALE;
     const crossY = (mouseY - cameraY) * CAMERA_SCALE;
+
+    const isReloading = framePlayer.reloading;
+    const isEmpty = framePlayer.shots <= 0 && !isReloading;
+
+    // Dim crosshair when reloading or empty
+    const crossAlpha = isReloading ? 0.35 : isEmpty ? 0.4 : 0.8;
+    const crossColor = isEmpty ? "rgba(255,80,50," + crossAlpha + ")" : "rgba(255,170,68," + crossAlpha + ")";
+
     // Tactical crosshair
-    ctx.strokeStyle = "rgba(255,170,68,0.8)";
+    ctx.strokeStyle = crossColor;
     ctx.lineWidth = 1.5;
 
     // Cross lines with gap in center
@@ -3987,8 +4152,19 @@ function render() {
     ctx.lineTo(crossX, crossY + len);
     ctx.stroke();
 
+    // Reload progress arc around crosshair
+    if (isReloading && reloadStartTime > 0) {
+      const rElapsed = Date.now() - reloadStartTime;
+      const rProg = Math.min(1, rElapsed / (reloadDuration || 1800));
+      ctx.strokeStyle = "rgba(255,140,50,0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(crossX, crossY, 16, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rProg);
+      ctx.stroke();
+    }
+
     // Center dot
-    ctx.fillStyle = "rgba(255,170,68,0.9)";
+    ctx.fillStyle = crossColor;
     ctx.beginPath();
     ctx.arc(crossX, crossY, 1.5, 0, Math.PI * 2);
     ctx.fill();
@@ -4002,7 +4178,7 @@ function render() {
 
     // Background bar
     ctx.fillStyle = "rgba(0,0,0,0.55)";
-    const hudW = 320, hudH = 36;
+    const hudW = 340, hudH = 44;
     const hudRX = hudCenterX - hudW / 2, hudRY = hudY - hudH / 2;
     const r = 6;
     ctx.beginPath();
@@ -4030,14 +4206,86 @@ function render() {
     ctx.fillStyle = "#ffffff";
     ctx.fillText(localP.hp + "/" + maxHp, hudRX + 48, hudY - 8);
 
-    // Ammo section (center)
-    const weaponMaxAmmo = localP.weapon === "shotgun" ? 8 : localP.weapon === "sniper" ? 5 : 30;
-    const ammoText = localP.reloading ? "RELOADING" : localP.shots + " / " + weaponMaxAmmo;
-    const ammoColor = localP.reloading ? "#ff6b35" : (localP.shots <= 5 ? "#ff8844" : "#ddeedd");
-    ctx.font = "bold 13px 'Share Tech Mono', monospace";
-    ctx.fillStyle = ammoColor;
-    ctx.textAlign = "center";
-    ctx.fillText(ammoText, hudCenterX, hudY + 4);
+    // Ammo section (center) — enhanced with better feedback
+    const weaponMaxAmmo = localP.weapon === "shotgun" ? 8 : localP.weapon === "sniper" ? 5 : 35;
+    const ammoRatio = localP.shots / weaponMaxAmmo;
+    const lowAmmoThresh = 0.2;
+
+    if (localP.reloading) {
+      // ── RELOAD PROGRESS BAR ──
+      const elapsed = Date.now() - reloadStartTime;
+      const progress = Math.min(1, elapsed / (reloadDuration || 1800));
+      const barW = 100, barH = 6;
+      const barX = hudCenterX - barW / 2, barY = hudY - 8;
+
+      // Background
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(barX, barY, barW, barH);
+      // Progress fill (orange → green as it completes)
+      const rC = Math.floor(255 * (1 - progress));
+      const gC = Math.floor(100 + 155 * progress);
+      ctx.fillStyle = "rgb(" + rC + "," + gC + ",50)";
+      ctx.fillRect(barX, barY, barW * progress, barH);
+      // Border
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(barX, barY, barW, barH);
+
+      // Pulsing "RELOADING" text
+      const pulse = 0.6 + 0.4 * Math.sin(Date.now() * 0.008);
+      ctx.font = "bold 13px 'Share Tech Mono', monospace";
+      ctx.fillStyle = "rgba(255,107,53," + pulse.toFixed(2) + ")";
+      ctx.textAlign = "center";
+      ctx.fillText("RELOADING", hudCenterX, hudY + 8);
+    } else if (localP.shots === 0) {
+      // ── EMPTY MAG — urgent warning ──
+      const blink = Math.sin(Date.now() * 0.012) > 0 ? 1.0 : 0.3;
+      ctx.font = "bold 14px 'Share Tech Mono', monospace";
+      ctx.fillStyle = "rgba(255,50,50," + blink.toFixed(2) + ")";
+      ctx.textAlign = "center";
+      ctx.fillText("EMPTY — PRESS R", hudCenterX, hudY + 4);
+    } else {
+      // ── Normal ammo display with low-ammo coloring ──
+      var ammoColor;
+      if (ammoRatio <= lowAmmoThresh) {
+        // Critical: pulsing red-orange
+        const cPulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.006);
+        ammoColor = "rgba(255,70,30," + cPulse.toFixed(2) + ")";
+      } else if (ammoRatio <= 0.4) {
+        ammoColor = "#ff8844";
+      } else {
+        ammoColor = "#ddeedd";
+      }
+      ctx.font = "bold 13px 'Share Tech Mono', monospace";
+      ctx.fillStyle = ammoColor;
+      ctx.textAlign = "center";
+      ctx.fillText(localP.shots + " / " + weaponMaxAmmo, hudCenterX, hudY - 1);
+
+      // Ammo pips (small dots showing individual rounds remaining)
+      if (weaponMaxAmmo <= 10) {
+        const pipY = hudY + 8;
+        const pipSpacing = 8;
+        const pipStartX = hudCenterX - ((weaponMaxAmmo - 1) * pipSpacing) / 2;
+        for (let pi = 0; pi < weaponMaxAmmo; pi++) {
+          if (pi < localP.shots) {
+            ctx.fillStyle = ammoRatio <= lowAmmoThresh ? "#ff6633" : "#aaddaa";
+          } else {
+            ctx.fillStyle = "rgba(80,80,80,0.6)";
+          }
+          ctx.beginPath();
+          ctx.arc(pipStartX + pi * pipSpacing, pipY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Low ammo warning indicator
+      if (lowAmmoWarningShown) {
+        ctx.font = "bold 10px 'Share Tech Mono', monospace";
+        ctx.fillStyle = "rgba(255,140,40,0.8)";
+        ctx.textAlign = "center";
+        ctx.fillText("LOW AMMO", hudCenterX, hudRY - 4);
+      }
+    }
 
     // Kills section (right)
     ctx.font = "bold 12px 'Rajdhani', sans-serif";
@@ -4046,6 +4294,74 @@ function render() {
     ctx.fillText("💀 " + (localP.kills || 0), hudRX + hudW - 45, hudY - 3);
 
     ctx.textAlign = "start";
+
+    // ── Weapon selector (above HUD bar) showing 1=Rifle 2=Shotgun 3=Sniper ──
+    {
+      const weaponSlots = [
+        { key: "1", name: "RIFLE", weapon: "machinegun" },
+        { key: "2", name: "SHOTGUN", weapon: "shotgun" },
+        { key: "3", name: "SNIPER", weapon: "sniper" },
+      ];
+      const slotW = 68, slotH = 22, slotGap = 4;
+      const totalSlotsW = weaponSlots.length * slotW + (weaponSlots.length - 1) * slotGap;
+      const slotStartX = hudCenterX - totalSlotsW / 2;
+      const slotY = hudRY - slotH - 6;
+      const currentWeapon = localP.weapon || "machinegun";
+
+      for (let wi = 0; wi < weaponSlots.length; wi++) {
+        const slot = weaponSlots[wi];
+        const sx = slotStartX + wi * (slotW + slotGap);
+        const isActive = slot.weapon === currentWeapon;
+
+        // Slot background
+        if (isActive) {
+          ctx.fillStyle = "rgba(255,170,68,0.25)";
+        } else {
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+        }
+        // Rounded mini rect
+        const sr = 3;
+        ctx.beginPath();
+        ctx.moveTo(sx + sr, slotY);
+        ctx.lineTo(sx + slotW - sr, slotY);
+        ctx.quadraticCurveTo(sx + slotW, slotY, sx + slotW, slotY + sr);
+        ctx.lineTo(sx + slotW, slotY + slotH - sr);
+        ctx.quadraticCurveTo(sx + slotW, slotY + slotH, sx + slotW - sr, slotY + slotH);
+        ctx.lineTo(sx + sr, slotY + slotH);
+        ctx.quadraticCurveTo(sx, slotY + slotH, sx, slotY + slotH - sr);
+        ctx.lineTo(sx, slotY + sr);
+        ctx.quadraticCurveTo(sx, slotY, sx + sr, slotY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Active border
+        if (isActive) {
+          ctx.strokeStyle = "rgba(255,170,68,0.7)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+
+        // Key number
+        ctx.font = "bold 10px 'Share Tech Mono', monospace";
+        ctx.fillStyle = isActive ? "#ffaa44" : "rgba(180,180,180,0.5)";
+        ctx.textAlign = "left";
+        ctx.fillText(slot.key, sx + 4, slotY + 14);
+
+        // Weapon name
+        ctx.font = "bold 9px 'Share Tech Mono', monospace";
+        ctx.fillStyle = isActive ? "#ffffff" : "rgba(160,160,160,0.6)";
+        ctx.textAlign = "center";
+        ctx.fillText(slot.name, sx + slotW / 2 + 4, slotY + 14);
+      }
+      ctx.textAlign = "start";
+    }
+
+    // ── Reload flash overlay (brief screen-edge tint when reload starts/ends) ──
+    if (reloadFlashAlpha > 0.01) {
+      reloadFlashAlpha *= 0.92;
+      ctx.fillStyle = "rgba(255,140,40," + (reloadFlashAlpha * 0.15).toFixed(3) + ")";
+      ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+    }
   }
 
   // Kill feed
