@@ -192,8 +192,6 @@ func resetPersistentRound(game *Game) {
 		p.Reloading = false
 		p.Weapon = WeaponMachinegun
 		p.SpeedBoostUntil = 0
-		p.DashCooldownUntil = 0
-		p.DashUntil = 0
 		p.Keys = Keys{}
 
 		// Reset MVP tracking
@@ -448,10 +446,6 @@ func respawnPlayer(player *Player, game *Game) {
 	player.Keys = Keys{}
 	player.Weapon = WeaponMachinegun
 	player.SpeedBoostUntil = 0
-	player.DashCooldownUntil = 0
-	player.DashUntil = 0
-	player.DashDirX = 0
-	player.DashDirY = 0
 
 	// Push out of obstacles
 	pr := GameConfig.PlayerRadius

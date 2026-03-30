@@ -251,11 +251,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				KillStreak:      0,
 				LastKilledBy:    "",
 
-				DashCooldownUntil: 0,
-				DashUntil:         0,
-				DashDirX:          0,
-				DashDirY:          0,
-
 				WaitingForRespawn: false,
 				MsgCount:          0,
 				MsgWindowStart:    now,
@@ -375,11 +370,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "reload":
 			game.mu.Lock()
 			reloadWeapon(p)
-			game.mu.Unlock()
-
-		case "dash":
-			game.mu.Lock()
-			performDash(p)
 			game.mu.Unlock()
 
 		case "requestRespawn":

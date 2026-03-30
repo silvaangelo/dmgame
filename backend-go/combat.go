@@ -423,45 +423,4 @@ func reloadWeapon(player *Player) {
 	startReload(player, reloadTime, maxAmmo)
 }
 
-/* ================= DASH ================= */
 
-func performDash(player *Player) {
-	now := unixMs()
-	if player.HP <= 0 {
-		return
-	}
-	if now < player.DashCooldownUntil {
-		return
-	}
-
-	dirX := 0.0
-	dirY := 0.0
-	if player.Keys.A {
-		dirX -= 1
-	}
-	if player.Keys.D {
-		dirX += 1
-	}
-	if player.Keys.W {
-		dirY -= 1
-	}
-	if player.Keys.S {
-		dirY += 1
-	}
-
-	if dirX == 0 && dirY == 0 {
-		dirX = math.Cos(player.AimAngle)
-		dirY = math.Sin(player.AimAngle)
-	}
-
-	mag := math.Sqrt(dirX*dirX + dirY*dirY)
-	if mag > 0 {
-		dirX /= mag
-		dirY /= mag
-	}
-
-	player.DashDirX = dirX
-	player.DashDirY = dirY
-	player.DashUntil = now + GameConfig.DashDuration
-	player.DashCooldownUntil = now + GameConfig.DashCooldown
-}

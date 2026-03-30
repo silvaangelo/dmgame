@@ -24,7 +24,7 @@ func Deserialize(raw []byte) (map[string]interface{}, error) {
 const (
 	binaryMarker  = 0x42
 	headerBytes   = 8
-	playerBytes   = 26
+	playerBytes   = 25
 	bulletBytes   = 11
 )
 
@@ -46,8 +46,6 @@ type BinaryStateInput struct {
 
 // EncodeBinaryState encodes a per-player state snapshot into compact binary.
 func EncodeBinaryState(input *BinaryStateInput) []byte {
-	now := nowMs()
-
 	totalSize := headerBytes +
 		len(input.Players)*playerBytes +
 		2 + len(input.Bullets)*bulletBytes
@@ -102,13 +100,7 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		buf[off] = byte(p.Skin)
 		off++
 
-		// Dashing flag
-		if now < p.DashUntil {
-			buf[off] = 1
-		} else {
-			buf[off] = 0
-		}
-		off++
+
 	}
 
 	// Bullets

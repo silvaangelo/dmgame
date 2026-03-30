@@ -89,21 +89,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 		playerRadius := GameConfig.PlayerRadius
 		margin := playerRadius
 
-		// Dash movement overrides normal movement
-		isDashing := now < player.DashUntil
-		if isDashing {
-			dashSpeed := GameConfig.DashSpeed
-
-			// Move X
-			player.X += player.DashDirX * dashSpeed
-			player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
-
-			// Move Y
-			player.Y += player.DashDirY * dashSpeed
-			player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
-			continue // Skip normal movement during dash
-		}
-
 		speed := getPlayerSpeed(player)
 
 		// Move X axis first
@@ -199,10 +184,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 			if p.ID == bullet.PlayerID || p.HP <= 0 {
 				continue
 			}
-			// Dash invincibility
-			if GameConfig.DashInvincible && now < p.DashUntil {
-				continue
-			}
 			bdx := p.X - bullet.X
 			bdy := p.Y - bullet.Y
 			if bdx*bdx+bdy*bdy < hitRadiusSq {
@@ -290,11 +271,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 	{
 		n := 0
 		for _, b := range game.Bullets {
-			bulletLife := GameConfig.BulletLifetime
-			if b.Weapon == WeaponShotgun {
-				bulletLife = GameConfig.ShotgunBulletLifetime
-			}
-			if !bulletsToRemove[b.ID] && now-b.CreatedAt < bulletLife {
+			if !bulletsToRemove[b.ID] && now-b.CreatedAt < GameConfig.BulletLifetime {
 				game.Bullets[n] = b
 				n++
 			}

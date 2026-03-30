@@ -64,12 +64,6 @@ type Player struct {
 	WaitingForRespawn bool  `msgpack:"-"`
 	DeathTime         int64 `msgpack:"-"`
 
-	// Dash
-	DashCooldownUntil int64   `msgpack:"-"`
-	DashUntil         int64   `msgpack:"-"`
-	DashDirX          float64 `msgpack:"-"`
-	DashDirY          float64 `msgpack:"-"`
-
 	// Anti-cheat
 	MsgCount         int   `msgpack:"-"`
 	MsgWindowStart   int64 `msgpack:"-"`

@@ -43,7 +43,6 @@ function parseBinaryState(buf) {
     var weaponCode = dv.getUint8(off); off += 1;
     var kills = dv.getUint16(off, true); off += 2;
     var skin = dv.getUint8(off); off += 1;
-    var dashing = dv.getUint8(off) === 1; off += 1;
 
     var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
     parsedPlayers.push({
@@ -55,7 +54,6 @@ function parseBinaryState(buf) {
       aimAngle: aimAngle,
       weapon: BINARY_WEAPON_MAP[weaponCode] || "machinegun",
       kills: kills, skin: skin,
-      dashing: dashing,
     });
   }
 
@@ -199,8 +197,6 @@ function handleBinaryState(buf) {
       playPositionalSound("scream", predictedX, predictedY, 0.25);
     }
     previousHP = currentPlayer.hp;
-
-    if (currentPlayer.dashing) dashCooldownUntil = Date.now() + 1000;
 
     var lastProcessed = currentPlayer.lastProcessedInput || 0;
     pendingInputs = pendingInputs.filter(function(inp) { return inp.sequence > lastProcessed; });
@@ -511,10 +507,6 @@ let killEffects = [];
 let deathAnimations = [];
 // Track death timestamps separately (survives players array replacement)
 const playerDeathTimes = new Map();
-
-// Dash
-let dashCooldownUntil = 0;
-let dashTrails = [];
 
 // Round timer
 let roundTimeRemaining = 300; // seconds
@@ -1622,8 +1614,6 @@ function showStartScreen() {
   roundEnded = false;
   floatingNumbers = [];
   lowHPPulseTime = 0;
-  dashCooldownUntil = 0;
-  dashTrails = [];
   stopHeartbeat();
   stopAllGameSounds();
   lastKilledByUsername = "";
@@ -2014,7 +2004,6 @@ function connect() {
           reloading: p[5] === 1, lastProcessedInput: p[6],
           aimAngle: p[7], weapon: weaponCodeMap[p[8]] || "machinegun",
           kills: p[9], skin: p[10] || 0,
-          dashing: p[11] === 1,
           username: usernameMap.get(p[0]) || "Player",
         };
       }
@@ -2149,9 +2138,6 @@ function connect() {
           playPositionalSound("scream", predictedX, predictedY, 0.25);
         }
         previousHP = currentPlayer.hp;
-
-        // Dash cooldown from server
-        if (currentPlayer.dashing) dashCooldownUntil = Date.now() + 1000;
 
         const lastProcessed = currentPlayer.lastProcessedInput || 0;
         pendingInputs = pendingInputs.filter(function(i) { return i.sequence > lastProcessed; });
@@ -2518,28 +2504,6 @@ document.addEventListener("keydown", (e) => {
   // R key to manually reload
   if (mappedKey === "r") {
     ws.send(serialize({ type: "reload" }));
-    return;
-  }
-
-  // Shift or Z key to dash
-  if (e.key === "Shift" || e.code === "KeyZ") {
-    e.preventDefault();
-    if (Date.now() >= dashCooldownUntil) {
-      ws.send(serialize({ type: "dash" }));
-      dashCooldownUntil = Date.now() + 1000; // mirror server cooldown (1s)
-      // Create burst of afterimage ghosts for local player dash
-      const localP = players.find((p) => p.id === playerId);
-      if (localP) {
-        for (let i = 0; i < 8; i++) {
-          dashTrails.push({
-            x: predictedX + (Math.random() - 0.5) * 8,
-            y: predictedY + (Math.random() - 0.5) * 8,
-            alpha: 0.6 + Math.random() * 0.2,
-            skin: localP.skin || 0,
-          });
-        }
-      }
-    }
     return;
   }
 
@@ -3208,39 +3172,6 @@ function syncVolumeControls() {
 // ===== LEADERBOARD =====
 // Leaderboard overlay is handled by updateLeaderboardOverlay() in the game loop
 
-// ===== DASH TRAIL RENDERING =====
-
-function updateDashTrails() {
-  for (let i = dashTrails.length - 1; i >= 0; i--) {
-    dashTrails[i].alpha -= 0.025;
-    if (dashTrails[i].alpha <= 0) {
-      dashTrails.splice(i, 1);
-    }
-  }
-}
-
-function renderDashTrails() {
-  dashTrails.forEach((trail) => {
-    const skin = SKINS[trail.skin] || SKINS[0];
-    ctx.globalAlpha = trail.alpha * 0.4;
-    // Use sprite for dash ghost if available
-    var trailSprite = getPlayerSprite(trail.skin, trail.weapon || "machinegun");
-    if (trailSprite && trailSprite.complete && trailSprite.naturalWidth > 0) {
-      ctx.save();
-      ctx.translate(trail.x, trail.y);
-      ctx.rotate(trail.aimAngle || 0);
-      ctx.drawImage(trailSprite, -SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = skin.primary;
-      ctx.beginPath();
-      ctx.arc(trail.x, trail.y, 13, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1.0;
-  });
-}
-
 // ===== RENDER LOOP =====
 
 // Pre-render static grid to offscreen canvas for performance
@@ -3622,7 +3553,6 @@ function render() {
       cameraY += (clampedY - cameraY) * CAMERA_LERP;
     }
     // Recompute world-space mouse from screen coords every frame
-    // Prevents sprite flip during dash when camera moves but mouse doesn't
     mouseX = screenMouseX / CAMERA_SCALE + cameraX;
     mouseY = screenMouseY / CAMERA_SCALE + cameraY;
   }
@@ -3709,7 +3639,6 @@ function render() {
   updateFloatingNumbers();
   updateKillEffects();
   updateDeathAnimations();
-  updateDashTrails();
 
   // Dust clouds when local player moves
   if (
@@ -3749,9 +3678,6 @@ function render() {
 
   // Render dust clouds (ground level)
   renderDustClouds();
-
-  // Render dash trails (below players)
-  renderDashTrails();
 
   // Find bounty leader ONCE (player with most kills, minimum 2)
   let bountyLeaderId = null;
@@ -3836,42 +3762,6 @@ function render() {
     const skin = SKINS[skinIndex] || SKINS[0];
     const color = skin.primary;
     const darkColor = skin.secondary;
-
-    // Dash visual — afterimage ghosts + motion trail
-    if (p.dashing) {
-      // Speed lines behind player
-      const dashAngle = p.aimAngle || 0;
-      ctx.globalAlpha = 0.3;
-      for (let sl = 0; sl < 4; sl++) {
-        const offsetAngle = dashAngle + Math.PI + (Math.random() - 0.5) * 0.8;
-        const dist = 10 + Math.random() * 20;
-        const lx = renderX + Math.cos(offsetAngle) * dist;
-        const ly = renderY + Math.sin(offsetAngle) * dist;
-        ctx.strokeStyle = "rgba(255, 255, 150, 0.5)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(lx, ly);
-        ctx.lineTo(lx + Math.cos(offsetAngle) * 12, ly + Math.sin(offsetAngle) * 12);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1.0;
-      // Pulsing energy ring
-      const dashPulse = 0.5 + 0.5 * Math.sin(Date.now() / 50);
-      ctx.strokeStyle = `rgba(255, 255, 100, ${dashPulse * 0.6})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 20, 0, Math.PI * 2);
-      ctx.stroke();
-      // Generate afterimage ghosts
-      dashTrails.push({
-        x: renderX + (Math.random() - 0.5) * 4,
-        y: renderY + (Math.random() - 0.5) * 4,
-        alpha: 0.6,
-        skin: p.skin || 0,
-        weapon: p.weapon || "machinegun",
-        aimAngle: gunAngle,
-      });
-    }
 
     // Draw player sprite (replaces circle body + weapon)
     var spriteImg = getPlayerSprite(skinIndex, p.weapon);
