@@ -24,6 +24,37 @@ func muzzlePosition(px, py, dirX, dirY float64, weapon WeaponType) (float64, flo
 	return px + muzzleOffsetX*cos - muzzleOffsetY*sin, py + muzzleOffsetX*sin + muzzleOffsetY*cos
 }
 
+// muzzleBlockedByWall checks whether any obstacle sits between the player
+// center (px,py) and the computed muzzle point (mx,my). It steps along the
+// line in small increments and queries the spatial grid at each point.
+func muzzleBlockedByWall(px, py, mx, my float64) bool {
+	dx := mx - px
+	dy := my - py
+	dist := math.Sqrt(dx*dx + dy*dy)
+	if dist < 1 {
+		return false
+	}
+	// Step in increments smaller than the smallest obstacle (BlockSize=40)
+	stepSize := 10.0
+	steps := int(math.Ceil(dist / stepSize))
+	for i := 1; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		sx := px + dx*t
+		sy := py + dy*t
+		nearby := globalObstacleGrid.QueryRadius(sx, sy, 60)
+		for _, e := range nearby {
+			o := e.Data.(*Obstacle)
+			if o.Destroyed {
+				continue
+			}
+			if sx >= o.X && sx <= o.X+o.Size && sy >= o.Y && sy <= o.Y+o.Size {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 /* ================= KILL STREAKS ================= */
 
 var streakThresholds = []struct {
@@ -158,6 +189,19 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		finalDirX, finalDirY := applySpread(dirX, dirY, GameConfig.SniperBaseSpread, GameConfig.SniperMoveSpread, moving)
 
 		mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponSniper)
+		// Block shot if muzzle is inside/behind a wall
+		if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
+			// Refund the shot
+			player.Shots++
+			player.LastShotTime = 0
+			if player.Reloading {
+				player.Reloading = false
+				if player.ReloadTimer != nil {
+					player.ReloadTimer.Stop()
+				}
+			}
+			return
+		}
 		bullet := &Bullet{
 			ID:            nextEntityID(),
 			ShortID:       game.NextShortID,
@@ -210,6 +254,18 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		pelletCount := GameConfig.ShotgunPellets
 		baseAngle := math.Atan2(dirY, dirX)
 		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponShotgun)
+		// Block shot if muzzle is inside/behind a wall
+		if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
+			player.Shots++
+			player.LastShotTime = 0
+			if player.Reloading {
+				player.Reloading = false
+				if player.ReloadTimer != nil {
+					player.ReloadTimer.Stop()
+				}
+			}
+			return
+		}
 		// Movement adds extra spread to shotgun
 		spreadBase := GameConfig.ShotgunSpread
 		if moving {
@@ -258,6 +314,18 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	finalDirX, finalDirY = finalDirX*cos-finalDirY*sin, finalDirX*sin+finalDirY*cos
 
 	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
+	// Block shot if muzzle is inside/behind a wall
+	if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
+		player.Shots++
+		player.LastShotTime = 0
+		if player.Reloading {
+			player.Reloading = false
+			if player.ReloadTimer != nil {
+				player.ReloadTimer.Stop()
+			}
+		}
+		return
+	}
 	bullet := &Bullet{
 		ID:            nextEntityID(),
 		ShortID:       game.NextShortID,

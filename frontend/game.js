@@ -1881,6 +1881,12 @@ function connect() {
       return;
     }
 
+    // ===== BULLET HIT WALL =====
+    if (data.type === "bulletHitWall") {
+      createImpactSparks(data.x, data.y);
+      return;
+    }
+
     // ===== KILLS =====
     if (data.type === "kill") {
       addKillFeedEntry(data.killer, data.victim, data.weapon, data.isHeadshot);
@@ -3754,12 +3760,27 @@ function render() {
     }
   });
 
-  // Render bullets
-  bullets.forEach((b) => {
+  // Render bullets — update predicted bullets and check wall collision
+  bullets = bullets.filter(function(b) {
     if (b.predicted && b.dx !== undefined) {
       b.x += b.dx;
       b.y += b.dy;
+      // Check obstacle collision for predicted bullets
+      for (var oi = 0; oi < gameObstacles.length; oi++) {
+        var ob = gameObstacles[oi];
+        if (b.x >= ob.x && b.x <= ob.x + ob.size && b.y >= ob.y && b.y <= ob.y + ob.size) {
+          createImpactSparks(b.x, b.y);
+          return false; // Remove this bullet
+        }
+      }
+      // Remove if out of bounds
+      if (b.x < 0 || b.x > GAME_CONFIG.arenaWidth || b.y < 0 || b.y > GAME_CONFIG.arenaHeight) {
+        return false;
+      }
     }
+    return true;
+  });
+  bullets.forEach((b) => {
 
     // Compute bullet travel angle for sprite rotation
     let angle;
