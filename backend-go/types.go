@@ -52,7 +52,6 @@ type Player struct {
 	LastProcessedInput int      `msgpack:"lastProcessedInput"`
 	Kills            int        `msgpack:"kills"`
 	Deaths           int        `msgpack:"deaths"`
-	Score            int        `msgpack:"score"`
 	Ready            bool       `msgpack:"ready"`
 	AimAngle         float64    `msgpack:"aimAngle"`
 	Weapon           WeaponType `msgpack:"weapon"`
@@ -97,7 +96,6 @@ type Player struct {
 	// MVP tracking
 	TotalDamage int `msgpack:"-"`
 	MaxStreak   int `msgpack:"-"`
-	OrbsCollected int `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.
@@ -113,6 +111,7 @@ type Bullet struct {
 	Damage    int        `msgpack:"damage"`
 	Weapon    WeaponType `msgpack:"weapon"`
 	CreatedAt int64      `msgpack:"createdAt"`
+	ShooterMoving bool   `msgpack:"-"` // CS2: was shooter moving when firing?
 }
 
 // Obstacle represents a wall block or tree.
@@ -166,15 +165,6 @@ type Pickup struct {
 	CreatedAt int64      `msgpack:"createdAt"`
 }
 
-// Orb represents a score orb (slither-style).
-type Orb struct {
-	ID        string  `msgpack:"id"`
-	ShortID   uint16  `msgpack:"shortId"`
-	X         float64 `msgpack:"x"`
-	Y         float64 `msgpack:"y"`
-	CreatedAt int64   `msgpack:"createdAt"`
-}
-
 // LootCrate represents a destructible crate.
 type LootCrate struct {
 	ID        string  `msgpack:"id"`
@@ -203,7 +193,6 @@ type Game struct {
 	Bullets     []*Bullet
 	Obstacles   []*Obstacle
 	Pickups     []*Pickup
-	Orbs        []*Orb
 	Bombs       []*Bomb
 	Lightnings  []*Lightning
 	LootCrates  []*LootCrate
@@ -222,7 +211,6 @@ type Game struct {
 	// Spawn timing (checked in game tick)
 	LastObstacleSpawn  int64
 	LastPickupSpawn    int64
-	LastOrbSpawn       int64
 	LastBombSpawn      int64
 	LastLightningSpawn int64
 	LastCrateSpawn     int64

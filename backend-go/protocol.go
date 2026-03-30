@@ -24,10 +24,9 @@ func Deserialize(raw []byte) (map[string]interface{}, error) {
 const (
 	binaryMarker  = 0x42
 	headerBytes   = 8
-	playerBytes   = 29
+	playerBytes   = 27
 	bulletBytes   = 11
 	pickupBytes   = 7
-	orbBytes      = 6
 	crateBytes    = 7
 	zoneBytes     = 8
 )
@@ -60,7 +59,6 @@ type BinaryStateInput struct {
 	Players []*Player
 	Bullets []*Bullet
 	Pickups []*Pickup
-	Orbs    []*Orb
 	Crates  []*LootCrate
 	Zone    *Zone // nil if no zone
 }
@@ -74,7 +72,6 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		len(input.Players)*playerBytes +
 		2 + len(input.Bullets)*bulletBytes +
 		2 + len(input.Pickups)*pickupBytes +
-		2 + len(input.Orbs)*orbBytes +
 		2 + len(input.Crates)*crateBytes
 	if hasZone {
 		totalSize += zoneBytes
@@ -154,8 +151,6 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		off++
 		buf[off] = byte(p.Armor)
 		off++
-		binary.LittleEndian.PutUint16(buf[off:], uint16(p.Score))
-		off += 2
 	}
 
 	// Bullets
@@ -195,18 +190,6 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		}
 		buf[off] = ptc
 		off++
-	}
-
-	// Orbs
-	binary.LittleEndian.PutUint16(buf[off:], uint16(len(input.Orbs)))
-	off += 2
-	for _, o := range input.Orbs {
-		binary.LittleEndian.PutUint16(buf[off:], o.ShortID)
-		off += 2
-		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(o.X))))
-		off += 2
-		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(o.Y))))
-		off += 2
 	}
 
 	// Crates

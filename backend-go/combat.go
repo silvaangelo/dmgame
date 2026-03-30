@@ -37,12 +37,9 @@ var streakThresholds = []struct {
 	{10, "DEUS DA ARENA!"},
 }
 
-func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
+func handleKill(killer *Player, victim *Player, weapon string, game *Game, isHeadshot bool) {
 	victim.Deaths++
 	victim.KillStreak = 0
-
-	// Drop half of victim's score as orbs
-	dropScoreOrbs(victim, game)
 
 	// Mark victim as waiting for respawn (auto after 3s or manual click)
 	victim.WaitingForRespawn = true
@@ -51,7 +48,6 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
 	if killer != nil && killer.ID != victim.ID {
 		killer.Kills++
 		killer.KillStreak++
-		killer.Score += GameConfig.KillScore
 
 		// Track max streak for MVP
 		if killer.KillStreak > killer.MaxStreak {
@@ -66,12 +62,12 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
 		isRevenge := victim.LastKilledBy != "" && killer.LastKilledBy == victim.ID
 
 		broadcast(game, map[string]interface{}{
-			"type":         "kill",
-			"killer":       killer.Username,
-			"victim":       victim.Username,
-			"weapon":       weapon,
-			"isRevenge":    isRevenge,
-			"droppedScore": int(float64(victim.Score) * GameConfig.DeathOrbDropFraction),
+			"type":       "kill",
+			"killer":     killer.Username,
+			"victim":     victim.Username,
+			"weapon":     weapon,
+			"isRevenge":  isRevenge,
+			"isHeadshot": isHeadshot,
 		})
 
 		victim.LastKilledBy = killer.ID
@@ -97,48 +93,37 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game) {
 			killerName = killer.Username
 		}
 		broadcast(game, map[string]interface{}{
-			"type":         "kill",
-			"killer":       killerName,
-			"victim":       victim.Username,
-			"weapon":       weapon,
-			"isRevenge":    false,
-			"droppedScore": int(float64(victim.Score) * GameConfig.DeathOrbDropFraction),
+			"type":       "kill",
+			"killer":     killerName,
+			"victim":     victim.Username,
+			"weapon":     weapon,
+			"isRevenge":  false,
+			"isHeadshot": isHeadshot,
 		})
-	}
-
-	// Deduct dropped score
-	dropped := int(float64(victim.Score) * GameConfig.DeathOrbDropFraction)
-	victim.Score = max(0, victim.Score-dropped)
-}
-
-func dropScoreOrbs(victim *Player, game *Game) {
-	scoreToDrop := int(float64(victim.Score) * GameConfig.DeathOrbDropFraction)
-	if scoreToDrop <= 0 {
-		return
-	}
-
-	orbCount := min(scoreToDrop, 30)
-	spread := 60.0
-
-	for i := 0; i < orbCount; i++ {
-		angle := (float64(i) / float64(orbCount)) * math.Pi * 2
-		dist := 15 + rand.Float64()*spread
-		orbX := clamp(victim.X+math.Cos(angle)*dist, 20, GameConfig.ArenaWidth-20)
-		orbY := clamp(victim.Y+math.Sin(angle)*dist, 20, GameConfig.ArenaHeight-20)
-
-		orb := &Orb{
-			ID:        nextEntityID(),
-			ShortID:   game.NextShortID,
-			X:         orbX,
-			Y:         orbY,
-			CreatedAt: unixMs(),
-		}
-		game.NextShortID++
-		game.Orbs = append(game.Orbs, orb)
 	}
 }
 
 /* ================= SHOOTING ================= */
+
+// isPlayerMoving returns true if any movement key is pressed (CS2-style: moving = inaccurate).
+func isPlayerMoving(p *Player) bool {
+	return p.Keys.W || p.Keys.A || p.Keys.S || p.Keys.D
+}
+
+// applySpread adds weapon base spread + movement spread to a direction vector.
+func applySpread(dirX, dirY float64, baseSpread, moveSpread float64, moving bool) (float64, float64) {
+	totalSpread := baseSpread
+	if moving {
+		totalSpread += moveSpread
+	}
+	if totalSpread > 0 {
+		spreadAngle := (rand.Float64() - 0.5) * 2 * totalSpread
+		cos := math.Cos(spreadAngle)
+		sin := math.Sin(spreadAngle)
+		return dirX*cos - dirY*sin, dirX*sin + dirY*cos
+	}
+	return dirX, dirY
+}
 
 func shoot(player *Player, game *Game, dirX, dirY float64) {
 	if game.RoundEnded {
@@ -152,8 +137,9 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	}
 
 	now := unixMs()
+	moving := isPlayerMoving(player)
 
-	// Sniper
+	// Sniper (AWP-like: extremely accurate when still, terrible when moving)
 	if player.Weapon == WeaponSniper {
 		cooldown := GameConfig.SniperCooldown
 		if now-player.LastShotTime < cooldown {
@@ -168,19 +154,23 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			startReload(player, GameConfig.SniperReloadTime, GameConfig.SniperAmmo)
 		}
 
-		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponSniper)
+		// Apply accuracy (CS2: sniper is pinpoint when still, very inaccurate when moving)
+		finalDirX, finalDirY := applySpread(dirX, dirY, GameConfig.SniperBaseSpread, GameConfig.SniperMoveSpread, moving)
+
+		mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponSniper)
 		bullet := &Bullet{
-			ID:        nextEntityID(),
-			ShortID:   game.NextShortID,
-			X:         mzX,
-			Y:         mzY,
-			DX:        dirX * GameConfig.SniperBulletSpeed,
-			DY:        dirY * GameConfig.SniperBulletSpeed,
-			Team:      0,
-			PlayerID:  player.ID,
-			Damage:    GameConfig.SniperDamage,
-			Weapon:    WeaponSniper,
-			CreatedAt: now,
+			ID:            nextEntityID(),
+			ShortID:       game.NextShortID,
+			X:             mzX,
+			Y:             mzY,
+			DX:            finalDirX * GameConfig.SniperBulletSpeed,
+			DY:            finalDirY * GameConfig.SniperBulletSpeed,
+			Team:          0,
+			PlayerID:      player.ID,
+			Damage:        GameConfig.SniperDamage,
+			Weapon:        WeaponSniper,
+			CreatedAt:     now,
+			ShooterMoving: moving,
 		}
 		game.NextShortID++
 		game.Bullets = append(game.Bullets, bullet)
@@ -196,6 +186,8 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	switch player.Weapon {
 	case WeaponShotgun:
 		cooldown = GameConfig.ShotgunCooldown
+	case WeaponMinigun:
+		cooldown = GameConfig.MinigunCooldown
 	default:
 		cooldown = GameConfig.MachinegunCooldown
 	}
@@ -210,34 +202,42 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		switch player.Weapon {
 		case WeaponShotgun:
 			startReload(player, GameConfig.ShotgunReloadTime, GameConfig.ShotgunAmmo)
+		case WeaponMinigun:
+			startReload(player, GameConfig.MachinegunReloadTime, GameConfig.ShotsPerMag)
 		default:
 			startReload(player, GameConfig.MachinegunReloadTime, GameConfig.ShotsPerMag)
 		}
 	}
 
-	// Shotgun fires multiple pellets
+	// Shotgun fires multiple pellets (CS2-style: tighter spread when still)
 	if player.Weapon == WeaponShotgun {
 		pelletCount := GameConfig.ShotgunPellets
 		baseAngle := math.Atan2(dirY, dirX)
 		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponShotgun)
+		// Movement adds extra spread to shotgun
+		spreadBase := GameConfig.ShotgunSpread
+		if moving {
+			spreadBase += GameConfig.ShotgunMoveSpread
+		}
 		for i := 0; i < pelletCount; i++ {
-			spreadAngle := baseAngle + (rand.Float64()-0.5)*2*GameConfig.ShotgunSpread
+			spreadAngle := baseAngle + (rand.Float64()-0.5)*2*spreadBase
 			pelletDirX := math.Cos(spreadAngle)
 			pelletDirY := math.Sin(spreadAngle)
 			speed := GameConfig.BulletSpeed * GameConfig.ShotgunBulletSpeed
 
 			bullet := &Bullet{
-				ID:        nextEntityID(),
-				ShortID:   game.NextShortID,
-				X:         mzX,
-				Y:         mzY,
-				DX:        pelletDirX * speed,
-				DY:        pelletDirY * speed,
-				Team:      0,
-				PlayerID:  player.ID,
-				Damage:    GameConfig.ShotgunDamage,
-				Weapon:    WeaponShotgun,
-				CreatedAt: now,
+				ID:            nextEntityID(),
+				ShortID:       game.NextShortID,
+				X:             mzX,
+				Y:             mzY,
+				DX:            pelletDirX * speed,
+				DY:            pelletDirY * speed,
+				Team:          0,
+				PlayerID:      player.ID,
+				Damage:        GameConfig.ShotgunDamage,
+				Weapon:        WeaponShotgun,
+				CreatedAt:     now,
+				ShooterMoving: moving,
 			}
 			game.NextShortID++
 			game.Bullets = append(game.Bullets, bullet)
@@ -245,27 +245,50 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		return
 	}
 
-	// Machine gun — apply recoil
-	recoil := GameConfig.MachinegunRecoil
+	// Machine gun / Minigun — apply CS2-style accuracy
+	var baseSpread, moveSpread float64
+	var damage int
+	var bulletWeapon WeaponType
+	if player.Weapon == WeaponMinigun || (player.MinigunUntil > 0 && now < player.MinigunUntil) {
+		baseSpread = GameConfig.MinigunBaseSpread
+		moveSpread = GameConfig.MinigunMoveSpread
+		damage = GameConfig.MinigunDamage
+		bulletWeapon = WeaponMinigun
+	} else {
+		baseSpread = GameConfig.MachinegunBaseSpread
+		moveSpread = GameConfig.MachinegunMoveSpread
+		damage = GameConfig.MachinegunDamage
+		bulletWeapon = WeaponMachinegun
+	}
+
+	finalDirX, finalDirY := applySpread(dirX, dirY, baseSpread, moveSpread, moving)
+
+	// Also apply recoil on top of accuracy spread
+	var recoil float64
+	if bulletWeapon == WeaponMinigun {
+		recoil = GameConfig.MinigunRecoil
+	} else {
+		recoil = GameConfig.MachinegunRecoil
+	}
 	recoilAngle := (rand.Float64() - 0.5) * 2 * recoil
 	cos := math.Cos(recoilAngle)
 	sin := math.Sin(recoilAngle)
-	finalDirX := dirX*cos - dirY*sin
-	finalDirY := dirX*sin + dirY*cos
+	finalDirX, finalDirY = finalDirX*cos-finalDirY*sin, finalDirX*sin+finalDirY*cos
 
-	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
+	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, bulletWeapon)
 	bullet := &Bullet{
-		ID:        nextEntityID(),
-		ShortID:   game.NextShortID,
-		X:         mzX,
-		Y:         mzY,
-		DX:        finalDirX * GameConfig.BulletSpeed,
-		DY:        finalDirY * GameConfig.BulletSpeed,
-		Team:      0,
-		PlayerID:  player.ID,
-		Damage:    GameConfig.MachinegunDamage,
-		Weapon:    WeaponMachinegun,
-		CreatedAt: now,
+		ID:            nextEntityID(),
+		ShortID:       game.NextShortID,
+		X:             mzX,
+		Y:             mzY,
+		DX:            finalDirX * GameConfig.BulletSpeed,
+		DY:            finalDirY * GameConfig.BulletSpeed,
+		Team:          0,
+		PlayerID:      player.ID,
+		Damage:        damage,
+		Weapon:        bulletWeapon,
+		CreatedAt:     now,
+		ShooterMoving: moving,
 	}
 	game.NextShortID++
 	game.Bullets = append(game.Bullets, bullet)

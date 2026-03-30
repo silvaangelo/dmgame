@@ -86,7 +86,6 @@ func serializePlayers(game *Game) []map[string]interface{} {
 			"hp":       p.HP,
 			"kills":    p.Kills,
 			"deaths":   p.Deaths,
-			"score":    p.Score,
 			"weapon":   string(p.Weapon),
 			"skin":     p.Skin,
 			"armor":    p.Armor,
@@ -219,15 +218,6 @@ func distance(x1, y1, x2, y2 float64) float64 {
 	dx := x1 - x2
 	dy := y1 - y2
 	return math.Sqrt(dx*dx + dy*dy)
-}
-
-// serializeOrbs converts orbs to the compact array format for roundStart messages.
-func serializeOrbs(orbs []*Orb) [][]interface{} {
-	result := make([][]interface{}, 0, len(orbs))
-	for _, o := range orbs {
-		result = append(result, []interface{}{o.ID, o.X, o.Y})
-	}
-	return result
 }
 
 // formatMsg creates a message map with the given type.

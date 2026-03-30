@@ -572,6 +572,20 @@ canvas {
   letter-spacing: 0.5px;
 }
 
+/* Headshot kill highlight */
+.kill-entry.headshot-kill {
+  background: rgba(50, 40, 5, 0.92);
+  border-color: rgba(255, 215, 0, 0.6);
+}
+
+.hs-badge {
+  color: #ffd700;
+  font-weight: 700;
+  font-size: 10px;
+  margin-left: 2px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.8);
+}
+
 /* ===== DEATH OVERLAY ===== */
 #deathOverlay {
   position: fixed;

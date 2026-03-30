@@ -47,7 +47,6 @@ function parseBinaryState(buf) {
     var skin = dv.getUint8(off); off += 1;
     var powerFlags = dv.getUint8(off); off += 1;
     var armor = dv.getUint8(off); off += 1;
-    var score = dv.getUint16(off, true); off += 2;
 
     var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
     parsedPlayers.push({
@@ -64,7 +63,7 @@ function parseBinaryState(buf) {
       invisible: (powerFlags & 4) !== 0,
       regen: (powerFlags & 8) !== 0,
       dashing: (powerFlags & 16) !== 0,
-      armor: armor, score: score,
+      armor: armor,
     });
   }
 
@@ -89,16 +88,6 @@ function parseBinaryState(buf) {
     var pky = dv.getInt16(off, true); off += 2;
     var pkt = dv.getUint8(off); off += 1;
     parsedPickups.push({ id: "pk" + pksid, x: pkx, y: pky, type: BINARY_PICKUP_MAP[pkt] || "health" });
-  }
-
-  // Orbs
-  var orbCount = dv.getUint16(off, true); off += 2;
-  var parsedOrbs = [];
-  for (var m = 0; m < orbCount; m++) {
-    var osid = dv.getUint16(off, true); off += 2;
-    var ox = dv.getInt16(off, true); off += 2;
-    var oy = dv.getInt16(off, true); off += 2;
-    parsedOrbs.push({ id: "o" + osid, x: ox, y: oy });
   }
 
   // Crates
@@ -126,7 +115,6 @@ function parseBinaryState(buf) {
     players: parsedPlayers,
     bullets: parsedBullets,
     pickups: parsedPickups,
-    orbs: parsedOrbs,
     crates: parsedCrates,
     zone: zone,
   };
@@ -143,9 +131,8 @@ function handleBinaryState(buf) {
   var parsedPlayers = s.players;
   var parsedBullets = s.bullets;
 
-  // Pickups, orbs, crates — replace entirely (viewport-culled)
+  // Pickups, crates — replace entirely (viewport-culled)
   pickups = s.pickups;
-  orbs = s.orbs;
   lootCrates = s.crates;
 
   // Zone
@@ -159,7 +146,9 @@ function handleBinaryState(buf) {
     if (prevState && prevState.hp > 0 && p.hp <= 0) {
       createDeathAnimation(p.x, p.y, p.skin || 0);
       var deathWeapon = pendingDeathWeapon.get(p.username) || "machinegun";
+      var wasHeadshot = pendingHeadshot.get(p.username) || false;
       pendingDeathWeapon.delete(p.username);
+      pendingHeadshot.delete(p.username);
 
       if (deathWeapon === "shotgun") {
         for (var i = 0; i < 12; i++) {
@@ -178,7 +167,7 @@ function handleBinaryState(buf) {
         createBlood(p.x, p.y); createBloodStain(p.x, p.y); createKillEffect(p.x, p.y, "lightning");
       }
 
-      createFloatingNumber(p.x, p.y, prevState.hp);
+      createFloatingNumber(p.x, p.y, prevState.hp, wasHeadshot);
       if (p.id === playerId) { triggerScreenShake(12); stopHeartbeat(); }
       else { triggerScreenShake(5); }
       playPositionalSound("died", p.x, p.y, 0.3);
@@ -186,15 +175,17 @@ function handleBinaryState(buf) {
     } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
       createBlood(p.x, p.y);
       createBloodStain(p.x, p.y);
-      createFloatingNumber(p.x, p.y, prevState.hp - p.hp);
+      var isHS = recentHeadshots.has(p.username);
+      recentHeadshots.delete(p.username);
+      createFloatingNumber(p.x, p.y, prevState.hp - p.hp, isHS);
       if (p.id !== playerId) createHitMarker();
       if (p.id === playerId) {
         createDamageIndicator(p.x, p.y);
         triggerScreenShake(6);
-        if (p.hp === 1) startHeartbeat();
+        if (p.hp <= 20) startHeartbeat();
       }
     } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
-      if (p.hp > 1) stopHeartbeat();
+      if (p.hp > 20) stopHeartbeat();
     }
     previousPlayerStates.set(p.id, { hp: p.hp, x: p.x, y: p.y });
 
@@ -462,14 +453,16 @@ function getPlayerSprite(skinIndex, weapon) {
 
 // Weapon definitions
 const WEAPON_COOLDOWNS = {
-  machinegun: 45,
-  shotgun: 500,
-  sniper: 950,
+  machinegun: 95,
+  shotgun: 950,
+  sniper: 1550,
+  minigun: 65,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
   shotgun: "🔫",
-  sniper: "🎯"
+  sniper: "🎯",
+  minigun: "🔫",
 };
 
 let ws;
@@ -510,6 +503,8 @@ let floatingNumbers = [];
 let lastKilledByUsername = "";
 // Last kill weapon per victim (from "kill" messages) for weapon-specific death effects
 let pendingDeathWeapon = new Map(); // victimUsername -> weapon
+let pendingHeadshot = new Map(); // victimUsername -> true (if killed by headshot)
+let recentHeadshots = new Set(); // track recently headshotted players for gold damage numbers
 
 // Kill effect particles (fire, ice, lightning)
 let killEffects = [];
@@ -533,9 +528,6 @@ let crateDestroyEffects = [];
 // Dash
 let dashCooldownUntil = 0;
 let dashTrails = [];
-
-// Orbs (slither-style collectible points)
-let orbs = [];
 
 // Round timer
 let roundTimeRemaining = 300; // seconds
@@ -566,7 +558,7 @@ let gridPatternCache = null;
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
 
-let maxHp = 8; // updated from server on game start
+let maxHp = 100; // updated from server on game start
 
 const SELF_KILL_PHRASES = [
   "Você eliminou {victim}! 🔥",
@@ -1248,13 +1240,14 @@ function renderDamageIndicators() {
 }
 
 // Floating damage numbers system
-function createFloatingNumber(x, y, amount) {
+function createFloatingNumber(x, y, amount, isHeadshot) {
   floatingNumbers.push({
     x: x + (Math.random() - 0.5) * 10,
     y: y - 10,
     vy: -1.5,
     life: 1.0,
     text: "-" + amount,
+    headshot: !!isHeadshot,
   });
   if (floatingNumbers.length > 20) floatingNumbers.shift();
 }
@@ -1277,15 +1270,17 @@ function renderFloatingNumbers() {
     ctx.save();
     ctx.globalAlpha = Math.max(0, f.life);
     const scale = 1 + (1 - f.life) * 0.3; // Slight grow as it fades
-    ctx.font = `bold ${Math.round(18 * scale)}px 'Rajdhani', sans-serif`;
+    const fontSize = f.headshot ? Math.round(24 * scale) : Math.round(18 * scale);
+    ctx.font = `bold ${fontSize}px 'Rajdhani', sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    // Red text with dark outline
+    // Headshot = gold text, normal = red text
     ctx.strokeStyle = "rgba(0,0,0,0.8)";
     ctx.lineWidth = 3;
-    ctx.strokeText(f.text, f.x, f.y);
-    ctx.fillStyle = "#ff3333";
-    ctx.fillText(f.text, f.x, f.y);
+    const displayText = f.headshot ? "🎯 " + f.text : f.text;
+    ctx.strokeText(displayText, f.x, f.y);
+    ctx.fillStyle = f.headshot ? "#ffd700" : "#ff3333";
+    ctx.fillText(displayText, f.x, f.y);
     ctx.restore();
   }
   ctx.globalAlpha = 1.0;
@@ -1421,7 +1416,7 @@ function renderZone() {
 
 function renderLowHPVignette() {
   const localPlayer = players.find((p) => p.id === playerId);
-  if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 1) return;
+  if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 20) return;
 
   lowHPPulseTime += 0.06;
   const pulse = 0.25 + 0.15 * Math.sin(lowHPPulseTime * 2); // Pulsing alpha
@@ -1738,11 +1733,12 @@ function showStartScreen() {
   crateDestroyEffects = [];
   dashCooldownUntil = 0;
   dashTrails = [];
-  orbs = [];
   stopHeartbeat();
   stopAllGameSounds();
   lastKilledByUsername = "";
   pendingDeathWeapon.clear();
+  pendingHeadshot.clear();
+  recentHeadshots.clear();
 }
 
 function enterGame(data) {
@@ -1770,10 +1766,6 @@ function enterGame(data) {
   try { localStorage.setItem("dm_username", data.username); } catch { /* private browsing */ }
 
   players = data.players || [];
-  orbs = (data.orbs || []).map(function(o) {
-    if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
-    return o;
-  });
 
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -1810,7 +1802,7 @@ function updatePlayerList() {
 
   const sorted = [...players]
     .filter(function(p) { return p.username; })
-    .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+    .sort(function(a, b) { return (b.kills || 0) - (a.kills || 0); });
 
   const medals = ["🥇", "🥈", "🥉"];
   content.innerHTML = sorted
@@ -1823,7 +1815,7 @@ function updatePlayerList() {
       return '<div class="pl-row' + (isMe ? " me" : "") + (dead ? " dead" : "") + '">' +
         '<span class="pl-rank">' + medal + '</span>' +
         '<span class="pl-name">' + esc(p.username) + '</span>' +
-        '<span class="pl-stats">⭐' + (p.score || 0) + ' | ' + p.kills + 'K/' + p.deaths + 'D (' + kd + ') | ' + (dead ? '💀' : '❤️' + hpPct + '%') + '</span>' +
+        '<span class="pl-stats">' + p.kills + 'K/' + p.deaths + 'D (' + kd + ') | ' + (dead ? '💀' : '❤️' + hpPct + '%') + '</span>' +
         '</div>';
     })
     .join("");
@@ -1838,7 +1830,7 @@ function updateLeaderboardOverlay() {
 
   const sorted = [...players]
     .filter(function(p) { return p.username && p.hp !== undefined; })
-    .sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+    .sort(function(a, b) { return (b.kills || 0) - (a.kills || 0); });
 
   const top = sorted.slice(0, 10);
   const localIdx = sorted.findIndex(function(p) { return p.id === playerId; });
@@ -1849,7 +1841,7 @@ function updateLeaderboardOverlay() {
     html += '<div class="lb-row' + (isMe ? " lb-me" : "") + '">' +
       '<span class="lb-rank">' + (i + 1) + '.</span>' +
       '<span class="lb-name">' + esc(p.username) + '</span>' +
-      '<span class="lb-score">' + (p.score || 0) + '</span>' +
+      '<span class="lb-score">' + (p.kills || 0) + '</span>' +
       '</div>';
   });
 
@@ -1860,7 +1852,7 @@ function updateLeaderboardOverlay() {
     html += '<div class="lb-row lb-me">' +
       '<span class="lb-rank">' + (localIdx + 1) + '.</span>' +
       '<span class="lb-name">' + esc(me.username) + '</span>' +
-      '<span class="lb-score">' + (me.score || 0) + '</span>' +
+      '<span class="lb-score">' + (me.kills || 0) + '</span>' +
       '</div>';
   }
 
@@ -2046,16 +2038,25 @@ function connect() {
       return;
     }
 
-    // ===== ORB COLLECTED =====
-    if (data.type === "orbCollected") {
-      // Could add particle effect
+    // ===== HEADSHOT EVENT =====
+    if (data.type === "headshot") {
+      // Track this player as recently headshotted for gold damage number
+      recentHeadshots.add(data.victim);
+      // Show headshot hit marker for shooter
+      const localPlayer = players.find(function(p) { return p.id === playerId; });
+      if (localPlayer && data.victim !== localPlayer.username) {
+        createHitMarker();
+        // Extra screen shake for headshot
+        triggerScreenShake(3);
+      }
       return;
     }
 
     // ===== KILLS =====
     if (data.type === "kill") {
-      addKillFeedEntry(data.killer, data.victim, data.weapon);
+      addKillFeedEntry(data.killer, data.victim, data.weapon, data.isHeadshot);
       pendingDeathWeapon.set(data.victim, data.weapon);
+      if (data.isHeadshot) pendingHeadshot.set(data.victim, true);
 
       const localPlayer = players.find(function(p) { return p.id === playerId; });
       if (localPlayer) {
@@ -2076,14 +2077,7 @@ function connect() {
             const killerEl = document.getElementById("deathKiller");
             if (killerEl) killerEl.textContent = "Killed by " + data.killer;
             const droppedEl = document.getElementById("deathDroppedScore");
-            if (droppedEl) {
-              if (data.droppedScore > 0) {
-                droppedEl.textContent = "-" + data.droppedScore + " points dropped!";
-                droppedEl.style.display = "block";
-              } else {
-                droppedEl.style.display = "none";
-              }
-            }
+            if (droppedEl) droppedEl.style.display = "none";
           }
           // Start auto-respawn countdown
           startAutoRespawnTimer();
@@ -2221,7 +2215,7 @@ function connect() {
           kills: p[9], skin: p[10] || 0,
           speedBoosted: p[11] === 1, shielded: p[12] === 1,
           invisible: p[13] === 1, regen: p[14] === 1,
-          armor: p[15] || 0, dashing: p[16] === 1, score: p[17] || 0,
+          armor: p[15] || 0, dashing: p[16] === 1,
           username: usernameMap.get(p[0]) || "Player",
         };
       }
@@ -2252,14 +2246,6 @@ function connect() {
         if (Array.isArray(pk)) return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
         return pk;
       });
-
-      // Update orbs
-      if (data.orbs) {
-        orbs = data.orbs.map(function(o) {
-          if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
-          return o;
-        });
-      }
 
       // Zone
       if (data.z) {
@@ -2312,10 +2298,10 @@ function connect() {
           if (p.id === playerId) {
             createDamageIndicator(p.x, p.y);
             triggerScreenShake(6);
-            if (p.hp === 1) startHeartbeat();
+            if (p.hp <= 20) startHeartbeat();
           }
         } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
-          if (p.hp > 1) stopHeartbeat();
+          if (p.hp > 20) stopHeartbeat();
         }
         previousPlayerStates.set(p.id, { hp: p.hp, x: p.x, y: p.y });
 
@@ -2460,7 +2446,7 @@ function connect() {
 
           // MVP Awards section
           if (data.mvpAwards && data.mvpAwards.length > 0) {
-            var mvpIcons = { mostKills: "\ud83d\udde1\ufe0f", mostOrbs: "\ud83d\udd2e", longestStreak: "\ud83d\udd25", mostDamage: "\ud83d\udca5" };
+            var mvpIcons = { mostKills: "\ud83d\udde1\ufe0f", longestStreak: "\ud83d\udd25", mostDamage: "\ud83d\udca5" };
             html += '<div class="mvp-section">';
             html += '<div class="mvp-title">\u2b50 MVP AWARDS \u2b50</div>';
             data.mvpAwards.forEach(function(award) {
@@ -2483,7 +2469,7 @@ function connect() {
             var isWinner = i === 0;
             var cls = "round-end-row" + (isWinner ? " winner" : "") + (isMe ? " me" : "");
             var medal = i < 3 ? medals[i] : (i + 1) + ".";
-            return '<div class="' + cls + '"><span>' + medal + " " + esc(s.username) + '</span><span>\u2b50' + s.score + ' | ' + s.kills + 'K/' + s.deaths + 'D</span></div>';
+            return '<div class="' + cls + '"><span>' + medal + " " + esc(s.username) + '</span><span>' + s.kills + 'K/' + s.deaths + 'D</span></div>';
           }).join("");
           html += '</div>';
           sbEl.innerHTML = html;
@@ -2526,10 +2512,6 @@ function connect() {
       if (deathOv2) deathOv2.style.display = "none";
 
       // Reset game state for new round
-      orbs = (data.orbs || []).map(function(o) {
-        if (Array.isArray(o)) return { id: o[0], x: o[1], y: o[2] };
-        return o;
-      });
       bullets = [];
       pickups = [];
       lootCrates = [];
@@ -3234,9 +3216,9 @@ if (isTouchDevice) {
 
 // ===== KILL FEED =====
 
-function addKillFeedEntry(killer, victim, weapon) {
+function addKillFeedEntry(killer, victim, weapon, isHeadshot) {
   const icon = weapon === "streak" ? "🔥" : weapon === "zone" ? "🔴" : weapon === "bomb" ? "💣" : weapon === "lightning" ? "⚡" : (WEAPON_KILL_ICONS[weapon] || "💀");
-  const entry = { killer, victim, icon, timestamp: Date.now() };
+  const entry = { killer, victim, icon, timestamp: Date.now(), headshot: !!isHeadshot };
   killFeedEntries.push(entry);
   if (killFeedEntries.length > KILL_FEED_MAX) killFeedEntries.shift();
   killFeedDirty = true;
@@ -3276,9 +3258,9 @@ function renderKillFeed() {
         );
       }
       return (
-        `<div class="kill-entry" style="opacity:${opacity}">` +
+        `<div class="kill-entry${e.headshot ? ' headshot-kill' : ''}" style="opacity:${opacity}">` +
         `<span class="killer">${esc(e.killer)}</span>` +
-        `<span class="weapon-icon">${e.icon}</span>` +
+        `<span class="weapon-icon">${e.icon}${e.headshot ? '<span class="hs-badge">HS</span>' : ''}</span>` +
         `<span class="victim">${esc(e.victim)}</span></div>`
       );
     })
@@ -3510,50 +3492,6 @@ function renderPickupEffects() {
     ctx.textAlign = "start";
     ctx.globalAlpha = 1.0;
   });
-}
-
-// ============ ORB RENDERING ============
-// Pre-rendered orb sprite — radial gradient created ONCE instead of once per orb per frame.
-let _orbSprite = null;
-const _ORB_SPRITE_SIZE = 42; // 2 * (orbRadius 13 + glowRing 8)
-
-function _ensureOrbSprite() {
-  if (_orbSprite) return;
-  _orbSprite = document.createElement("canvas");
-  _orbSprite.width = _ORB_SPRITE_SIZE;
-  _orbSprite.height = _ORB_SPRITE_SIZE;
-  const oc = _orbSprite.getContext("2d");
-  const c = _ORB_SPRITE_SIZE / 2; // centre = 21
-  const r = 13;
-  // Outer glow ring
-  oc.globalAlpha = 0.3;
-  oc.fillStyle = "#00ffcc";
-  oc.beginPath();
-  oc.arc(c, c, r + 8, 0, Math.PI * 2);
-  oc.fill();
-  // Inner orb with radial gradient (built once)
-  oc.globalAlpha = 0.9;
-  const g = oc.createRadialGradient(c, c, 0, c, c, r);
-  g.addColorStop(0, "#ffffff");
-  g.addColorStop(0.4, "#66ffdd");
-  g.addColorStop(1, "#00cc99");
-  oc.fillStyle = g;
-  oc.beginPath();
-  oc.arc(c, c, r, 0, Math.PI * 2);
-  oc.fill();
-}
-
-function renderOrbs() {
-  if (orbs.length === 0) return;
-  _ensureOrbSprite();
-  const now = Date.now();
-  for (let i = 0; i < orbs.length; i++) {
-    const orb = orbs[i];
-    if (!isOnScreen(orb.x, orb.y)) continue;
-    const pulse = 0.7 + 0.3 * Math.sin(now * 0.004 + orb.x * 0.1 + orb.y * 0.1);
-    const sz = _ORB_SPRITE_SIZE * pulse;
-    ctx.drawImage(_orbSprite, orb.x - sz * 0.5, orb.y - sz * 0.5, sz, sz);
-  }
 }
 
 function renderPickups() {
@@ -4172,21 +4110,12 @@ function _renderMinimapContent(mc, framePlayer) {
   mc.lineWidth = 1;
   mc.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
-  // Draw orbs as small cyan dots
-  for (let i = 0; i < orbs.length; i++) {
-    const orb = orbs[i];
-    mc.fillStyle = "#00ffcc";
-    mc.beginPath();
-    mc.arc(orb.x * scaleX, orb.y * scaleY, 1.5, 0, Math.PI * 2);
-    mc.fill();
-  }
-
-  // Find crown leader for minimap
+  // Find crown leader for minimap (most kills)
   let minimapCrownId = null;
-  let minimapMaxScore = 9;
+  let minimapMaxKills = 1;
   for (let i = 0; i < players.length; i++) {
-    if (players[i].hp > 0 && (players[i].score || 0) > minimapMaxScore) {
-      minimapMaxScore = players[i].score;
+    if (players[i].hp > 0 && (players[i].kills || 0) > minimapMaxKills) {
+      minimapMaxKills = players[i].kills;
       minimapCrownId = players[i].id;
     }
   }
@@ -4405,9 +4334,6 @@ function render() {
   renderPickups();
   renderPickupEffects();
 
-  // Render orbs (collectible points like slither.io)
-  renderOrbs();
-
   // Render loot crates
   updateCrateDestroyEffects();
   renderLootCrates();
@@ -4432,12 +4358,12 @@ function render() {
     }
   }
 
-  // Find the #1 player by score (crown leader) — minimum 10 pts, must be alive
+  // Find the #1 player by kills (crown leader) — minimum 2 kills, must be alive
   let crownLeaderId = null;
-  let crownMaxScore = 9;
+  let crownMaxKills = 1;
   for (let i = 0; i < players.length; i++) {
-    if (players[i].hp > 0 && (players[i].score || 0) > crownMaxScore) {
-      crownMaxScore = players[i].score;
+    if (players[i].hp > 0 && (players[i].kills || 0) > crownMaxKills) {
+      crownMaxKills = players[i].kills;
       crownLeaderId = players[i].id;
     }
   }
@@ -4856,7 +4782,7 @@ function render() {
     ctx.fillText(localP.hp + "/" + maxHp, hudRX + 48, hudY - 8);
 
     // Ammo section (center)
-    const weaponMaxAmmo = localP.weapon === "shotgun" ? 10 : localP.weapon === "sniper" ? 10 : 45;
+    const weaponMaxAmmo = localP.weapon === "shotgun" ? 8 : localP.weapon === "sniper" ? 5 : 30;
     const ammoText = localP.reloading ? "RELOADING" : localP.shots + " / " + weaponMaxAmmo;
     const ammoColor = localP.reloading ? "#ff6b35" : (localP.shots <= 5 ? "#ff8844" : "#ddeedd");
     ctx.font = "bold 13px 'Share Tech Mono', monospace";
@@ -4864,15 +4790,11 @@ function render() {
     ctx.textAlign = "center";
     ctx.fillText(ammoText, hudCenterX, hudY + 4);
 
-    // Score section (right)
+    // Kills section (right)
     ctx.font = "bold 12px 'Rajdhani', sans-serif";
-    ctx.fillStyle = "#ffcc66";
-    ctx.textAlign = "center";
-    ctx.fillText("⭐ " + (localP.score || 0), hudRX + hudW - 45, hudY + 4);
-
-    // Kills
     ctx.fillStyle = "#ff6b53";
-    ctx.fillText("💀 " + (localP.kills || 0), hudRX + hudW - 45, hudY - 10);
+    ctx.textAlign = "center";
+    ctx.fillText("💀 " + (localP.kills || 0), hudRX + hudW - 45, hudY - 3);
 
     ctx.textAlign = "start";
   }

@@ -46,20 +46,20 @@ func updateGame(game *Game) []playerStateSnapshot {
 
 	now := unixMs()
 
-	// ── Comeback mechanic: mark the player with the lowest score as underdog ──
+	// ── Comeback mechanic: mark the player with the fewest kills as underdog ──
 	{
-		var lowestScore int = math.MaxInt32
+		var lowestKills int = math.MaxInt32
 		var alivePlayers int
 		for _, p := range game.Players {
 			if p.HP > 0 {
 				alivePlayers++
-				if p.Score < lowestScore {
-					lowestScore = p.Score
+				if p.Kills < lowestKills {
+					lowestKills = p.Kills
 				}
 			}
 		}
 		for _, p := range game.Players {
-			if alivePlayers >= 3 && p.HP > 0 && p.Score == lowestScore {
+			if alivePlayers >= 3 && p.HP > 0 && p.Kills == lowestKills {
 				p.IsUnderdog = true
 			} else {
 				p.IsUnderdog = false
@@ -223,13 +223,32 @@ func updateGame(game *Game) []playerStateSnapshot {
 		if enemy != nil {
 			bulletsToRemove[bullet.ID] = true
 
-			// Comeback mechanic: underdog damage boost (+1)
+			// CS2-style headshot detection: if bullet hits upper portion of player hitbox
+			isHeadshot := false
+			{
+				// Calculate where in the hitbox the bullet struck
+				// Bullet travel direction determines "up" — headshots happen when
+				// the bullet hits the leading edge of the player sprite.
+				// Simplified: use Y offset from player center. Negative Y = top = head.
+				dy := bullet.Y - enemy.Y
+				headThreshold := -GameConfig.PlayerRadius * GameConfig.HeadshotZone
+				if dy < headThreshold {
+					isHeadshot = true
+				}
+			}
+
+			// Comeback mechanic: underdog damage boost (+25%)
 			effectiveDamage := bullet.Damage
 			for _, p := range game.Players {
 				if p.ID == bullet.PlayerID && p.IsUnderdog {
-					effectiveDamage++
+					effectiveDamage = int(float64(effectiveDamage) * 1.25)
 					break
 				}
+			}
+
+			// Apply headshot multiplier
+			if isHeadshot {
+				effectiveDamage = int(float64(effectiveDamage) * GameConfig.HeadshotMultiplier)
 			}
 
 			// Shield absorption
@@ -265,6 +284,17 @@ func updateGame(game *Game) []playerStateSnapshot {
 				enemy.Y = clamp(enemy.Y+kbY, GameConfig.PlayerRadius, GameConfig.ArenaHeight-GameConfig.PlayerRadius)
 			}
 
+			// Broadcast headshot event for client-side feedback
+			if isHeadshot {
+				broadcast(game, map[string]interface{}{
+					"type":   "headshot",
+					"victim": enemy.Username,
+					"damage": effectiveDamage,
+					"x":      int(math.Round(enemy.X)),
+					"y":      int(math.Round(enemy.Y)),
+				})
+			}
+
 			if enemy.HP <= 0 {
 				enemy.HP = 0
 				var shooter *Player
@@ -274,7 +304,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 						break
 					}
 				}
-				handleKill(shooter, enemy, string(bullet.Weapon), game)
+				handleKill(shooter, enemy, string(bullet.Weapon), game, isHeadshot)
 			}
 		}
 	}
@@ -338,46 +368,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 		game.Pickups = game.Pickups[:n]
 	}
 
-	// Remove expired orbs (in-place compaction)
-	{
-		n := 0
-		for _, o := range game.Orbs {
-			if now-o.CreatedAt < GameConfig.OrbLifetime {
-				game.Orbs[n] = o
-				n++
-			}
-		}
-		for i := n; i < len(game.Orbs); i++ {
-			game.Orbs[i] = nil
-		}
-		game.Orbs = game.Orbs[:n]
-	}
-
-	// Orb collisions (in-place removal, no per-orb broadcast — binary state handles it)
-	orbCollDist := GameConfig.PlayerRadius + GameConfig.OrbRadius
-	orbCollDistSq := orbCollDist * orbCollDist
-	for _, player := range game.Players {
-		if player.HP <= 0 {
-			continue
-		}
-		n := 0
-		for _, orb := range game.Orbs {
-			dx := player.X - orb.X
-			dy := player.Y - orb.Y
-			if dx*dx+dy*dy < orbCollDistSq {
-				player.Score += GameConfig.OrbScore
-				player.OrbsCollected++
-			} else {
-				game.Orbs[n] = orb
-				n++
-			}
-		}
-		for i := n; i < len(game.Orbs); i++ {
-			game.Orbs[i] = nil
-		}
-		game.Orbs = game.Orbs[:n]
-	}
-
 	// Bomb explosions (in-place compaction)
 	bombRadiusSq := GameConfig.BombRadius * GameConfig.BombRadius
 	{
@@ -398,7 +388,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 							player.HP -= GameConfig.BombDamage
 							if player.HP <= 0 {
 								player.HP = 0
-								handleKill(nil, player, "bomb", game)
+								handleKill(nil, player, "bomb", game, false)
 							}
 						}
 					}
@@ -441,7 +431,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 							player.HP -= GameConfig.LightningDamage
 							if player.HP <= 0 {
 								player.HP = 0
-								handleKill(nil, player, "lightning", game)
+								handleKill(nil, player, "lightning", game, false)
 							}
 						}
 					}
@@ -471,7 +461,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			continue
 		}
 		if now < player.RegenUntil && now-player.LastRegenTick >= GameConfig.RegenTickInterval {
-			player.HP = min(GameConfig.PlayerHP, player.HP+1)
+			player.HP = min(GameConfig.PlayerHP, player.HP+GameConfig.RegenAmount)
 			player.LastRegenTick = now
 		}
 	}
@@ -523,12 +513,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 				visPickups = append(visPickups, pk)
 			}
 		}
-		visOrbs := make([]*Orb, 0)
-		for _, o := range game.Orbs {
-			if math.Abs(o.X-vx) < half && math.Abs(o.Y-vy) < half {
-				visOrbs = append(visOrbs, o)
-			}
-		}
 		visCrates := make([]*LootCrate, 0)
 		for _, c := range game.LootCrates {
 			if math.Abs(c.X-vx) < half && math.Abs(c.Y-vy) < half {
@@ -542,7 +526,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 			Players: visPlayers,
 			Bullets: visBullets,
 			Pickups: visPickups,
-			Orbs:    visOrbs,
 			Crates:  visCrates,
 			Zone:    zone,
 		})
@@ -637,7 +620,6 @@ func initPersistentGame() *Game {
 		Bullets:     make([]*Bullet, 0),
 		Obstacles:   obstacles,
 		Pickups:     make([]*Pickup, 0),
-		Orbs:        make([]*Orb, 0),
 		Bombs:       make([]*Bomb, 0),
 		Lightnings:  make([]*Lightning, 0),
 		LootCrates:  make([]*LootCrate, 0),
@@ -653,7 +635,6 @@ func initPersistentGame() *Game {
 		MatchStartTime:     now,
 		LastObstacleSpawn:  now,
 		LastPickupSpawn:    now,
-		LastOrbSpawn:       now,
 		LastBombSpawn:      now,
 		LastLightningSpawn: now,
 		LastCrateSpawn:     now,
@@ -665,7 +646,6 @@ func initPersistentGame() *Game {
 
 	// Spawn initial entities
 	game.mu.Lock()
-	spawnInitialOrbs(game)
 	spawnInitialLootCrates(game)
 	game.mu.Unlock()
 

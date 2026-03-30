@@ -89,50 +89,6 @@ func spawnPickup(game *Game) {
 	}
 }
 
-/* ================= ORBS ================= */
-
-func spawnOrb(game *Game) {
-	if len(game.Orbs) >= GameConfig.OrbMax {
-		return
-	}
-
-	batchSize := 3 + rand.Intn(3)
-	for i := 0; i < batchSize; i++ {
-		if len(game.Orbs) >= GameConfig.OrbMax {
-			break
-		}
-
-		var orbX, orbY float64
-		validPosition := false
-		for attempts := 0; attempts < 20; attempts++ {
-			orbX = 40 + rand.Float64()*(GameConfig.ArenaWidth-80)
-			orbY = 40 + rand.Float64()*(GameConfig.ArenaHeight-80)
-			if isPositionClearGrid(orbX, orbY, globalObstacleGrid, GameConfig.OrbRadius) {
-				validPosition = true
-				break
-			}
-		}
-
-		if validPosition {
-			orb := &Orb{
-				ID:        nextEntityID(),
-				ShortID:   game.NextShortID,
-				X:         orbX,
-				Y:         orbY,
-				CreatedAt: unixMs(),
-			}
-			game.NextShortID++
-			game.Orbs = append(game.Orbs, orb)
-		}
-	}
-}
-
-func spawnInitialOrbs(game *Game) {
-	for i := 0; i < 15; i++ {
-		spawnOrb(game)
-	}
-}
-
 /* ================= LOOT CRATES ================= */
 
 func destroyLootCrate(crate *LootCrate, game *Game) {
@@ -310,12 +266,6 @@ func checkSpawnTimers(game *Game, now int64) {
 	if now-game.LastPickupSpawn >= GameConfig.PickupSpawnInterval {
 		game.LastPickupSpawn = now
 		spawnPickup(game)
-	}
-
-	// Orb spawn
-	if now-game.LastOrbSpawn >= GameConfig.OrbSpawnInterval {
-		game.LastOrbSpawn = now
-		spawnOrb(game)
 	}
 
 	// Bomb spawn (randomized delay)

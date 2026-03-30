@@ -66,9 +66,21 @@ var GameConfig = struct {
 	// Regen
 	RegenDuration     int64
 	RegenTickInterval int64
+	RegenAmount       int
 	// Armor
 	ArmorAmount int
 	ArmorMax    int
+	// Headshot
+	HeadshotMultiplier float64
+	HeadshotZone       float64 // fraction of radius from center considered head (top portion)
+	// Accuracy
+	MachinegunBaseSpread float64
+	MachinegunMoveSpread float64
+	ShotgunMoveSpread    float64
+	SniperBaseSpread     float64
+	SniperMoveSpread     float64
+	MinigunBaseSpread    float64
+	MinigunMoveSpread    float64
 	// Dash
 	DashCooldown   int64
 	DashDuration   int64
@@ -85,19 +97,11 @@ var GameConfig = struct {
 	LightningDamage        int
 	LightningRadius        float64
 	LightningBlindDuration int64
-	// Score
+	// Round
 	KillsToWin    int
 	GameDuration  int64
 	RoundDuration int64
 	RoundRestartDelay int64
-	KillScore     int
-	OrbScore      int
-	// Orbs
-	OrbSpawnInterval     int64
-	OrbRadius            float64
-	OrbMax               int
-	OrbLifetime          int64
-	DeathOrbDropFraction float64
 	// Respawn
 	RespawnTime int64
 	// Obstacle spawn
@@ -129,66 +133,78 @@ var GameConfig = struct {
 	MinPlayers:      2,
 	QueueCountdown:  10,
 	ReadyCountdown:  3,
-	PlayerHP:        8,
-	LMSPlayerHP:     20,
+	PlayerHP:        100,
+	LMSPlayerHP:     150,
 	PlayerSpeed:     9,
 	PlayerRadius:    20,
-	ShotsPerMag:     45,
-	ShotCooldown:    40,
+	ShotsPerMag:     30,
+	ShotCooldown:    90,
 	ReloadTime:      1950,
 	MachinegunReloadTime: 1800,
 	ShotgunReloadTime:    2200,
 	SniperReloadTime:     2800,
 	BulletSpeed:     22,
 	BulletLifetime:  2500,
-	ArenaWidth:      4000,
-	ArenaHeight:     4000,
-	// Machinegun
-	MachinegunCooldown: 40,
-	MachinegunDamage:   1,
-	MachinegunRecoil:   0.10,
-	// Shotgun
-	ShotgunCooldown: 450,
-	ShotgunDamage:   4,
-	ShotgunPellets:  8,
-	ShotgunSpread:   0.40,
-	ShotgunAmmo:     10,
-	ShotgunBulletLifetime: 700,
-	ShotgunBulletSpeed: 0.65,
-	// Knife
-	KnifeCooldown:   180,
-	KnifeDamage:     5,
+	ArenaWidth:      2400,
+	ArenaHeight:     2400,
+	// Machinegun (M4A4-like)
+	MachinegunCooldown: 90,
+	MachinegunDamage:   27,
+	MachinegunRecoil:   0.06,
+	// Shotgun (Nova-like)
+	ShotgunCooldown: 900,
+	ShotgunDamage:   26,
+	ShotgunPellets:  5,
+	ShotgunSpread:   0.35,
+	ShotgunAmmo:     8,
+	ShotgunBulletLifetime: 500,
+	ShotgunBulletSpeed: 0.55,
+	// Knife (CS2-style)
+	KnifeCooldown:   400,
+	KnifeDamage:     40,
 	KnifeRange:      70,
 	KnifeSpeedBonus: 1.6,
 	// Pickups
 	PickupSpawnInterval:  18000,
 	PickupLifetime:       30000,
 	PickupRadius:         40,
-	PickupHealthAmount:   5,
+	PickupHealthAmount:   25,
 	PickupSpeedDuration:  12000,
 	PickupSpeedMultiplier: 1.5,
 	MaxPickups:           4,
-	// Minigun
-	MinigunCooldown: 14,
-	MinigunDamage:   2,
-	MinigunRecoil:   0.06,
+	// Minigun (Negev-like)
+	MinigunCooldown: 60,
+	MinigunDamage:   18,
+	MinigunRecoil:   0.12,
 	MinigunDuration: 15000,
-	// Sniper
-	SniperCooldown:    900,
-	SniperDamage:      10,
+	// Sniper (AWP-like)
+	SniperCooldown:    1500,
+	SniperDamage:      115,
 	SniperBulletSpeed: 48,
-	SniperAmmo:        10,
+	SniperAmmo:        5,
 	// Shield
-	ShieldDuration: 15000,
-	ShieldAbsorb:   5,
+	ShieldDuration: 10000,
+	ShieldAbsorb:   50,
 	// Invisibility
 	InvisibilityDuration: 12000,
 	// Regen
 	RegenDuration:     16000,
 	RegenTickInterval: 1200,
-	// Armor
-	ArmorAmount: 3,
-	ArmorMax:    3,
+	RegenAmount:       5,
+	// Headshot
+	HeadshotMultiplier: 2.5,
+	HeadshotZone:       0.35, // top 35% of player hitbox = headshot
+	// Accuracy (radians of spread)
+	MachinegunBaseSpread: 0.02,
+	MachinegunMoveSpread: 0.06,
+	ShotgunMoveSpread:    0.15,
+	SniperBaseSpread:     0.002,
+	SniperMoveSpread:     0.12,
+	MinigunBaseSpread:    0.04,
+	MinigunMoveSpread:    0.10,
+	// Armor (kevlar-style)
+	ArmorAmount: 50,
+	ArmorMax:    100,
 	// Dash
 	DashCooldown:   1000,
 	DashDuration:   250,
@@ -197,27 +213,19 @@ var GameConfig = struct {
 	// Bombs
 	BombSpawnInterval: 3000,
 	BombFuseTime:      1000,
-	BombDamage:        1,
+	BombDamage:        35,
 	BombRadius:        80,
 	// Lightning
 	LightningSpawnInterval: 5000,
 	LightningFuseTime:      250,
-	LightningDamage:        2,
+	LightningDamage:        50,
 	LightningRadius:        150,
 	LightningBlindDuration: 5000,
-	// Score
+	// Round
 	KillsToWin:    999,
 	GameDuration:  0,
 	RoundDuration: 300000,
 	RoundRestartDelay: 10000,
-	KillScore:     10,
-	OrbScore:      1,
-	// Orbs
-	OrbSpawnInterval:     1500,
-	OrbRadius:            16,
-	OrbMax:               250,
-	OrbLifetime:          45000,
-	DeathOrbDropFraction: 0.5,
 	// Respawn
 	RespawnTime: 2000,
 	// Obstacle spawn
@@ -230,7 +238,7 @@ var GameConfig = struct {
 	ZoneDamage:         1,
 	ZoneMinSize:        200,
 	// Loot crates
-	LootCrateHP:             3,
+	LootCrateHP:             80,
 	LootCrateSize:           28,
 	LootCrateCount:          6,
 	LootCrateRespawnInterval: 20000,
@@ -261,14 +269,14 @@ var ObstacleConfig = struct {
 	TreeSize      float64
 	TreeSpacing   float64
 }{
-	WallCountMin:  40,
-	WallCountMax:  60,
+	WallCountMin:  20,
+	WallCountMax:  35,
 	WallLengthMin: 2,
-	WallLengthMax: 10,
+	WallLengthMax: 8,
 	WallBlockSize: 14,
 	WallSpacing:   60,
-	TreeCountMin:  20,
-	TreeCountMax:  35,
+	TreeCountMin:  10,
+	TreeCountMax:  20,
 	TreeSize:      24,
 	TreeSpacing:   70,
 }

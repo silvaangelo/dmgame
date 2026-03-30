@@ -45,7 +45,6 @@ func endRound(game *Game) {
 		Username string `msgpack:"username"`
 		Kills    int    `msgpack:"kills"`
 		Deaths   int    `msgpack:"deaths"`
-		Score    int    `msgpack:"score"`
 	}
 	scoreboard := make([]scoreEntry, 0, len(game.Players))
 	for _, p := range game.Players {
@@ -53,13 +52,12 @@ func endRound(game *Game) {
 			Username: p.Username,
 			Kills:    p.Kills,
 			Deaths:   p.Deaths,
-			Score:    p.Score,
 		})
 	}
-	// Sort by score desc
+	// Sort by kills desc
 	for i := 0; i < len(scoreboard); i++ {
 		for j := i + 1; j < len(scoreboard); j++ {
-			if scoreboard[j].Score > scoreboard[i].Score {
+			if scoreboard[j].Kills > scoreboard[i].Kills {
 				scoreboard[i], scoreboard[j] = scoreboard[j], scoreboard[i]
 			}
 		}
@@ -100,13 +98,10 @@ func endRound(game *Game) {
 	}
 	mvpAwards := make([]mvpAward, 0, 4)
 
-	var mostKillsP, mostOrbsP, longestStreakP, mostDamageP *Player
+	var mostKillsP, longestStreakP, mostDamageP *Player
 	for _, p := range game.Players {
 		if mostKillsP == nil || p.Kills > mostKillsP.Kills {
 			mostKillsP = p
-		}
-		if mostOrbsP == nil || p.OrbsCollected > mostOrbsP.OrbsCollected {
-			mostOrbsP = p
 		}
 		if longestStreakP == nil || p.MaxStreak > longestStreakP.MaxStreak {
 			longestStreakP = p
@@ -117,9 +112,6 @@ func endRound(game *Game) {
 	}
 	if mostKillsP != nil && mostKillsP.Kills > 0 {
 		mvpAwards = append(mvpAwards, mvpAward{"mostKills", "Most Kills", mostKillsP.Username, mostKillsP.Kills})
-	}
-	if mostOrbsP != nil && mostOrbsP.OrbsCollected > 0 {
-		mvpAwards = append(mvpAwards, mvpAward{"mostOrbs", "Most Orbs", mostOrbsP.Username, mostOrbsP.OrbsCollected})
 	}
 	if longestStreakP != nil && longestStreakP.MaxStreak >= 2 {
 		mvpAwards = append(mvpAwards, mvpAward{"longestStreak", "Longest Streak", longestStreakP.Username, longestStreakP.MaxStreak})
@@ -182,7 +174,6 @@ func resetPersistentRound(game *Game) {
 	game.Obstacles = make([]*Obstacle, 0)
 	game.Bullets = make([]*Bullet, 0)
 	game.Pickups = make([]*Pickup, 0)
-	game.Orbs = make([]*Orb, 0)
 	game.Bombs = make([]*Bomb, 0)
 	game.Lightnings = make([]*Lightning, 0)
 	game.LootCrates = make([]*LootCrate, 0)
@@ -193,7 +184,6 @@ func resetPersistentRound(game *Game) {
 	now := unixMs()
 	game.LastObstacleSpawn = now
 	game.LastPickupSpawn = now
-	game.LastOrbSpawn = now
 	game.LastBombSpawn = now
 	game.LastLightningSpawn = now
 	game.LastCrateSpawn = now
@@ -204,7 +194,6 @@ func resetPersistentRound(game *Game) {
 	for _, p := range game.Players {
 		p.Kills = 0
 		p.Deaths = 0
-		p.Score = 0
 		p.KillStreak = 0
 		p.LastKilledBy = ""
 		p.WaitingForRespawn = false
@@ -226,7 +215,6 @@ func resetPersistentRound(game *Game) {
 		// Reset MVP tracking
 		p.TotalDamage = 0
 		p.MaxStreak = 0
-		p.OrbsCollected = 0
 		p.IsUnderdog = false
 	}
 
@@ -262,7 +250,6 @@ func resetPersistentRound(game *Game) {
 	}
 
 	// Spawn initial entities
-	spawnInitialOrbs(game)
 	spawnInitialLootCrates(game)
 
 	// Build shortIdMap
@@ -284,7 +271,6 @@ func resetPersistentRound(game *Game) {
 		msg, _ := Serialize(map[string]interface{}{
 			"type":        "roundStart",
 			"obstacles":   serializeObstacles(game.Obstacles),
-			"orbs":        serializeOrbs(game.Orbs),
 			"arenaWidth":  GameConfig.ArenaWidth,
 			"arenaHeight": GameConfig.ArenaHeight,
 			"maxHp":       GameConfig.PlayerHP,
@@ -383,7 +369,6 @@ func addPlayerToGame(player *Player, game *Game) {
 	player.Reloading = false
 	player.Kills = 0
 	player.Deaths = 0
-	player.Score = 0
 	player.Weapon = WeaponMachinegun
 	player.Keys = Keys{}
 	player.LastProcessedInput = 0
@@ -418,7 +403,7 @@ func removePlayerFromGame(playerID string, game *Game) {
 
 	if player != nil {
 		updateStats(player.Username, player.Kills, player.Deaths, false)
-		fmt.Printf("➖ %s left the arena (score: %d)\n", player.Username, player.Score)
+		fmt.Printf("➖ %s left the arena (%dK/%dD)\n", player.Username, player.Kills, player.Deaths)
 	}
 
 	game.Players = removePlayerFromSlice(game.Players, playerID)
