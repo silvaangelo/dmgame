@@ -88,7 +88,6 @@ func serializePlayers(game *Game) []map[string]interface{} {
 			"deaths":   p.Deaths,
 			"weapon":   string(p.Weapon),
 			"skin":     p.Skin,
-			"armor":    p.Armor,
 		})
 	}
 	return result

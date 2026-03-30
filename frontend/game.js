@@ -12,8 +12,7 @@ var shortIdMap = {};
 var myShortId = 0;
 
 var BINARY_MARKER = 0x42;
-var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
-var BINARY_PICKUP_MAP = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen", 7: "armor" };
+var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 2: "knife", 4: "sniper" };
 
 function isBinaryState(buf) {
   if (!(buf instanceof ArrayBuffer) || buf.byteLength < 8) return false;
@@ -27,11 +26,10 @@ function parseBinaryState(buf) {
   // Header
   off += 1; // skip marker
   var flags = dv.getUint8(off); off += 1;
-  var hasZone = (flags & 2) !== 0;
   var seq = dv.getUint32(off, true); off += 4;
   var playerCount = dv.getUint16(off, true); off += 2;
 
-  // Players
+  // Players (26 bytes each)
   var parsedPlayers = [];
   for (var i = 0; i < playerCount; i++) {
     var sid = dv.getUint16(off, true); off += 2;
@@ -45,8 +43,7 @@ function parseBinaryState(buf) {
     var weaponCode = dv.getUint8(off); off += 1;
     var kills = dv.getUint16(off, true); off += 2;
     var skin = dv.getUint8(off); off += 1;
-    var powerFlags = dv.getUint8(off); off += 1;
-    var armor = dv.getUint8(off); off += 1;
+    var dashing = dv.getUint8(off) === 1; off += 1;
 
     var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
     parsedPlayers.push({
@@ -58,12 +55,7 @@ function parseBinaryState(buf) {
       aimAngle: aimAngle,
       weapon: BINARY_WEAPON_MAP[weaponCode] || "machinegun",
       kills: kills, skin: skin,
-      speedBoosted: (powerFlags & 1) !== 0,
-      shielded: (powerFlags & 2) !== 0,
-      invisible: (powerFlags & 4) !== 0,
-      regen: (powerFlags & 8) !== 0,
-      dashing: (powerFlags & 16) !== 0,
-      armor: armor,
+      dashing: dashing,
     });
   }
 
@@ -79,44 +71,10 @@ function parseBinaryState(buf) {
     parsedBullets.push({ id: "b" + bsid, x: bx, y: by, weapon: BINARY_WEAPON_MAP[bw] || "machinegun", angle: bAngle });
   }
 
-  // Pickups
-  var pickupCount = dv.getUint16(off, true); off += 2;
-  var parsedPickups = [];
-  for (var k = 0; k < pickupCount; k++) {
-    var pksid = dv.getUint16(off, true); off += 2;
-    var pkx = dv.getInt16(off, true); off += 2;
-    var pky = dv.getInt16(off, true); off += 2;
-    var pkt = dv.getUint8(off); off += 1;
-    parsedPickups.push({ id: "pk" + pksid, x: pkx, y: pky, type: BINARY_PICKUP_MAP[pkt] || "health" });
-  }
-
-  // Crates
-  var crateCount = dv.getUint16(off, true); off += 2;
-  var parsedCrates = [];
-  for (var n = 0; n < crateCount; n++) {
-    var csid = dv.getUint16(off, true); off += 2;
-    var cx = dv.getInt16(off, true); off += 2;
-    var cy = dv.getInt16(off, true); off += 2;
-    var chp = dv.getUint8(off); off += 1;
-    parsedCrates.push({ id: "c" + csid, x: cx, y: cy, hp: chp });
-  }
-
-  // Zone
-  var zone = null;
-  if (hasZone) {
-    zone = {
-      x: dv.getInt16(off, true), y: dv.getInt16(off + 2, true),
-      w: dv.getInt16(off + 4, true), h: dv.getInt16(off + 6, true),
-    };
-  }
-
   return {
     seq: seq,
     players: parsedPlayers,
     bullets: parsedBullets,
-    pickups: parsedPickups,
-    crates: parsedCrates,
-    zone: zone,
   };
 }
 
@@ -130,15 +88,6 @@ function handleBinaryState(buf) {
   // Binary state is always a full snapshot (no delta)
   var parsedPlayers = s.players;
   var parsedBullets = s.bullets;
-
-  // Pickups, crates — replace entirely (viewport-culled)
-  pickups = s.pickups;
-  lootCrates = s.crates;
-
-  // Zone
-  if (s.zone) {
-    arenaZone = s.zone;
-  }
 
   // Death/damage detection
   parsedPlayers.forEach(function(p) {
@@ -259,7 +208,7 @@ function handleBinaryState(buf) {
     var reconciledX = currentPlayer.x;
     var reconciledY = currentPlayer.y;
     pendingInputs.forEach(function(input) {
-      var result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon, currentPlayer.speedBoosted);
+      var result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon);
       reconciledX = result.x;
       reconciledY = result.y;
     });
@@ -310,7 +259,6 @@ const GAME_CONFIG = {
   BLOOD_PARTICLE_COUNT: 8,
   KILLS_TO_WIN: 999,
   KNIFE_SPEED_BONUS: 1.6,
-  PICKUP_SPEED_MULTIPLIER: 1.5,
   VIEWPORT_WIDTH: window.innerWidth,
   VIEWPORT_HEIGHT: window.innerHeight,
 };
@@ -456,13 +404,11 @@ const WEAPON_COOLDOWNS = {
   machinegun: 95,
   shotgun: 950,
   sniper: 1550,
-  minigun: 65,
 };
 const WEAPON_KILL_ICONS = {
   machinegun: "🔫",
   shotgun: "🔫",
   sniper: "🎯",
-  minigun: "🔫",
 };
 
 let ws;
@@ -470,7 +416,6 @@ let playerId;
 let loggedInUsername = "";
 let players = [];
 let bullets = [];
-let pickups = [];
 let mouseX = window.innerWidth / 2;
 let mouseY = window.innerHeight / 2;
 let screenMouseX = window.innerWidth / 2;
@@ -488,9 +433,6 @@ let lastDustTime = 0;
 let hitMarkers = [];
 let damageIndicators = [];
 let previousBulletPositions = new Map();
-let activeBombs = [];
-let activeLightnings = [];
-let flashbangOverlay = { alpha: 0, flicker: 0 }; // White screen flash for lightning
 
 // Low HP vignette + heartbeat
 let lowHPPulseTime = 0;
@@ -513,17 +455,6 @@ let killEffects = [];
 let deathAnimations = [];
 // Track death timestamps separately (survives players array replacement)
 const playerDeathTimes = new Map();
-
-// Dynamic arena zone (shrinking safe zone)
-let arenaZone = null; // { x, y, w, h } or null if not active
-let zoneWarningShown = false;
-
-// Zone clouds (floating outside safe zone)
-let zoneClouds = [];
-
-// Loot crates
-let lootCrates = [];
-let crateDestroyEffects = [];
 
 // Dash
 let dashCooldownUntil = 0;
@@ -1291,129 +1222,6 @@ let lowHPVignetteGradient = null;
 let lowHPVignetteW = 0;
 let lowHPVignetteH = 0;
 
-// Arena zone rendering (shrinking safe zone)
-function ensureZoneClouds() {
-  if (!arenaZone || zoneClouds.length > 0) return;
-  // Spawn clouds in the danger zone around the edges
-  const count = 30;
-  for (let i = 0; i < count; i++) {
-    zoneClouds.push({
-      x: Math.random() * GAME_CONFIG.ARENA_WIDTH,
-      y: Math.random() * GAME_CONFIG.ARENA_HEIGHT,
-      size: 40 + Math.random() * 80,
-      opacity: 0.15 + Math.random() * 0.25,
-      speed: 0.2 + Math.random() * 0.4,
-      angle: Math.random() * Math.PI * 2,
-      drift: (Math.random() - 0.5) * 0.005,
-    });
-  }
-}
-
-function updateZoneClouds() {
-  if (!arenaZone) return;
-  zoneClouds.forEach((c) => {
-    c.x += Math.cos(c.angle) * c.speed;
-    c.y += Math.sin(c.angle) * c.speed;
-    c.angle += c.drift;
-    // Wrap around arena edges
-    if (c.x < -c.size) c.x = GAME_CONFIG.ARENA_WIDTH + c.size;
-    if (c.x > GAME_CONFIG.ARENA_WIDTH + c.size) c.x = -c.size;
-    if (c.y < -c.size) c.y = GAME_CONFIG.ARENA_HEIGHT + c.size;
-    if (c.y > GAME_CONFIG.ARENA_HEIGHT + c.size) c.y = -c.size;
-  });
-}
-
-// Cached cloud sprite for zone rendering (avoids createRadialGradient per cloud per frame)
-let _cloudSprite = null;
-let _cloudSpriteSize = 0;
-
-function getCloudSprite(size) {
-  // Re-use if size is close enough (within 20%)
-  if (_cloudSprite && Math.abs(_cloudSpriteSize - size) < size * 0.2) return _cloudSprite;
-  const s = Math.ceil(size * 2);
-  const c = document.createElement("canvas");
-  c.width = s;
-  c.height = s;
-  const gc = c.getContext("2d");
-  const r = s / 2;
-  const g = gc.createRadialGradient(r, r, 0, r, r, r);
-  g.addColorStop(0, "rgba(200, 60, 60, 0.6)");
-  g.addColorStop(0.5, "rgba(150, 40, 40, 0.3)");
-  g.addColorStop(1, "rgba(100, 20, 20, 0)");
-  gc.fillStyle = g;
-  gc.beginPath();
-  gc.arc(r, r, r, 0, Math.PI * 2);
-  gc.fill();
-  _cloudSprite = c;
-  _cloudSpriteSize = size;
-  return c;
-}
-
-function renderZoneClouds() {
-  if (!arenaZone || zoneClouds.length === 0) return;
-  const z = arenaZone;
-  ctx.save();
-  // Only draw clouds outside the safe zone using clipping
-  ctx.beginPath();
-  ctx.rect(0, 0, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT);
-  ctx.rect(z.x + z.w, z.y, -z.w, z.h); // counter-clockwise to cut out safe zone
-  ctx.clip("evenodd");
-
-  zoneClouds.forEach((c) => {
-    const sprite = getCloudSprite(c.size);
-    ctx.globalAlpha = c.opacity;
-    ctx.drawImage(sprite, c.x - c.size, c.y - c.size, c.size * 2, c.size * 2);
-  });
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-function renderZone() {
-  if (!arenaZone) return;
-  const z = arenaZone;
-
-  ensureZoneClouds();
-  updateZoneClouds();
-
-  // Draw red danger overlay outside the safe zone using clipping
-  ctx.save();
-
-  // Fill entire arena with danger color, then clip out the safe zone
-  // Stronger red the further the zone has shrunk
-  const shrinkRatio = 1 - (z.w * z.h) / (GAME_CONFIG.ARENA_WIDTH * GAME_CONFIG.ARENA_HEIGHT);
-  const dangerAlpha = 0.12 + shrinkRatio * 0.18;
-  ctx.fillStyle = `rgba(180, 30, 30, ${dangerAlpha})`;
-
-  // Top strip
-  if (z.y > 0) ctx.fillRect(0, 0, GAME_CONFIG.ARENA_WIDTH, z.y);
-  // Bottom strip
-  const bottomY = z.y + z.h;
-  if (bottomY < GAME_CONFIG.ARENA_HEIGHT) ctx.fillRect(0, bottomY, GAME_CONFIG.ARENA_WIDTH, GAME_CONFIG.ARENA_HEIGHT - bottomY);
-  // Left strip (between top and bottom)
-  if (z.x > 0) ctx.fillRect(0, z.y, z.x, z.h);
-  // Right strip
-  const rightX = z.x + z.w;
-  if (rightX < GAME_CONFIG.ARENA_WIDTH) ctx.fillRect(rightX, z.y, GAME_CONFIG.ARENA_WIDTH - rightX, z.h);
-
-  // Render floating danger clouds
-  renderZoneClouds();
-
-  // Pulsing border for the safe zone
-  const pulse = 0.5 + 0.3 * Math.sin(Date.now() / 400);
-  ctx.strokeStyle = `rgba(255, 60, 60, ${pulse})`;
-  ctx.lineWidth = 3;
-  ctx.setLineDash([10, 6]);
-  ctx.strokeRect(z.x, z.y, z.w, z.h);
-  ctx.setLineDash([]);
-
-  // Inner glow on the safe zone border
-  ctx.strokeStyle = `rgba(255, 100, 100, ${pulse * 0.3})`;
-  ctx.lineWidth = 8;
-  ctx.strokeRect(z.x - 2, z.y - 2, z.w + 4, z.h + 4);
-
-  ctx.restore();
-}
-
 function renderLowHPVignette() {
   const localPlayer = players.find((p) => p.id === playerId);
   if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 20) return;
@@ -1545,9 +1353,8 @@ function renderExplosions() {
 // ===== MOVEMENT PREDICTION =====
 
 // Movement prediction function (matches server logic)
-function applyInput(x, y, keys, weapon, speedBoosted) {
-  const boostMultiplier = speedBoosted ? GAME_CONFIG.PICKUP_SPEED_MULTIPLIER : 1;
-  const speed = GAME_CONFIG.PLAYER_SPEED * boostMultiplier;
+function applyInput(x, y, keys, weapon) {
+  const speed = GAME_CONFIG.PLAYER_SPEED;
   const playerRadius = GAME_CONFIG.PLAYER_RADIUS;
   const radiusSq = playerRadius * playerRadius;
   const margin = playerRadius;
@@ -1590,14 +1397,8 @@ function initAudio() {
   loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
   loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
   loadAudioBuffer("readyalarm", `${assetBase}/assets/readyalarm.wav`);
-  loadAudioBuffer("lightning", `${assetBase}/assets/lightning-strike.mp3`);
   for (let i = 1; i <= 8; i++) loadAudioBuffer(`win-${i}`, `${assetBase}/assets/match-win/win-${i}.mp3`);
   for (let i = 1; i <= 9; i++) loadAudioBuffer(`lose-${i}`, `${assetBase}/assets/match-lose/lose-${i}.mp3`);
-  loadAudioBuffer("bomb-1", `${assetBase}/assets/bombs/bomb-1.mp3`);
-  loadAudioBuffer("bomb-2", `${assetBase}/assets/bombs/bomb-2.mp3`);
-  loadAudioBuffer("bomb-3", `${assetBase}/assets/bombs/bomb-3.mp3`);
-  loadAudioBuffer("bomb-4", `${assetBase}/assets/bombs/bomb-4.mp3`);
-  loadAudioBuffer("bomb-5", `${assetBase}/assets/bombs/bomb-5.mp3`);
 }
 
 async function loadAudioBuffer(name, url) {
@@ -1701,7 +1502,6 @@ function showStartScreen() {
   // Reset game state
   players = [];
   bullets = [];
-  pickups = [];
   explosions = [];
   bloodParticles = [];
   bloodStains = [];
@@ -1711,11 +1511,8 @@ function showStartScreen() {
   dustClouds = [];
   hitMarkers = [];
   damageIndicators = [];
-  activeBombs = [];
-  activeLightnings = [];
   killEffects = [];
   deathAnimations = [];
-  flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
   previousBulletPositions.clear();
   screenShake = { intensity: 0, decay: 0.92 };
   killFeedEntries = [];
@@ -1726,11 +1523,6 @@ function showStartScreen() {
   roundEnded = false;
   floatingNumbers = [];
   lowHPPulseTime = 0;
-  arenaZone = null;
-  zoneWarningShown = false;
-  zoneClouds = [];
-  lootCrates = [];
-  crateDestroyEffects = [];
   dashCooldownUntil = 0;
   dashTrails = [];
   stopHeartbeat();
@@ -2013,10 +1805,6 @@ function connect() {
           // Local player respawned
           predictedX = data.x;
           predictedY = data.y;
-          flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
-          lightningBolts = [];
-          pageFlashIntensity = 0;
-          document.body.style.filter = "";
           // Clear auto-respawn timer
           if (autoRespawnTimer) {
             clearInterval(autoRespawnTimer);
@@ -2097,101 +1885,6 @@ function connect() {
       return;
     }
 
-    // ===== PICKUPS =====
-    if (data.type === "pickupCollected") {
-      createPickupEffect(data.x, data.y, data.pickupType);
-      if (data.playerId === playerId) {
-        playPickupSound();
-        const pickupMessages = {
-          health: "❤️ Health restored!",
-          ammo: "🎯 Full ammo!",
-          speed: "⚡ Speed boost!",
-          shield: "🛡️ Shield active!",
-          invisibility: "👻 Invisible!",
-          regen: "💚 Regenerating!",
-          armor: "🛡️ Armor up!",
-        };
-        showToast(pickupMessages[data.pickupType] || "✨ Bonus!", "#44bbff");
-      }
-      return;
-    }
-
-    // ===== BOMBS =====
-    if (data.type === "bombSpawned") {
-      activeBombs.push({ id: data.id, x: data.x, y: data.y, spawnTime: Date.now() });
-      return;
-    }
-
-    if (data.type === "bombExploded") {
-      activeBombs = activeBombs.filter(function(b) { return b.id !== data.id; });
-      createBombExplosion(data.x, data.y, data.radius || 80);
-      const dx = data.x - predictedX;
-      const dy = data.y - predictedY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      triggerScreenShake(Math.max(2, 15 - dist / 50));
-      if (dist < 120) {
-        flashbangOverlay.alpha = Math.max(flashbangOverlay.alpha, 0.3 * (1 - dist / 120));
-      }
-      playExplosionSound(data.x, data.y);
-      return;
-    }
-
-    // ===== LIGHTNING =====
-    if (data.type === "lightningWarning") {
-      activeLightnings.push({
-        id: data.id, x: data.x, y: data.y,
-        radius: data.radius || 100, spawnTime: Date.now(), fuseTime: 250,
-      });
-      return;
-    }
-
-    if (data.type === "lightningStruck") {
-      activeLightnings = activeLightnings.filter(function(l) { return l.id !== data.id; });
-      const lx = data.x, ly = data.y, lRadius = data.radius || 100;
-      const ldx = lx - predictedX, ldy = ly - predictedY;
-      const ldist = Math.sqrt(ldx * ldx + ldy * ldy);
-      if (ldist < lRadius) {
-        const proximity = 1.0 - ldist / lRadius;
-        playSound("lightning", 0.3 + proximity * 0.35, 0.9 + Math.random() * 0.2);
-        triggerScreenShake(5 + proximity * 13);
-        flashbangOverlay.alpha = 0.9 + proximity * 0.1;
-        flashbangOverlay.flicker = 1;
-        // Use server blindDuration for longer lightning blind
-        var blindDurationMs = data.blindDuration || 3000;
-        flashbangOverlay.decayRate = 1.0 / (blindDurationMs / 1000 * 60);
-        flashbangOverlay.pageDecayRate = 1.0 / (blindDurationMs / 1000 * 60);
-        applyPageFlash(0.8 + proximity * 0.2);
-      } else if (ldist < lRadius * 2.5) {
-        const nearFactor = 1.0 - (ldist - lRadius) / (lRadius * 1.5);
-        triggerScreenShake(2 + nearFactor * 5);
-        playSound("lightning", nearFactor * 0.2, 0.7 + Math.random() * 0.2);
-        if (nearFactor > 0.3) applyPageFlash(nearFactor * 0.4);
-      }
-      createLightningStrike(lx, ly, lRadius);
-      return;
-    }
-
-    // ===== LOOT CRATES =====
-    if (data.type === "crateSpawned") {
-      const c = data.crate;
-      if (!lootCrates.find(function(lc) { return lc.id === c.id; })) {
-        lootCrates.push({ id: c.id, x: c.x, y: c.y, hp: c.hp });
-      }
-      return;
-    }
-
-    if (data.type === "crateHit") {
-      const crate = lootCrates.find(function(c) { return c.id === data.crateId; });
-      if (crate) { crate.hp = data.hp; crate.hitFlash = Date.now(); }
-      return;
-    }
-
-    if (data.type === "crateDestroyed") {
-      lootCrates = lootCrates.filter(function(c) { return c.id !== data.crateId; });
-      crateDestroyEffects.push({ x: data.pickup.x, y: data.pickup.y, time: Date.now() });
-      return;
-    }
-
     // ===== CHAT =====
     if (data.type === "chatMessage") {
       addKillFeedEntry(data.username, data.message, "chat");
@@ -2200,7 +1893,7 @@ function connect() {
 
     // ===== STATE UPDATE (35 Hz) =====
     if (data.type === "state") {
-      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 3: "minigun", 4: "sniper" };
+      const weaponCodeMap = { 0: "machinegun", 1: "shotgun", 2: "knife", 4: "sniper" };
       const usernameMap = new Map();
       players.forEach(function(pl) { usernameMap.set(pl.id, pl.username); });
 
@@ -2213,9 +1906,7 @@ function connect() {
           reloading: p[5] === 1, lastProcessedInput: p[6],
           aimAngle: p[7], weapon: weaponCodeMap[p[8]] || "machinegun",
           kills: p[9], skin: p[10] || 0,
-          speedBoosted: p[11] === 1, shielded: p[12] === 1,
-          invisible: p[13] === 1, regen: p[14] === 1,
-          armor: p[15] || 0, dashing: p[16] === 1,
+          dashing: p[11] === 1,
           username: usernameMap.get(p[0]) || "Player",
         };
       }
@@ -2239,26 +1930,6 @@ function connect() {
         if (Array.isArray(b)) return { id: b[0], x: b[1], y: b[2], weapon: weaponCodeMap[b[3]] || "machinegun" };
         return b;
       });
-
-      // Parse pickups
-      const pickupTypeMap = { 0: "health", 1: "ammo", 2: "speed", 3: "minigun", 4: "shield", 5: "invisibility", 6: "regen", 7: "armor" };
-      pickups = (data.pk || []).map(function(pk) {
-        if (Array.isArray(pk)) return { id: pk[0], x: pk[1], y: pk[2], type: pickupTypeMap[pk[3]] || "health" };
-        return pk;
-      });
-
-      // Zone
-      if (data.z) {
-        arenaZone = { x: data.z[0], y: data.z[1], w: data.z[2], h: data.z[3] };
-      }
-
-      // Loot crates
-      if (data.cr) {
-        lootCrates = data.cr.map(function(c) {
-          if (Array.isArray(c)) return { id: c[0], x: c[1], y: c[2], hp: c[3] };
-          return c;
-        });
-      }
 
       // Death/damage detection
       parsedPlayers.forEach(function(p) {
@@ -2380,7 +2051,7 @@ function connect() {
         let reconciledX = currentPlayer.x;
         let reconciledY = currentPlayer.y;
         pendingInputs.forEach(function(input) {
-          const result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon, currentPlayer.speedBoosted);
+          const result = applyInput(reconciledX, reconciledY, input.keys, currentPlayer.weapon);
           reconciledX = result.x;
           reconciledY = result.y;
         });
@@ -2513,8 +2184,6 @@ function connect() {
 
       // Reset game state for new round
       bullets = [];
-      pickups = [];
-      lootCrates = [];
       explosions = [];
       bloodParticles = [];
       bloodStains = [];
@@ -2524,11 +2193,8 @@ function connect() {
       dustClouds = [];
       hitMarkers = [];
       damageIndicators = [];
-      activeBombs = [];
-      activeLightnings = [];
       killEffects = [];
       deathAnimations = [];
-      flashbangOverlay = { alpha: 0, flicker: 0, flickerVal: 0 };
       previousBulletPositions.clear();
       screenShake = { intensity: 0, decay: 0.92 };
       killFeedEntries = [];
@@ -2537,7 +2203,6 @@ function connect() {
       previousPlayerStates.clear();
       floatingNumbers = [];
       lowHPPulseTime = 0;
-      arenaZone = null;
       roundTimeRemaining = 300;
 
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
@@ -2801,7 +2466,6 @@ document.addEventListener("keydown", (e) => {
         predictedY,
         currentKeys,
         player.weapon,
-        player.speedBoosted,
       );
       predictedX = predicted.x;
       predictedY = predicted.y;
@@ -2874,7 +2538,6 @@ document.addEventListener("keyup", (e) => {
         predictedY,
         currentKeys,
         player.weapon,
-        player.speedBoosted,
       );
       predictedX = predicted.x;
       predictedY = predicted.y;
@@ -3193,7 +2856,6 @@ function applyMobileKeys(newKeys) {
           predictedY,
           currentKeys,
           player.weapon,
-          player.speedBoosted,
         );
         predictedX = predicted.x;
         predictedY = predicted.y;
@@ -3217,7 +2879,7 @@ if (isTouchDevice) {
 // ===== KILL FEED =====
 
 function addKillFeedEntry(killer, victim, weapon, isHeadshot) {
-  const icon = weapon === "streak" ? "🔥" : weapon === "zone" ? "🔴" : weapon === "bomb" ? "💣" : weapon === "lightning" ? "⚡" : (WEAPON_KILL_ICONS[weapon] || "💀");
+  const icon = weapon === "streak" ? "🔥" : (WEAPON_KILL_ICONS[weapon] || "💀");
   const entry = { killer, victim, icon, timestamp: Date.now(), headshot: !!isHeadshot };
   killFeedEntries.push(entry);
   if (killFeedEntries.length > KILL_FEED_MAX) killFeedEntries.shift();
@@ -3434,200 +3096,6 @@ function syncVolumeControls() {
 // ===== LEADERBOARD =====
 // Leaderboard overlay is handled by updateLeaderboardOverlay() in the game loop
 
-// ===== EXPLOSION & PICKUP EFFECTS =====
-
-function playExplosionSound(x, y) {
-  const bombIndex = 1 + Math.floor(Math.random() * 5); // 1–5
-  const soundName = "bomb-" + bombIndex;
-  const rate = 0.9 + Math.random() * 0.2; // slight pitch variation
-  playPositionalSound(soundName, x, y, 0.8, rate);
-}
-
-function playPickupSound() {
-  if (!audioCtx) return;
-  if (audioCtx.state === "suspended") audioCtx.resume();
-
-  const osc = audioCtx.createOscillator();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(440, audioCtx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
-  const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + 0.15);
-}
-
-let pickupEffects = [];
-
-function createPickupEffect(x, y, pickupType) {
-  const colors = { health: "#ff4444", ammo: "#44ff44", speed: "#4488ff" };
-  const icons = { health: "❤️", ammo: "📦", speed: "⚡" };
-  pickupEffects.push({
-    x, y,
-    color: colors[pickupType] || "#ffffff",
-    icon: icons[pickupType] || "✨",
-    life: 1.0,
-    timestamp: Date.now(),
-  });
-  if (pickupEffects.length > 20) capInPlace(pickupEffects, 20);
-}
-
-function updatePickupEffects() {
-  for (let i = 0; i < pickupEffects.length; i++) {
-    pickupEffects[i].y -= 0.5;
-    pickupEffects[i].life -= 0.015;
-  }
-  compactInPlace(pickupEffects, (e) => e.life > 0);
-}
-
-function renderPickupEffects() {
-  pickupEffects.forEach((e) => {
-    ctx.globalAlpha = e.life;
-    ctx.font = "16px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(e.icon, e.x, e.y);
-    ctx.textAlign = "start";
-    ctx.globalAlpha = 1.0;
-  });
-}
-
-function renderPickups() {
-  const pickupColors = {
-    health: "#ff4444", ammo: "#44bb44", speed: "#4488ff",
-    shield: "#44ddff", invisibility: "#aa66ff", regen: "#44ff88", armor: "#ddaa22",
-  };
-  const pickupIcons = {
-    health: "+", ammo: "A", speed: "S",
-    shield: "🛡", invisibility: "👻", regen: "♥", armor: "V",
-  };
-  const now = Date.now();
-
-  pickups.forEach((pk) => {
-    const color = pickupColors[pk.type] || "#ffffff";
-    const icon = pickupIcons[pk.type] || "?";
-
-    // Floating animation
-    const floatY = Math.sin(now / 400 + pk.x) * 3;
-
-    // Glow
-    ctx.globalAlpha = 0.2 + Math.sin(now / 300) * 0.1;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 24, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-
-    // Pickup body
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 16, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Border
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(pk.x, pk.y + floatY, 16, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Icon
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 17px 'Rajdhani', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(icon, pk.x, pk.y + floatY);
-    ctx.textAlign = "start";
-    ctx.textBaseline = "alphabetic";
-  });
-}
-
-// ===== LOOT CRATE RENDERING =====
-
-function renderLootCrates() {
-  const now = Date.now();
-  lootCrates.forEach((crate) => {
-    const half = 14;
-
-    // Hit flash effect
-    const flashActive = crate.hitFlash && now - crate.hitFlash < 150;
-
-    // Shadow
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
-    ctx.fillRect(crate.x - half + 2, crate.y - half + 2, half * 2, half * 2);
-
-    // Crate body
-    ctx.fillStyle = flashActive ? "#ffeeaa" : "#8B6914";
-    ctx.fillRect(crate.x - half, crate.y - half, half * 2, half * 2);
-
-    // Border
-    ctx.strokeStyle = flashActive ? "#fff" : "#5a4010";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(crate.x - half, crate.y - half, half * 2, half * 2);
-
-    // Cross planks
-    ctx.strokeStyle = "#6B5010";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(crate.x - half, crate.y - half);
-    ctx.lineTo(crate.x + half, crate.y + half);
-    ctx.moveTo(crate.x + half, crate.y - half);
-    ctx.lineTo(crate.x - half, crate.y + half);
-    ctx.stroke();
-
-    // HP indicator (small circles)
-    for (let i = 0; i < crate.hp; i++) {
-      ctx.fillStyle = "#44ff44";
-      ctx.beginPath();
-      ctx.arc(crate.x - 6 + i * 6, crate.y + half + 6, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // "?" icon
-    ctx.fillStyle = "#ffdd44";
-    ctx.font = "bold 14px 'Rajdhani', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("?", crate.x, crate.y);
-    ctx.textAlign = "start";
-    ctx.textBaseline = "alphabetic";
-  });
-}
-
-function updateCrateDestroyEffects() {
-  const now = Date.now();
-  compactInPlace(crateDestroyEffects, (e) => now - e.time < 500);
-}
-
-function renderCrateDestroyEffects() {
-  const now = Date.now();
-  crateDestroyEffects.forEach((e) => {
-    const t = (now - e.time) / 500;
-    const alpha = 1 - t;
-    // Expanding ring
-    ctx.globalAlpha = alpha * 0.6;
-    ctx.strokeStyle = "#ddaa22";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, 10 + t * 30, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Wood splinters
-    for (let i = 0; i < 6; i++) {
-      const angle = (Math.PI * 2 * i) / 6;
-      const dist = t * 25;
-      const sx = e.x + Math.cos(angle) * dist;
-      const sy = e.y + Math.sin(angle) * dist;
-      ctx.fillStyle = "#8B6914";
-      ctx.globalAlpha = alpha * 0.8;
-      ctx.fillRect(sx - 2, sy - 2, 4, 4);
-    }
-    ctx.globalAlpha = 1.0;
-  });
-}
-
 // ===== DASH TRAIL RENDERING =====
 
 function updateDashTrails() {
@@ -3659,369 +3127,6 @@ function renderDashTrails() {
     }
     ctx.globalAlpha = 1.0;
   });
-}
-
-// ===== BOMB SYSTEM =====
-
-function renderBombs() {
-  const now = Date.now();
-  activeBombs.forEach((bomb) => {
-    const elapsed = now - bomb.spawnTime;
-    const fuseProgress = Math.min(elapsed / 1000, 1); // 1 second fuse
-
-    // Pulsing danger radius (grows as fuse progresses)
-    const pulseSpeed = 6 + fuseProgress * 14; // Pulse faster near explosion
-    const pulse = Math.sin(now / (1000 / pulseSpeed)) * 0.15 + 0.85;
-    const dangerRadius = 80 * fuseProgress * pulse;
-
-    // Danger zone circle
-    ctx.globalAlpha = 0.08 + fuseProgress * 0.15;
-    ctx.fillStyle = "#ff2200";
-    ctx.beginPath();
-    ctx.arc(bomb.x, bomb.y, dangerRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Danger zone border
-    ctx.globalAlpha = 0.3 + fuseProgress * 0.5;
-    ctx.strokeStyle = "#ff4400";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
-    ctx.beginPath();
-    ctx.arc(bomb.x, bomb.y, dangerRadius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Bomb body
-    ctx.globalAlpha = 1.0;
-    const bombSize = 10 + fuseProgress * 3;
-
-    // Bomb shadow
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.beginPath();
-    ctx.ellipse(bomb.x + 2, bomb.y + 3, bombSize, bombSize * 0.6, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Bomb body (dark sphere)
-    ctx.fillStyle = "#2a2a2a";
-    ctx.beginPath();
-    ctx.arc(bomb.x, bomb.y, bombSize, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Bomb highlight
-    ctx.fillStyle = "#444";
-    ctx.beginPath();
-    ctx.arc(bomb.x - 3, bomb.y - 3, bombSize * 0.4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Fuse spark (blinks faster as time runs out)
-    const sparkBlink = Math.sin(now / (60 - fuseProgress * 40)) > 0;
-    if (sparkBlink) {
-      const sparkX = bomb.x + Math.cos(-Math.PI / 4) * bombSize;
-      const sparkY = bomb.y + Math.sin(-Math.PI / 4) * bombSize;
-
-      // Spark glow
-      ctx.fillStyle = "rgba(255, 200, 50, 0.6)";
-      ctx.beginPath();
-      ctx.arc(sparkX, sparkY, 5 + Math.random() * 2, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Spark core
-      ctx.fillStyle = "#fff";
-      ctx.beginPath();
-      ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Warning text
-    ctx.globalAlpha = 0.5 + fuseProgress * 0.5;
-    ctx.fillStyle = "#ff3300";
-    ctx.font = "bold 16px 'Rajdhani', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("💣", bomb.x, bomb.y - bombSize - 8);
-    ctx.textAlign = "start";
-    ctx.globalAlpha = 1.0;
-  });
-}
-
-let bombExplosions = [];
-
-function createBombExplosion(x, y, radius) {
-  const particles = [];
-  const particleCount = 24;
-
-  for (let i = 0; i < particleCount; i++) {
-    const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
-    const speed = 3 + Math.random() * 5;
-    particles.push({
-      x: x,
-      y: y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 1.0,
-      size: 4 + Math.random() * 6,
-      color: `hsl(${Math.random() * 40 + 10}, 100%, ${40 + Math.random() * 30}%)`,
-    });
-  }
-
-  // Add smoke particles
-  for (let i = 0; i < 12; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 1 + Math.random() * 2;
-    particles.push({
-      x: x,
-      y: y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 1.0,
-      size: 8 + Math.random() * 10,
-      color: `rgba(80, 70, 60, 0.6)`,
-    });
-  }
-
-  bombExplosions.push({
-    x, y, radius,
-    particles: particles,
-    frame: 0,
-    shockwave: 0,
-  });
-  capInPlace(bombExplosions, 12);
-}
-
-function updateBombExplosions() {
-  for (let i = 0; i < bombExplosions.length; i++) {
-    const exp = bombExplosions[i];
-    exp.frame++;
-    exp.shockwave += 8;
-    for (let j = 0; j < exp.particles.length; j++) {
-      const p = exp.particles[j];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.12;
-      p.vx *= 0.97;
-      p.life -= 0.02;
-    }
-  }
-  compactInPlace(bombExplosions, (e) => e.particles.some((p) => p.life > 0));
-}
-
-function renderBombExplosions() {
-  bombExplosions.forEach((exp) => {
-    // Shockwave ring
-    if (exp.shockwave < exp.radius * 1.5) {
-      const alpha = Math.max(0, 1 - exp.shockwave / (exp.radius * 1.5));
-      ctx.globalAlpha = alpha * 0.4;
-      ctx.strokeStyle = "#ff6600";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(exp.x, exp.y, exp.shockwave, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Particles
-    exp.particles.forEach((p) => {
-      if (p.life <= 0) return;
-      ctx.globalAlpha = Math.min(1, p.life * 1.5);
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.globalAlpha = 1.0;
-  });
-}
-
-// ===== LIGHTNING STRIKE SYSTEM =====
-
-let lightningBolts = [];
-
-function createLightningStrike(x, y, radius) {
-  // Create bolt segments for visual effect
-  const bolts = [];
-  const boltCount = 3 + Math.floor(Math.random() * 3);
-  for (let b = 0; b < boltCount; b++) {
-    const segments = [];
-    let sx = x + (Math.random() - 0.5) * radius * 0.4;
-    let sy = y - 200; // Start from above
-    const targetX = x + (Math.random() - 0.5) * radius * 0.5;
-    const targetY = y + (Math.random() - 0.5) * radius * 0.3;
-    const steps = 8 + Math.floor(Math.random() * 6);
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const bx = sx + (targetX - sx) * t + (Math.random() - 0.5) * 30 * (1 - t);
-      const by = sy + (targetY - sy) * t + (Math.random() - 0.5) * 15;
-      segments.push({ x: bx, y: by });
-    }
-    bolts.push(segments);
-  }
-
-  lightningBolts.push({
-    x, y, radius,
-    bolts,
-    timestamp: Date.now(),
-    duration: 400,
-  });
-  capInPlace(lightningBolts, 8);
-}
-
-function renderLightningWarnings() {
-  const now = Date.now();
-  activeLightnings.forEach((lightning) => {
-    const elapsed = now - lightning.spawnTime;
-    const progress = Math.min(elapsed / lightning.fuseTime, 1);
-
-    // Flickering warning circle that gets brighter
-    const flicker = Math.sin(now / 30) * 0.3 + 0.7;
-    const urgency = progress * flicker;
-
-    // Warning zone — pulsing electric blue circle
-    ctx.globalAlpha = 0.05 + urgency * 0.2;
-    ctx.fillStyle = "#88ccff";
-    ctx.beginPath();
-    ctx.arc(lightning.x, lightning.y, lightning.radius * progress, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Warning border — dashed electric ring
-    ctx.globalAlpha = 0.4 + urgency * 0.6;
-    ctx.strokeStyle = "#55aaff";
-    ctx.lineWidth = 2 + progress * 2;
-    ctx.setLineDash([8, 4]);
-    ctx.beginPath();
-    ctx.arc(lightning.x, lightning.y, lightning.radius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Inner crackling ring
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = urgency * 0.5 * flicker;
-    ctx.beginPath();
-    ctx.arc(lightning.x, lightning.y, lightning.radius * 0.5 * progress, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Warning icon
-    ctx.globalAlpha = 0.6 + urgency * 0.4;
-    ctx.font = "bold 20px 'Rajdhani', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffdd44";
-    ctx.fillText("⚡", lightning.x, lightning.y - lightning.radius - 10);
-    ctx.textAlign = "start";
-
-    ctx.globalAlpha = 1.0;
-  });
-}
-
-function renderLightningBolts() {
-  const now = Date.now();
-  compactInPlace(lightningBolts, (l) => now - l.timestamp < l.duration);
-
-  lightningBolts.forEach((lightning) => {
-    const age = now - lightning.timestamp;
-    const progress = age / lightning.duration;
-    const alpha = Math.max(0, 1 - progress);
-
-    // Flash on ground
-    ctx.globalAlpha = alpha * 0.3;
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.arc(lightning.x, lightning.y, lightning.radius * (0.5 + progress * 0.5), 0, Math.PI * 2);
-    ctx.fill();
-
-    // Electric ground ring
-    ctx.globalAlpha = alpha * 0.6;
-    ctx.strokeStyle = "#88ccff";
-    ctx.lineWidth = 3 * alpha;
-    ctx.beginPath();
-    ctx.arc(lightning.x, lightning.y, lightning.radius * progress, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Draw bolt segments
-    lightning.bolts.forEach((segments) => {
-      ctx.globalAlpha = alpha * (0.6 + Math.random() * 0.4);
-      // Outer glow
-      ctx.strokeStyle = "#4488ff";
-      ctx.lineWidth = 4 * alpha;
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      segments.forEach((s, i) => {
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-
-      // Inner bright core
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2 * alpha;
-      ctx.beginPath();
-      segments.forEach((s, i) => {
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-    });
-
-    ctx.globalAlpha = 1.0;
-  });
-}
-
-// Full-page flash effect (covers entire website, not just canvas)
-let pageFlashIntensity = 0;
-function applyPageFlash(intensity) {
-  pageFlashIntensity = Math.max(pageFlashIntensity, Math.min(1, intensity));
-  document.body.style.filter = `brightness(${1 + pageFlashIntensity * 3}) saturate(${1 - pageFlashIntensity * 0.5})`;
-}
-function updatePageFlash() {
-  if (pageFlashIntensity > 0) {
-    var pfDecay = (flashbangOverlay && flashbangOverlay.pageDecayRate) || 0.006;
-    pageFlashIntensity = Math.max(0, pageFlashIntensity - pfDecay);
-    if (pageFlashIntensity <= 0 && flashbangOverlay) flashbangOverlay.pageDecayRate = 0;
-    if (pageFlashIntensity > 0.01) {
-      const flicker = pageFlashIntensity > 0.3 ? (Math.random() - 0.5) * 0.15 : 0;
-      const b = 1 + (pageFlashIntensity + flicker) * 3;
-      const s = 1 - pageFlashIntensity * 0.5;
-      document.body.style.filter = `brightness(${b}) saturate(${s})`;
-    } else {
-      pageFlashIntensity = 0;
-      document.body.style.filter = "";
-    }
-  }
-}
-
-function updateFlashbang() {
-  if (flashbangOverlay.alpha > 0) {
-    // Use custom decay rate (lightning) or default (~3 seconds)
-    var decayRate = flashbangOverlay.decayRate || 0.005;
-    flashbangOverlay.alpha = Math.max(0, flashbangOverlay.alpha - decayRate);
-    if (flashbangOverlay.alpha <= 0) flashbangOverlay.decayRate = 0;
-    // Chaotic flicker when intensity is high
-    if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.2) {
-      flashbangOverlay.flickerVal = (Math.random() - 0.5) * 0.2;
-    } else {
-      flashbangOverlay.flickerVal = 0;
-      flashbangOverlay.flicker = 0;
-    }
-  }
-  // Decay full-page flash
-  updatePageFlash();
-}
-
-function renderFlashbang() {
-  if (flashbangOverlay.alpha <= 0) return;
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const displayAlpha = Math.min(1, Math.max(0, flashbangOverlay.alpha + (flashbangOverlay.flickerVal || 0)));
-  ctx.globalAlpha = displayAlpha;
-  // Chaotic color shift when flickering
-  if (flashbangOverlay.flicker && flashbangOverlay.alpha > 0.4) {
-    const r = 255;
-    const g = 240 + Math.floor(Math.random() * 15);
-    const b = 220 + Math.floor(Math.random() * 35);
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
-  } else {
-    ctx.fillStyle = "#ffffff";
-  }
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.globalAlpha = 1.0;
-  ctx.restore();
 }
 
 // ===== RENDER LOOP =====
@@ -4125,9 +3230,7 @@ function _renderMinimapContent(mc, framePlayer) {
     const p = players[i];
     if (p.id === playerId) continue;
     if (p.hp <= 0) continue;
-    if (p.invisible) {
-      mc.fillStyle = "rgba(170,102,255,0.4)";
-    } else if (minimapCrownId === p.id) {
+    if (minimapCrownId === p.id) {
       mc.fillStyle = "#ffd700";
     } else {
       mc.fillStyle = "#ff4444";
@@ -4284,11 +3387,8 @@ function render() {
   updateShellCasings();
   updateImpactSparks();
   updateDustClouds();
-  updatePickupEffects();
   updateHitMarkers();
   updateDamageIndicators();
-  updateBombExplosions();
-  updateFlashbang();
   updateFloatingNumbers();
   updateKillEffects();
   updateDeathAnimations();
@@ -4324,26 +3424,8 @@ function render() {
   }
   ctx.globalAlpha = 1.0;
 
-  // Render arena shrinking zone (danger zone overlay)
-  renderZone();
-
   // Render dust clouds (ground level)
   renderDustClouds();
-
-  // Render pickups
-  renderPickups();
-  renderPickupEffects();
-
-  // Render loot crates
-  updateCrateDestroyEffects();
-  renderLootCrates();
-  renderCrateDestroyEffects();
-
-  // Render bombs
-  renderBombs();
-
-  // Render lightning warnings
-  renderLightningWarnings();
 
   // Render dash trails (below players)
   renderDashTrails();
@@ -4432,15 +3514,6 @@ function render() {
     const color = skin.primary;
     const darkColor = skin.secondary;
 
-    // Speed boost visual indicator
-    if (p.speedBoosted) {
-      ctx.strokeStyle = "rgba(68, 136, 255, 0.4)";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 24, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
     // Dash visual — afterimage ghosts + motion trail
     if (p.dashing) {
       // Speed lines behind player
@@ -4475,50 +3548,6 @@ function render() {
         weapon: p.weapon || "machinegun",
         aimAngle: gunAngle,
       });
-    }
-
-    // Armor visual — golden outline
-    if (p.armor > 0) {
-      ctx.strokeStyle = "rgba(221, 170, 34, 0.6)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 19, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Shield bubble visual
-    if (p.shielded) {
-      const shieldPulse = 0.3 + Math.sin(Date.now() / 200) * 0.15;
-      ctx.strokeStyle = `rgba(100, 200, 255, ${shieldPulse + 0.3})`;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 26, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = `rgba(100, 200, 255, ${shieldPulse * 0.3})`;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 26, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Invisibility visual (ghostly fade for others, slight outline for self)
-    if (p.invisible && p.id !== playerId) {
-      ctx.globalAlpha = 0.05; // Almost fully invisible to others
-    } else if (p.invisible && p.id === playerId) {
-      ctx.globalAlpha = 0.25; // Semi-transparent for self
-    }
-
-    // Health regen aura
-    if (p.regen) {
-      const regenPulse = 0.3 + Math.sin(Date.now() / 300) * 0.2;
-      ctx.fillStyle = `rgba(50, 255, 100, ${regenPulse * 0.2})`;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 28, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = `rgba(50, 255, 100, ${regenPulse})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(renderX, renderY, 28, 0, Math.PI * 2);
-      ctx.stroke();
     }
 
     // Draw player sprite (replaces circle body + weapon)
@@ -4624,11 +3653,6 @@ function render() {
       ctx.fillText(p.username, renderX, renderY + 28);
       ctx.textAlign = "start";
     }
-
-    // Restore alpha after invisibility
-    if (p.invisible) {
-      ctx.globalAlpha = 1.0;
-    }
   });
 
   // Render bullets
@@ -4659,7 +3683,7 @@ function render() {
       bulletSprite = spriteSniperBullet;
       bw = 28; bh = 10;
     } else {
-      // machinegun / minigun / default
+      // machinegun / default
       bulletSprite = spriteRifleBullet;
       bw = 16; bh = 8;
     }
@@ -4690,12 +3714,6 @@ function render() {
 
   // Render impact sparks
   renderImpactSparks();
-
-  // Render bomb explosions
-  renderBombExplosions();
-
-  // Render lightning bolts
-  renderLightningBolts();
 
   // Render hit markers and damage indicators
   renderHitMarkers();
@@ -4807,10 +3825,7 @@ function render() {
   // Render minimap
   renderMinimap();
 
-  // Flashbang overlay (must be last — covers entire screen)
-  renderFlashbang();
-
-  // Low HP vignette (drawn on top of everything including flashbang)
+  // Low HP vignette (drawn on top of everything)
   renderLowHPVignette();
 
   requestAnimationFrame(render);

@@ -40,36 +40,11 @@ var GameConfig = struct {
 	KnifeDamage     int
 	KnifeRange      float64
 	KnifeSpeedBonus float64
-	// Pickups
-	PickupSpawnInterval  int64
-	PickupLifetime       int64
-	PickupRadius         float64
-	PickupHealthAmount   int
-	PickupSpeedDuration  int64
-	PickupSpeedMultiplier float64
-	MaxPickups           int
-	// Minigun
-	MinigunCooldown int64
-	MinigunDamage   int
-	MinigunRecoil   float64
-	MinigunDuration int64
 	// Sniper
 	SniperCooldown    int64
 	SniperDamage      int
 	SniperBulletSpeed float64
 	SniperAmmo        int
-	// Shield
-	ShieldDuration int64
-	ShieldAbsorb   int
-	// Invisibility
-	InvisibilityDuration int64
-	// Regen
-	RegenDuration     int64
-	RegenTickInterval int64
-	RegenAmount       int
-	// Armor
-	ArmorAmount int
-	ArmorMax    int
 	// Headshot
 	HeadshotMultiplier float64
 	HeadshotZone       float64 // fraction of radius from center considered head (top portion)
@@ -79,24 +54,11 @@ var GameConfig = struct {
 	ShotgunMoveSpread    float64
 	SniperBaseSpread     float64
 	SniperMoveSpread     float64
-	MinigunBaseSpread    float64
-	MinigunMoveSpread    float64
 	// Dash
 	DashCooldown   int64
 	DashDuration   int64
 	DashSpeed      float64
 	DashInvincible bool
-	// Bombs
-	BombSpawnInterval int64
-	BombFuseTime      int64
-	BombDamage        int
-	BombRadius        float64
-	// Lightning
-	LightningSpawnInterval int64
-	LightningFuseTime      int64
-	LightningDamage        int
-	LightningRadius        float64
-	LightningBlindDuration int64
 	// Round
 	KillsToWin    int
 	GameDuration  int64
@@ -113,12 +75,6 @@ var GameConfig = struct {
 	ZoneDamageInterval int64
 	ZoneDamage         int
 	ZoneMinSize        float64
-	// Loot crates
-	LootCrateHP             int
-	LootCrateSize           float64
-	LootCrateCount          int
-	LootCrateRespawnInterval int64
-	LootCrateMax            int
 	// Room
 	RoomMaxPlayers   int
 	RoomReadyTimeout int
@@ -164,33 +120,11 @@ var GameConfig = struct {
 	KnifeDamage:     40,
 	KnifeRange:      70,
 	KnifeSpeedBonus: 1.6,
-	// Pickups
-	PickupSpawnInterval:  18000,
-	PickupLifetime:       30000,
-	PickupRadius:         40,
-	PickupHealthAmount:   25,
-	PickupSpeedDuration:  12000,
-	PickupSpeedMultiplier: 1.5,
-	MaxPickups:           4,
-	// Minigun (Negev-like)
-	MinigunCooldown: 60,
-	MinigunDamage:   18,
-	MinigunRecoil:   0.12,
-	MinigunDuration: 15000,
 	// Sniper (AWP-like)
 	SniperCooldown:    1500,
 	SniperDamage:      115,
 	SniperBulletSpeed: 48,
 	SniperAmmo:        5,
-	// Shield
-	ShieldDuration: 10000,
-	ShieldAbsorb:   50,
-	// Invisibility
-	InvisibilityDuration: 12000,
-	// Regen
-	RegenDuration:     16000,
-	RegenTickInterval: 1200,
-	RegenAmount:       5,
 	// Headshot
 	HeadshotMultiplier: 2.5,
 	HeadshotZone:       0.35, // top 35% of player hitbox = headshot
@@ -200,34 +134,18 @@ var GameConfig = struct {
 	ShotgunMoveSpread:    0.15,
 	SniperBaseSpread:     0.002,
 	SniperMoveSpread:     0.12,
-	MinigunBaseSpread:    0.04,
-	MinigunMoveSpread:    0.10,
-	// Armor (kevlar-style)
-	ArmorAmount: 50,
-	ArmorMax:    100,
 	// Dash
 	DashCooldown:   1000,
 	DashDuration:   250,
 	DashSpeed:      26,
 	DashInvincible: true,
-	// Bombs
-	BombSpawnInterval: 3000,
-	BombFuseTime:      1000,
-	BombDamage:        35,
-	BombRadius:        80,
-	// Lightning
-	LightningSpawnInterval: 5000,
-	LightningFuseTime:      250,
-	LightningDamage:        50,
-	LightningRadius:        150,
-	LightningBlindDuration: 5000,
 	// Round
 	KillsToWin:    999,
 	GameDuration:  0,
 	RoundDuration: 300000,
 	RoundRestartDelay: 10000,
 	// Respawn
-	RespawnTime: 2000,
+	RespawnTime: 5000,
 	// Obstacle spawn
 	ObstacleSpawnInterval: 8000,
 	// Zone (disabled)
@@ -237,12 +155,6 @@ var GameConfig = struct {
 	ZoneDamageInterval: 1000,
 	ZoneDamage:         1,
 	ZoneMinSize:        200,
-	// Loot crates
-	LootCrateHP:             80,
-	LootCrateSize:           28,
-	LootCrateCount:          6,
-	LootCrateRespawnInterval: 20000,
-	LootCrateMax:            8,
 	// Room
 	RoomMaxPlayers:   10,
 	RoomReadyTimeout: 45,

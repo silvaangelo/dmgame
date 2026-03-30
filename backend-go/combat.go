@@ -186,8 +186,6 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	switch player.Weapon {
 	case WeaponShotgun:
 		cooldown = GameConfig.ShotgunCooldown
-	case WeaponMinigun:
-		cooldown = GameConfig.MinigunCooldown
 	default:
 		cooldown = GameConfig.MachinegunCooldown
 	}
@@ -202,8 +200,6 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		switch player.Weapon {
 		case WeaponShotgun:
 			startReload(player, GameConfig.ShotgunReloadTime, GameConfig.ShotgunAmmo)
-		case WeaponMinigun:
-			startReload(player, GameConfig.MachinegunReloadTime, GameConfig.ShotsPerMag)
 		default:
 			startReload(player, GameConfig.MachinegunReloadTime, GameConfig.ShotsPerMag)
 		}
@@ -245,37 +241,23 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		return
 	}
 
-	// Machine gun / Minigun — apply CS2-style accuracy
+	// Machine gun — apply CS2-style accuracy
 	var baseSpread, moveSpread float64
 	var damage int
-	var bulletWeapon WeaponType
-	if player.Weapon == WeaponMinigun || (player.MinigunUntil > 0 && now < player.MinigunUntil) {
-		baseSpread = GameConfig.MinigunBaseSpread
-		moveSpread = GameConfig.MinigunMoveSpread
-		damage = GameConfig.MinigunDamage
-		bulletWeapon = WeaponMinigun
-	} else {
-		baseSpread = GameConfig.MachinegunBaseSpread
-		moveSpread = GameConfig.MachinegunMoveSpread
-		damage = GameConfig.MachinegunDamage
-		bulletWeapon = WeaponMachinegun
-	}
+	baseSpread = GameConfig.MachinegunBaseSpread
+	moveSpread = GameConfig.MachinegunMoveSpread
+	damage = GameConfig.MachinegunDamage
 
 	finalDirX, finalDirY := applySpread(dirX, dirY, baseSpread, moveSpread, moving)
 
 	// Also apply recoil on top of accuracy spread
-	var recoil float64
-	if bulletWeapon == WeaponMinigun {
-		recoil = GameConfig.MinigunRecoil
-	} else {
-		recoil = GameConfig.MachinegunRecoil
-	}
+	recoil := GameConfig.MachinegunRecoil
 	recoilAngle := (rand.Float64() - 0.5) * 2 * recoil
 	cos := math.Cos(recoilAngle)
 	sin := math.Sin(recoilAngle)
 	finalDirX, finalDirY = finalDirX*cos-finalDirY*sin, finalDirX*sin+finalDirY*cos
 
-	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, bulletWeapon)
+	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
 	bullet := &Bullet{
 		ID:            nextEntityID(),
 		ShortID:       game.NextShortID,
@@ -286,7 +268,7 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		Team:          0,
 		PlayerID:      player.ID,
 		Damage:        damage,
-		Weapon:        bulletWeapon,
+		Weapon:        WeaponMachinegun,
 		CreatedAt:     now,
 		ShooterMoving: moving,
 	}
@@ -323,7 +305,7 @@ func reloadWeapon(player *Player) {
 	if player.Reloading || player.HP <= 0 {
 		return
 	}
-	if player.Weapon == WeaponKnife || player.Weapon == WeaponMinigun {
+	if player.Weapon == WeaponKnife {
 		return
 	}
 

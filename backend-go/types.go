@@ -14,7 +14,6 @@ const (
 	WeaponMachinegun WeaponType = "machinegun"
 	WeaponShotgun    WeaponType = "shotgun"
 	WeaponKnife      WeaponType = "knife"
-	WeaponMinigun    WeaponType = "minigun"
 	WeaponSniper     WeaponType = "sniper"
 )
 
@@ -58,18 +57,8 @@ type Player struct {
 	Skin             int        `msgpack:"skin"`
 
 	SpeedBoostUntil int64 `msgpack:"-"`
-	MinigunUntil    int64 `msgpack:"-"`
 	KillStreak      int   `msgpack:"-"`
 	LastKilledBy    string `msgpack:"-"`
-
-	// Powerup states
-	ShieldUntil    int64 `msgpack:"-"`
-	InvisibleUntil int64 `msgpack:"-"`
-	RegenUntil     int64 `msgpack:"-"`
-	LastRegenTick  int64 `msgpack:"-"`
-
-	// Armor
-	Armor int `msgpack:"armor"`
 
 	// Respawn
 	WaitingForRespawn bool  `msgpack:"-"`
@@ -125,64 +114,6 @@ type Obstacle struct {
 	GroupID   string `msgpack:"groupId,omitempty"`
 }
 
-// Bomb represents a timed explosive.
-type Bomb struct {
-	ID        string  `msgpack:"id"`
-	X         float64 `msgpack:"x"`
-	Y         float64 `msgpack:"y"`
-	CreatedAt int64   `msgpack:"createdAt"`
-}
-
-// Lightning represents a lightning strike warning.
-type Lightning struct {
-	ID        string  `msgpack:"id"`
-	X         float64 `msgpack:"x"`
-	Y         float64 `msgpack:"y"`
-	CreatedAt int64   `msgpack:"createdAt"`
-}
-
-// PickupType for collectible items.
-type PickupType string
-
-const (
-	PickupHealth       PickupType = "health"
-	PickupAmmo         PickupType = "ammo"
-	PickupSpeed        PickupType = "speed"
-	PickupMinigun      PickupType = "minigun"
-	PickupShield       PickupType = "shield"
-	PickupInvisibility PickupType = "invisibility"
-	PickupRegen        PickupType = "regen"
-	PickupArmor        PickupType = "armor"
-)
-
-// Pickup represents a collectible item on the map.
-type Pickup struct {
-	ID        string     `msgpack:"id"`
-	ShortID   uint16     `msgpack:"shortId"`
-	X         float64    `msgpack:"x"`
-	Y         float64    `msgpack:"y"`
-	Type      PickupType `msgpack:"type"`
-	CreatedAt int64      `msgpack:"createdAt"`
-}
-
-// LootCrate represents a destructible crate.
-type LootCrate struct {
-	ID        string  `msgpack:"id"`
-	ShortID   uint16  `msgpack:"shortId"`
-	X         float64 `msgpack:"x"`
-	Y         float64 `msgpack:"y"`
-	HP        int     `msgpack:"hp"`
-	CreatedAt int64   `msgpack:"createdAt"`
-}
-
-// Zone represents the shrinking play area.
-type Zone struct {
-	X float64
-	Y float64
-	W float64
-	H float64
-}
-
 // Game holds all state for a game instance.
 type Game struct {
 	mu sync.Mutex // protects all game state
@@ -192,10 +123,6 @@ type Game struct {
 	Players     []*Player
 	Bullets     []*Bullet
 	Obstacles   []*Obstacle
-	Pickups     []*Pickup
-	Bombs       []*Bomb
-	Lightnings  []*Lightning
-	LootCrates  []*LootCrate
 
 	Started    bool
 	RoundEnded bool
@@ -204,18 +131,8 @@ type Game struct {
 	StateSequence uint32
 	MatchStartTime int64
 
-	// Zone
-	Zone         Zone
-	ZoneShrinking bool
-
 	// Spawn timing (checked in game tick)
 	LastObstacleSpawn  int64
-	LastPickupSpawn    int64
-	LastBombSpawn      int64
-	LastLightningSpawn int64
-	LastCrateSpawn     int64
-	NextBombDelay      int64 // randomized
-	NextLightningDelay int64 // randomized
 
 	// Round timer
 	RoundStartTime int64

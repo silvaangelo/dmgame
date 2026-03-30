@@ -173,22 +173,10 @@ func resetPersistentRound(game *Game) {
 	// Obstacles removed from the game
 	game.Obstacles = make([]*Obstacle, 0)
 	game.Bullets = make([]*Bullet, 0)
-	game.Pickups = make([]*Pickup, 0)
-	game.Bombs = make([]*Bomb, 0)
-	game.Lightnings = make([]*Lightning, 0)
-	game.LootCrates = make([]*LootCrate, 0)
 	game.StateSequence = 0
-	game.Zone = Zone{X: 0, Y: 0, W: GameConfig.ArenaWidth, H: GameConfig.ArenaHeight}
-	game.ZoneShrinking = false
 
 	now := unixMs()
 	game.LastObstacleSpawn = now
-	game.LastPickupSpawn = now
-	game.LastBombSpawn = now
-	game.LastLightningSpawn = now
-	game.LastCrateSpawn = now
-	game.NextBombDelay = 0
-	game.NextLightningDelay = 0
 
 	// Reset all player stats
 	for _, p := range game.Players {
@@ -202,12 +190,6 @@ func resetPersistentRound(game *Game) {
 		p.Reloading = false
 		p.Weapon = WeaponMachinegun
 		p.SpeedBoostUntil = 0
-		p.MinigunUntil = 0
-		p.ShieldUntil = 0
-		p.InvisibleUntil = 0
-		p.RegenUntil = 0
-		p.LastRegenTick = 0
-		p.Armor = 0
 		p.DashCooldownUntil = 0
 		p.DashUntil = 0
 		p.Keys = Keys{}
@@ -248,9 +230,6 @@ func resetPersistentRound(game *Game) {
 		p.X = bestX
 		p.Y = bestY
 	}
-
-	// Spawn initial entities
-	spawnInitialLootCrates(game)
 
 	// Build shortIdMap
 	shortIDMap := make(map[uint16]map[string]string)
@@ -371,19 +350,6 @@ func addPlayerToGame(player *Player, game *Game) {
 	player.Deaths = 0
 	player.Weapon = WeaponMachinegun
 	player.Keys = Keys{}
-	player.LastProcessedInput = 0
-	player.AimAngle = 0
-	player.LastKilledBy = ""
-	player.ShieldUntil = 0
-	player.InvisibleUntil = 0
-	player.RegenUntil = 0
-	player.LastRegenTick = 0
-	player.Armor = 0
-	player.DashCooldownUntil = 0
-	player.DashUntil = 0
-	player.DashDirX = 0
-	player.DashDirY = 0
-	player.KillStreak = 0
 	player.WaitingForRespawn = false
 	player.Ready = true
 
@@ -425,10 +391,6 @@ func respawnPlayer(player *Player, game *Game) {
 
 	bestX := GameConfig.ArenaWidth / 2
 	bestY := GameConfig.ArenaHeight / 2
-	if game.ZoneShrinking {
-		bestX = game.Zone.X + game.Zone.W/2
-		bestY = game.Zone.Y + game.Zone.H/2
-	}
 	bestDistance := 0.0
 
 	alivePlayers := make([]*Player, 0)
@@ -443,12 +405,6 @@ func respawnPlayer(player *Player, game *Game) {
 	spawnMinY := spawnMargin
 	spawnMaxX := GameConfig.ArenaWidth - spawnMargin
 	spawnMaxY := GameConfig.ArenaHeight - spawnMargin
-	if game.ZoneShrinking {
-		spawnMinX = game.Zone.X + spawnMargin
-		spawnMinY = game.Zone.Y + spawnMargin
-		spawnMaxX = game.Zone.X + game.Zone.W - spawnMargin
-		spawnMaxY = game.Zone.Y + game.Zone.H - spawnMargin
-	}
 
 	// Center-biased spawn: average of 2 random values tends toward center
 	centerX := (spawnMinX + spawnMaxX) / 2
@@ -457,12 +413,10 @@ func respawnPlayer(player *Player, game *Game) {
 	spanY := math.Max(0, spawnMaxY-spawnMinY)
 
 	for attempt := 0; attempt < 50; attempt++ {
-		// Use average of 2 uniform randoms for a triangular distribution biased to center
 		rx := (rand.Float64() + rand.Float64()) / 2
 		ry := (rand.Float64() + rand.Float64()) / 2
 		testX := spawnMinX + rx*spanX
 		testY := spawnMinY + ry*spanY
-		// Further bias: blend 40% toward center
 		testX = testX*0.6 + centerX*0.4
 		testY = testY*0.6 + centerY*0.4
 
@@ -492,12 +446,6 @@ func respawnPlayer(player *Player, game *Game) {
 	player.Keys = Keys{}
 	player.Weapon = WeaponMachinegun
 	player.SpeedBoostUntil = 0
-	player.MinigunUntil = 0
-	player.ShieldUntil = 0
-	player.InvisibleUntil = 0
-	player.RegenUntil = 0
-	player.LastRegenTick = 0
-	player.Armor = 0
 	player.DashCooldownUntil = 0
 	player.DashUntil = 0
 	player.DashDirX = 0
@@ -532,18 +480,8 @@ func respawnPlayer(player *Player, game *Game) {
 	}
 
 	// Clamp to arena
-	clampMinX := pr
-	clampMinY := pr
-	clampMaxX := GameConfig.ArenaWidth - pr
-	clampMaxY := GameConfig.ArenaHeight - pr
-	if game.ZoneShrinking {
-		clampMinX = math.Max(pr, game.Zone.X+pr)
-		clampMinY = math.Max(pr, game.Zone.Y+pr)
-		clampMaxX = math.Min(GameConfig.ArenaWidth-pr, game.Zone.X+game.Zone.W-pr)
-		clampMaxY = math.Min(GameConfig.ArenaHeight-pr, game.Zone.Y+game.Zone.H-pr)
-	}
-	player.X = clamp(player.X, clampMinX, clampMaxX)
-	player.Y = clamp(player.Y, clampMinY, clampMaxY)
+	player.X = clamp(player.X, pr, GameConfig.ArenaWidth-pr)
+	player.Y = clamp(player.Y, pr, GameConfig.ArenaHeight-pr)
 
 	broadcast(game, map[string]interface{}{
 		"type":     "respawn",
@@ -561,17 +499,6 @@ func requestRespawn(player *Player, game *Game) {
 		return
 	}
 	respawnPlayer(player, game)
-}
-
-/* ================= ZONE SHRINK (disabled) ================= */
-
-func startZoneShrink(game *Game) {
-	if game.ZoneShrinking {
-		return
-	}
-	game.ZoneShrinking = true
-	broadcast(game, map[string]interface{}{"type": "zoneWarning"})
-	// Zone shrinking is effectively disabled via config
 }
 
 // min/max helpers for int

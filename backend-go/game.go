@@ -16,17 +16,12 @@ const cullMargin = 2400.0
 var (
 	globalObstacleGrid = NewSpatialGrid(cellSize)
 	globalPlayerGrid   = NewSpatialGrid(cellSize)
-	globalCrateGrid    = NewSpatialGrid(cellSize)
 )
 
 /* ================= HELPERS ================= */
 
 func getPlayerSpeed(player *Player) float64 {
-	speedBoost := 1.0
-	if unixMs() < player.SpeedBoostUntil {
-		speedBoost = GameConfig.PickupSpeedMultiplier
-	}
-	return GameConfig.PlayerSpeed * speedBoost
+	return GameConfig.PlayerSpeed
 }
 
 /* ================= GAME LOOP ================= */
@@ -133,23 +128,10 @@ func updateGame(game *Game) []playerStateSnapshot {
 		}
 	}
 
-	// Build crate grid for bullet-vs-crate collision
-	globalCrateGrid.Clear()
-	crateGrid := globalCrateGrid
-	for _, c := range game.LootCrates {
-		crateGrid.Insert(&SpatialEntry{
-			ID:   c.ID,
-			X:    c.X - GameConfig.LootCrateSize/2,
-			Y:    c.Y - GameConfig.LootCrateSize/2,
-			Size: GameConfig.LootCrateSize,
-			Data: c,
-		})
-	}
-
-	// ── Auto-respawn dead players after 3 seconds ──
+	// ── Auto-respawn dead players after configured respawn time ──
 	for _, player := range game.Players {
 		if player.WaitingForRespawn && player.DeathTime > 0 {
-			if now-player.DeathTime >= 3000 {
+			if now-player.DeathTime >= GameConfig.RespawnTime {
 				respawnPlayer(player, game)
 			}
 		}
@@ -170,34 +152,6 @@ func updateGame(game *Game) []playerStateSnapshot {
 		}
 
 		// Bullet-obstacle collision disabled (no obstacles)
-
-		// Loot crate collision (spatial grid lookup)
-		crateHalf := GameConfig.LootCrateSize / 2
-		crateHitMargin := 6.0 // extra margin to make crates easier to hit
-		var hitCrate *LootCrate
-		nearbyCrates := crateGrid.QueryRadius(bullet.X, bullet.Y, crateHalf+crateHitMargin+5)
-		for _, e := range nearbyCrates {
-			c := e.Data.(*LootCrate)
-			if bullet.X >= c.X-crateHalf-crateHitMargin && bullet.X <= c.X+crateHalf+crateHitMargin &&
-				bullet.Y >= c.Y-crateHalf-crateHitMargin && bullet.Y <= c.Y+crateHalf+crateHitMargin {
-				hitCrate = c
-				break
-			}
-		}
-		if hitCrate != nil {
-			bulletsToRemove[bullet.ID] = true
-			hitCrate.HP--
-			if hitCrate.HP <= 0 {
-				destroyLootCrate(hitCrate, game)
-			} else {
-				broadcast(game, map[string]interface{}{
-					"type":    "crateHit",
-					"crateId": hitCrate.ID,
-					"hp":      hitCrate.HP,
-				})
-			}
-			continue
-		}
 
 		// Player hit detection
 		hitRadiusSq := math.Pow(GameConfig.PlayerRadius*1.05, 2)
@@ -251,20 +205,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 				effectiveDamage = int(float64(effectiveDamage) * GameConfig.HeadshotMultiplier)
 			}
 
-			// Shield absorption
-			shieldActive := now < enemy.ShieldUntil
-			if shieldActive {
-				enemy.ShieldUntil -= 1500
-			} else if enemy.Armor > 0 {
-				armorAbsorb := min(enemy.Armor, effectiveDamage)
-				enemy.Armor -= armorAbsorb
-				remaining := effectiveDamage - armorAbsorb
-				if remaining > 0 {
-					enemy.HP -= remaining
-				}
-			} else {
-				enemy.HP -= effectiveDamage
-			}
+			// Apply damage
+			enemy.HP -= effectiveDamage
 
 			// Track damage for MVP
 			for _, p := range game.Players {
@@ -329,152 +271,10 @@ func updateGame(game *Game) []playerStateSnapshot {
 		game.Bullets = game.Bullets[:n]
 	}
 
-	// Remove expired pickups (in-place compaction)
-	{
-		n := 0
-		for _, pk := range game.Pickups {
-			if now-pk.CreatedAt < GameConfig.PickupLifetime {
-				game.Pickups[n] = pk
-				n++
-			}
-		}
-		for i := n; i < len(game.Pickups); i++ {
-			game.Pickups[i] = nil
-		}
-		game.Pickups = game.Pickups[:n]
-	}
-
-	// Pickup collisions (in-place removal)
-	for _, player := range game.Players {
-		if player.HP <= 0 {
-			continue
-		}
-		pickupCollDist := GameConfig.PlayerRadius + GameConfig.PickupRadius
-		pickupCollDistSq := pickupCollDist * pickupCollDist
-		n := 0
-		for _, pickup := range game.Pickups {
-			dx := player.X - pickup.X
-			dy := player.Y - pickup.Y
-			if dx*dx+dy*dy < pickupCollDistSq {
-				applyPickup(player, pickup, game)
-			} else {
-				game.Pickups[n] = pickup
-				n++
-			}
-		}
-		for i := n; i < len(game.Pickups); i++ {
-			game.Pickups[i] = nil
-		}
-		game.Pickups = game.Pickups[:n]
-	}
-
-	// Bomb explosions (in-place compaction)
-	bombRadiusSq := GameConfig.BombRadius * GameConfig.BombRadius
-	{
-		n := 0
-		for _, bomb := range game.Bombs {
-			if now-bomb.CreatedAt >= GameConfig.BombFuseTime {
-				// Explode this bomb
-				for _, player := range game.Players {
-					if player.HP <= 0 {
-						continue
-					}
-					dx := player.X - bomb.X
-					dy := player.Y - bomb.Y
-					if dx*dx+dy*dy < bombRadiusSq {
-						if now < player.ShieldUntil {
-							player.ShieldUntil -= 1500
-						} else {
-							player.HP -= GameConfig.BombDamage
-							if player.HP <= 0 {
-								player.HP = 0
-								handleKill(nil, player, "bomb", game, false)
-							}
-						}
-					}
-				}
-				broadcast(game, map[string]interface{}{
-					"type":   "bombExploded",
-					"id":     bomb.ID,
-					"x":      int(math.Round(bomb.X)),
-					"y":      int(math.Round(bomb.Y)),
-					"radius": GameConfig.BombRadius,
-				})
-			} else {
-				game.Bombs[n] = bomb
-				n++
-			}
-		}
-		for i := n; i < len(game.Bombs); i++ {
-			game.Bombs[i] = nil
-		}
-		game.Bombs = game.Bombs[:n]
-	}
-
-	// Lightning strikes (in-place compaction)
-	lightningRadiusSq := GameConfig.LightningRadius * GameConfig.LightningRadius
-	{
-		n := 0
-		for _, lightning := range game.Lightnings {
-			if now-lightning.CreatedAt >= GameConfig.LightningFuseTime {
-				// Strike this lightning
-				for _, player := range game.Players {
-					if player.HP <= 0 {
-						continue
-					}
-					dx := player.X - lightning.X
-					dy := player.Y - lightning.Y
-					if dx*dx+dy*dy < lightningRadiusSq {
-						if now < player.ShieldUntil {
-							player.ShieldUntil -= 1500
-						} else {
-							player.HP -= GameConfig.LightningDamage
-							if player.HP <= 0 {
-								player.HP = 0
-								handleKill(nil, player, "lightning", game, false)
-							}
-						}
-					}
-				}
-				broadcast(game, map[string]interface{}{
-					"type":          "lightningStruck",
-					"id":            lightning.ID,
-					"x":             int(math.Round(lightning.X)),
-					"y":             int(math.Round(lightning.Y)),
-					"radius":        GameConfig.LightningRadius,
-					"blindDuration": GameConfig.LightningBlindDuration,
-				})
-			} else {
-				game.Lightnings[n] = lightning
-				n++
-			}
-		}
-		for i := n; i < len(game.Lightnings); i++ {
-			game.Lightnings[i] = nil
-		}
-		game.Lightnings = game.Lightnings[:n]
-	}
-
-	// Health regen tick
-	for _, player := range game.Players {
-		if player.HP <= 0 {
-			continue
-		}
-		if now < player.RegenUntil && now-player.LastRegenTick >= GameConfig.RegenTickInterval {
-			player.HP = min(GameConfig.PlayerHP, player.HP+GameConfig.RegenAmount)
-			player.LastRegenTick = now
-		}
-	}
-
 	// ── Per-player viewport-culled binary state broadcast ──
 	// Snapshots are encoded here (inside the lock) and sent after the lock is released.
 	game.StateSequence++
 	seq := game.StateSequence
-
-	var zone *Zone
-	if game.ZoneShrinking {
-		zone = &game.Zone
-	}
 
 	snapshots := make([]playerStateSnapshot, 0, len(game.Players))
 
@@ -507,27 +307,12 @@ func updateGame(game *Game) []playerStateSnapshot {
 				visBullets = append(visBullets, b)
 			}
 		}
-		visPickups := make([]*Pickup, 0)
-		for _, pk := range game.Pickups {
-			if math.Abs(pk.X-vx) < half && math.Abs(pk.Y-vy) < half {
-				visPickups = append(visPickups, pk)
-			}
-		}
-		visCrates := make([]*LootCrate, 0)
-		for _, c := range game.LootCrates {
-			if math.Abs(c.X-vx) < half && math.Abs(c.Y-vy) < half {
-				visCrates = append(visCrates, c)
-			}
-		}
 
 		buf := EncodeBinaryState(&BinaryStateInput{
 			Seq:     seq,
 			IsDelta: false,
 			Players: visPlayers,
 			Bullets: visBullets,
-			Pickups: visPickups,
-			Crates:  visCrates,
-			Zone:    zone,
 		})
 
 		snapshots = append(snapshots, playerStateSnapshot{player: viewer, data: buf})
@@ -619,35 +404,16 @@ func initPersistentGame() *Game {
 		Players:     make([]*Player, 0),
 		Bullets:     make([]*Bullet, 0),
 		Obstacles:   obstacles,
-		Pickups:     make([]*Pickup, 0),
-		Bombs:       make([]*Bomb, 0),
-		Lightnings:  make([]*Lightning, 0),
-		LootCrates:  make([]*LootCrate, 0),
 		Started:     true,
 		RoundEnded:  false,
 		GameMode:    GameModeDeathmatch,
-		Zone: Zone{
-			X: 0, Y: 0,
-			W: GameConfig.ArenaWidth,
-			H: GameConfig.ArenaHeight,
-		},
-		ZoneShrinking:      false,
 		MatchStartTime:     now,
 		LastObstacleSpawn:  now,
-		LastPickupSpawn:    now,
-		LastBombSpawn:      now,
-		LastLightningSpawn: now,
-		LastCrateSpawn:     now,
 		RoundStartTime:     now,
 	}
 
 	games.Store(game.ID, game)
 	setPersistentGame(game)
-
-	// Spawn initial entities
-	game.mu.Lock()
-	spawnInitialLootCrates(game)
-	game.mu.Unlock()
 
 	fmt.Printf("🌍 Persistent game world initialized (%d obstacles, arena %.0fx%.0f)\n",
 		len(obstacles), GameConfig.ArenaWidth, GameConfig.ArenaHeight)

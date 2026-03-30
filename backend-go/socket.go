@@ -248,14 +248,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				Skin:     skinVal,
 
 				SpeedBoostUntil: 0,
-				MinigunUntil:    0,
 				KillStreak:      0,
 				LastKilledBy:    "",
-				ShieldUntil:     0,
-				InvisibleUntil:  0,
-				RegenUntil:      0,
-				LastRegenTick:   0,
-				Armor:           0,
 
 				DashCooldownUntil: 0,
 				DashUntil:         0,
