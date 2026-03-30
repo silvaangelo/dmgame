@@ -170,8 +170,10 @@ func resetPersistentRound(game *Game) {
 
 	game.RoundEnded = false
 
-	// Obstacles removed from the game
-	game.Obstacles = make([]*Obstacle, 0)
+	// Reload map obstacles for the new round
+	chosenMap := PickRandomMap()
+	CurrentMapName = chosenMap.Name
+	game.Obstacles = GenerateObstaclesFromMap(chosenMap)
 	game.Bullets = make([]*Bullet, 0)
 	game.StateSequence = 0
 

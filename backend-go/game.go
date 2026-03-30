@@ -65,8 +65,20 @@ func updateGame(game *Game) []playerStateSnapshot {
 	// ── Check spawn timers ──
 	checkSpawnTimers(game, now)
 
-	// ── Build spatial grid for obstacles (disabled — no obstacles) ──
+	// ── Build spatial grid for obstacles ──
 	globalObstacleGrid.Clear()
+	for _, o := range game.Obstacles {
+		if o.Destroyed {
+			continue
+		}
+		globalObstacleGrid.Insert(&SpatialEntry{
+			ID:   o.ID,
+			X:    o.X,
+			Y:    o.Y,
+			Size: o.Size,
+			Data: o,
+		})
+	}
 
 	// ── Player movement ──
 	for _, player := range game.Players {
@@ -102,6 +114,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			player.X += speed
 		}
 		player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
+		resolveCollisions(player, globalObstacleGrid, playerRadius, true)
 
 		// Move Y axis
 		if player.Keys.W {
@@ -111,6 +124,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			player.Y += speed
 		}
 		player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
+		resolveCollisions(player, globalObstacleGrid, playerRadius, false)
 	}
 
 	// Build player grid after movement
@@ -151,7 +165,30 @@ func updateGame(game *Game) []playerStateSnapshot {
 			continue
 		}
 
-		// Bullet-obstacle collision disabled (no obstacles)
+		// Bullet-obstacle collision
+		obstacleGrid := globalObstacleGrid
+		nearbyObs := obstacleGrid.QueryRadius(bullet.X, bullet.Y, 60)
+		hitObstacle := false
+		for _, e := range nearbyObs {
+			o := e.Data.(*Obstacle)
+			if o.Destroyed {
+				continue
+			}
+			if bullet.X >= o.X && bullet.X <= o.X+o.Size &&
+				bullet.Y >= o.Y && bullet.Y <= o.Y+o.Size {
+				hitObstacle = true
+				break
+			}
+		}
+		if hitObstacle {
+			bulletsToRemove[bullet.ID] = true
+			broadcast(game, map[string]interface{}{
+				"type": "bulletHitWall",
+				"x":    int(math.Round(bullet.X)),
+				"y":    int(math.Round(bullet.Y)),
+			})
+			continue
+		}
 
 		// Player hit detection
 		hitRadiusSq := math.Pow(GameConfig.PlayerRadius*1.05, 2)
@@ -395,7 +432,9 @@ func startGameLoop(game *Game) {
 /* ================= PERSISTENT GAME WORLD ================= */
 
 func initPersistentGame() *Game {
-	obstacles := generateObstacles()
+	chosenMap := PickRandomMap()
+	CurrentMapName = chosenMap.Name
+	obstacles := GenerateObstaclesFromMap(chosenMap)
 	now := unixMs()
 
 	game := &Game{
@@ -415,8 +454,8 @@ func initPersistentGame() *Game {
 	games.Store(game.ID, game)
 	setPersistentGame(game)
 
-	fmt.Printf("🌍 Persistent game world initialized (%d obstacles, arena %.0fx%.0f)\n",
-		len(obstacles), GameConfig.ArenaWidth, GameConfig.ArenaHeight)
+	fmt.Printf("🌍 Persistent game world initialized — map %q (%d obstacles, arena %.0fx%.0f)\n",
+		chosenMap.Name, len(obstacles), GameConfig.ArenaWidth, GameConfig.ArenaHeight)
 
 	// Start round timer
 	startRoundTimer(game)

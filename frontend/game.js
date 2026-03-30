@@ -416,6 +416,7 @@ let playerId;
 let loggedInUsername = "";
 let players = [];
 let bullets = [];
+let gameObstacles = [];
 let mouseX = window.innerWidth / 2;
 let mouseY = window.innerHeight / 2;
 let screenMouseX = window.innerWidth / 2;
@@ -1365,11 +1366,49 @@ function applyInput(x, y, keys, weapon) {
   if (keys.a) newX -= speed;
   if (keys.d) newX += speed;
   newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
+  // Resolve X-axis obstacle collisions
+  for (let i = 0; i < gameObstacles.length; i++) {
+    const o = gameObstacles[i];
+    if (o.destroyed) continue;
+    const closestX = Math.max(o.x, Math.min(newX, o.x + o.size));
+    const closestY = Math.max(o.y, Math.min(newY, o.y + o.size));
+    const dx = newX - closestX;
+    const dy = newY - closestY;
+    const dSq = dx * dx + dy * dy;
+    if (dSq < radiusSq) {
+      if (dSq > 0.0001) {
+        const dist = Math.sqrt(dSq);
+        newX += (dx / dist) * (playerRadius - dist);
+      } else {
+        if (o.x + o.size / 2 < newX) newX = o.x + o.size + playerRadius;
+        else newX = o.x - playerRadius;
+      }
+    }
+  }
 
   // Y axis movement
   if (keys.w) newY -= speed;
   if (keys.s) newY += speed;
   newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
+  // Resolve Y-axis obstacle collisions
+  for (let i = 0; i < gameObstacles.length; i++) {
+    const o = gameObstacles[i];
+    if (o.destroyed) continue;
+    const closestX = Math.max(o.x, Math.min(newX, o.x + o.size));
+    const closestY = Math.max(o.y, Math.min(newY, o.y + o.size));
+    const dx = newX - closestX;
+    const dy = newY - closestY;
+    const dSq = dx * dx + dy * dy;
+    if (dSq < radiusSq) {
+      if (dSq > 0.0001) {
+        const dist = Math.sqrt(dSq);
+        newY += (dy / dist) * (playerRadius - dist);
+      } else {
+        if (o.y + o.size / 2 < newY) newY = o.y + o.size + playerRadius;
+        else newY = o.y - playerRadius;
+      }
+    }
+  }
 
   return { x: newX, y: newY };
 }
@@ -1502,6 +1541,7 @@ function showStartScreen() {
   // Reset game state
   players = [];
   bullets = [];
+  gameObstacles = [];
   explosions = [];
   bloodParticles = [];
   bloodStains = [];
@@ -1558,6 +1598,7 @@ function enterGame(data) {
   try { localStorage.setItem("dm_username", data.username); } catch { /* private browsing */ }
 
   players = data.players || [];
+  gameObstacles = data.obstacles || [];
 
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -2204,6 +2245,8 @@ function connect() {
       floatingNumbers = [];
       lowHPPulseTime = 0;
       roundTimeRemaining = 300;
+
+      gameObstacles = data.obstacles || [];
 
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -3215,6 +3258,14 @@ function _renderMinimapContent(mc, framePlayer) {
   mc.lineWidth = 1;
   mc.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
+  // Draw obstacles on minimap
+  mc.fillStyle = "rgba(180,160,120,0.7)";
+  for (let i = 0; i < gameObstacles.length; i++) {
+    const o = gameObstacles[i];
+    if (o.destroyed) continue;
+    mc.fillRect(o.x * scaleX, o.y * scaleY, Math.max(1, o.size * scaleX), Math.max(1, o.size * scaleY));
+  }
+
   // Find crown leader for minimap (most kills)
   let minimapCrownId = null;
   let minimapMaxKills = 1;
@@ -3281,6 +3332,51 @@ function _renderMinimapContent(mc, framePlayer) {
 
 // Cached local player reference — updated once per render frame
 let _framePlayer = null;
+
+// ============ OBSTACLE RENDERING ============
+function renderObstacles() {
+  const cx = Math.floor(cameraX);
+  const cy = Math.floor(cameraY);
+  const vw = GAME_CONFIG.VIEWPORT_WIDTH;
+  const vh = GAME_CONFIG.VIEWPORT_HEIGHT;
+  // Only draw obstacles in viewport (with generous margin)
+  const viewL = cx - 60, viewT = cy - 60;
+  const viewR = cx + vw + 60, viewB = cy + vh + 60;
+
+  for (let i = 0; i < gameObstacles.length; i++) {
+    const o = gameObstacles[i];
+    if (o.destroyed) continue;
+    // Frustum cull
+    if (o.x + o.size < viewL || o.x > viewR || o.y + o.size < viewT || o.y > viewB) continue;
+
+    const s = o.size;
+    // Wall block — textured crate look
+    // Base fill
+    ctx.fillStyle = "#6b5b3d";
+    ctx.fillRect(o.x, o.y, s, s);
+    // Darker border / bevel
+    ctx.strokeStyle = "#3d3225";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(o.x + 1, o.y + 1, s - 2, s - 2);
+    // Inner highlight (top-left edge)
+    ctx.strokeStyle = "rgba(255,230,180,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(o.x + 2, o.y + s - 2);
+    ctx.lineTo(o.x + 2, o.y + 2);
+    ctx.lineTo(o.x + s - 2, o.y + 2);
+    ctx.stroke();
+    // Cross-brace lines (crate texture)
+    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(o.x + 3, o.y + 3);
+    ctx.lineTo(o.x + s - 3, o.y + s - 3);
+    ctx.moveTo(o.x + s - 3, o.y + 3);
+    ctx.lineTo(o.x + 3, o.y + s - 3);
+    ctx.stroke();
+  }
+}
 
 function render() {
   const frameNow = Date.now();
@@ -3408,6 +3504,9 @@ function render() {
 
   // Try to shoot if mouse is held (hold-to-shoot)
   tryShoot();
+
+  // Render obstacles (walls, crates — ground layer)
+  renderObstacles();
 
   // Render blood stains (on ground, batched by color for performance)
   const bloodColors = ["#7a0000", "#900000", "#550000"];

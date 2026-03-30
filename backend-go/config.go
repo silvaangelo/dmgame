@@ -66,15 +66,8 @@ var GameConfig = struct {
 	RoundRestartDelay int64
 	// Respawn
 	RespawnTime int64
-	// Obstacle spawn
+	// Obstacle spawn (legacy — unused)
 	ObstacleSpawnInterval int64
-	// Zone shrink (disabled)
-	ZoneShrinkStart    int64
-	ZoneShrinkInterval int64
-	ZoneShrinkRate     float64
-	ZoneDamageInterval int64
-	ZoneDamage         int
-	ZoneMinSize        float64
 	// Room
 	RoomMaxPlayers   int
 	RoomReadyTimeout int
@@ -101,8 +94,8 @@ var GameConfig = struct {
 	SniperReloadTime:     2800,
 	BulletSpeed:     22,
 	BulletLifetime:  2500,
-	ArenaWidth:      2400,
-	ArenaHeight:     2400,
+	ArenaWidth:      1600,
+	ArenaHeight:     1600,
 	// Machinegun (M4A4-like)
 	MachinegunCooldown: 90,
 	MachinegunDamage:   27,
@@ -148,13 +141,6 @@ var GameConfig = struct {
 	RespawnTime: 5000,
 	// Obstacle spawn
 	ObstacleSpawnInterval: 8000,
-	// Zone (disabled)
-	ZoneShrinkStart:    999999999,
-	ZoneShrinkInterval: 100,
-	ZoneShrinkRate:     0.3,
-	ZoneDamageInterval: 1000,
-	ZoneDamage:         1,
-	ZoneMinSize:        200,
 	// Room
 	RoomMaxPlayers:   10,
 	RoomReadyTimeout: 45,
@@ -168,27 +154,5 @@ var GameConfig = struct {
 // WeaponCycle is the order of weapons when cycling.
 var WeaponCycle = []WeaponType{WeaponMachinegun, WeaponShotgun, WeaponSniper}
 
-// ObstacleConfig holds obstacle generation parameters.
-var ObstacleConfig = struct {
-	WallCountMin  int
-	WallCountMax  int
-	WallLengthMin int
-	WallLengthMax int
-	WallBlockSize float64
-	WallSpacing   float64
-	TreeCountMin  int
-	TreeCountMax  int
-	TreeSize      float64
-	TreeSpacing   float64
-}{
-	WallCountMin:  20,
-	WallCountMax:  35,
-	WallLengthMin: 2,
-	WallLengthMax: 8,
-	WallBlockSize: 14,
-	WallSpacing:   60,
-	TreeCountMin:  10,
-	TreeCountMax:  20,
-	TreeSize:      24,
-	TreeSpacing:   70,
-}
+// CurrentMapName holds the name of the active map (sent to clients for display).
+var CurrentMapName = ""

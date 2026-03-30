@@ -307,6 +307,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				"maxHp":       GameConfig.PlayerHP,
 				"shortIdMap":  shortIdMap,
 				"timerRemaining": timerRemaining,
+				"mapName":     CurrentMapName,
 			})
 
 			game.mu.Unlock()
