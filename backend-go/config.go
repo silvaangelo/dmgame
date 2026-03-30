@@ -119,8 +119,8 @@ var GameConfig = struct {
 	SniperBulletSpeed: 48,
 	SniperAmmo:        5,
 	// Headshot
-	HeadshotMultiplier: 2.5,
-	HeadshotZone:       0.35, // top 35% of player hitbox = headshot
+	HeadshotMultiplier: 2.0,  // double damage on headshot
+	HeadshotZone:       0.35, // legacy — headshots now use sprite head position + 5px radius
 	// Accuracy (radians of spread)
 	MachinegunBaseSpread: 0.02,
 	MachinegunMoveSpread: 0.06,

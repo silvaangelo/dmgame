@@ -16,6 +16,31 @@ const (
 	muzzleOffsetY = 9.4
 )
 
+/* ================= HEAD POSITION ================= */
+
+// Head position offsets in sprite-local coords per weapon.
+// Sprite pixel coords: sniper (67,88), shotgun (78,87), rifle (78,87).
+// Conversion: localX = SPRITE_DRAW_OX + px * SPRITE_SCALE_X, localY = SPRITE_DRAW_OY + py * SPRITE_SCALE_Y
+// SPRITE_DRAW_OX = -24.5, SPRITE_DRAW_OY = -19.788, SCALE_X = 70/283 ≈ 0.24735, SCALE_Y = 39.575/160 ≈ 0.24735
+var headOffsets = map[WeaponType][2]float64{
+	"machinegun": {-24.5 + 78*0.24735, -19.788 + 87*0.24735},  // rifle: (-5.21, 1.72)
+	"shotgun":    {-24.5 + 78*0.24735, -19.788 + 87*0.24735},  // shotgun: same
+	"sniper":     {-24.5 + 67*0.24735, -19.788 + 88*0.24735},  // sniper: (-7.93, 1.98)
+}
+
+const headHitRadius = 5.0 // 5px radius around head center counts as headshot
+
+// headWorldPosition returns the world-space head point for a player.
+func headWorldPosition(px, py, aimAngle float64, weapon WeaponType) (float64, float64) {
+	ho, ok := headOffsets[weapon]
+	if !ok {
+		ho = headOffsets["machinegun"]
+	}
+	cos := math.Cos(aimAngle)
+	sin := math.Sin(aimAngle)
+	return px + ho[0]*cos - ho[1]*sin, py + ho[0]*sin + ho[1]*cos
+}
+
 // muzzlePosition returns the world-space muzzle point given player center and aim direction.
 func muzzlePosition(px, py, dirX, dirY float64, weapon WeaponType) (float64, float64) {
 	angle := math.Atan2(dirY, dirX)

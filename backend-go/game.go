@@ -214,16 +214,14 @@ func updateGame(game *Game) []playerStateSnapshot {
 		if enemy != nil {
 			bulletsToRemove[bullet.ID] = true
 
-			// CS2-style headshot detection: if bullet hits upper portion of player hitbox
+			// Headshot detection: check if bullet is within 5px of the enemy's
+			// sprite head position (varies by weapon, rotated by aim angle).
 			isHeadshot := false
 			{
-				// Calculate where in the hitbox the bullet struck
-				// Bullet travel direction determines "up" — headshots happen when
-				// the bullet hits the leading edge of the player sprite.
-				// Simplified: use Y offset from player center. Negative Y = top = head.
-				dy := bullet.Y - enemy.Y
-				headThreshold := -GameConfig.PlayerRadius * GameConfig.HeadshotZone
-				if dy < headThreshold {
+				hx, hy := headWorldPosition(enemy.X, enemy.Y, enemy.AimAngle, enemy.Weapon)
+				hdx := bullet.X - hx
+				hdy := bullet.Y - hy
+				if hdx*hdx+hdy*hdy <= headHitRadius*headHitRadius {
 					isHeadshot = true
 				}
 			}

@@ -418,6 +418,15 @@ var SPRITE_SCALE_X = SPRITE_RENDER_W / 283;
 var SPRITE_SCALE_Y = SPRITE_RENDER_H / 160;
 var MUZZLE_OFFSET = { x: SPRITE_DRAW_OX + 272 * SPRITE_SCALE_X, y: SPRITE_DRAW_OY + 118 * SPRITE_SCALE_Y };
 
+// Head position offsets per weapon in sprite-local coords (origin = player center)
+// Sprite pixel coords: sniper (67,88), shotgun (78,87), rifle (78,87)
+var HEAD_OFFSETS = {
+  machinegun: { x: SPRITE_DRAW_OX + 78 * SPRITE_SCALE_X, y: SPRITE_DRAW_OY + 87 * SPRITE_SCALE_Y },
+  shotgun:    { x: SPRITE_DRAW_OX + 78 * SPRITE_SCALE_X, y: SPRITE_DRAW_OY + 87 * SPRITE_SCALE_Y },
+  sniper:     { x: SPRITE_DRAW_OX + 67 * SPRITE_SCALE_X, y: SPRITE_DRAW_OY + 88 * SPRITE_SCALE_Y },
+};
+var HEAD_OFFSET_DEFAULT = HEAD_OFFSETS.machinegun;
+
 // Get muzzle world position given player center and aim angle
 function getMuzzlePosition(px, py, angle, weapon) {
   var cos = Math.cos(angle);
@@ -425,6 +434,17 @@ function getMuzzlePosition(px, py, angle, weapon) {
   return {
     x: px + MUZZLE_OFFSET.x * cos - MUZZLE_OFFSET.y * sin,
     y: py + MUZZLE_OFFSET.x * sin + MUZZLE_OFFSET.y * cos
+  };
+}
+
+// Get head world position given player center, aim angle, and weapon
+function getHeadWorldPosition(px, py, angle, weapon) {
+  var ho = HEAD_OFFSETS[weapon] || HEAD_OFFSET_DEFAULT;
+  var cos = Math.cos(angle);
+  var sin = Math.sin(angle);
+  return {
+    x: px + ho.x * cos - ho.y * sin,
+    y: py + ho.x * sin + ho.y * cos
   };
 }
 
@@ -3904,15 +3924,18 @@ function render() {
       }
     }
 
-    // ---- Dot above player head (green = local, red = others) ----
-    var dotColor = (p.id === playerId) ? "#33ff55" : "#ff3333";
-    ctx.fillStyle = dotColor;
-    ctx.shadowColor = dotColor;
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.arc(renderX, renderY - 22, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    // ---- Dot at player head position (green = local, red = others) ----
+    {
+      var headPos = getHeadWorldPosition(renderX, renderY, gunAngle, p.weapon || "machinegun");
+      var dotColor = (p.id === playerId) ? "#33ff55" : "#ff3333";
+      ctx.fillStyle = dotColor;
+      ctx.shadowColor = dotColor;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(headPos.x, headPos.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
 
     // Golden crown on the #1 player (highest score)
     if (crownLeaderId === p.id) {
