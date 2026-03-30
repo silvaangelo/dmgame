@@ -371,6 +371,41 @@ var spritesLoaded = false;
   spriteSniperBullet.src = "assets/sprites/sniper-bullet.png";
 })();
 
+// Pixel art texture sprite sheets
+var txGrass = new Image();
+var txWall = new Image();
+var txStoneGround = new Image();
+var txStruct = new Image();
+var txProps = new Image();
+var txPlant = new Image();
+var texturesLoaded = false;
+(function preloadTextures() {
+  var loaded = 0;
+  var total = 6;
+  function onTexLoad() {
+    loaded++;
+    if (loaded >= total) {
+      texturesLoaded = true;
+      // Invalidate cached patterns so they rebuild with textures
+      gridCanvas = null;
+      gridPatternCache = null;
+      wallLookup = null;
+    }
+  }
+  txGrass.onload = onTexLoad; txGrass.onerror = onTexLoad;
+  txGrass.src = "assets/pixel-art-textures/TX%20Tileset%20Grass.png";
+  txWall.onload = onTexLoad; txWall.onerror = onTexLoad;
+  txWall.src = "assets/pixel-art-textures/TX%20Tileset%20Wall.png";
+  txStoneGround.onload = onTexLoad; txStoneGround.onerror = onTexLoad;
+  txStoneGround.src = "assets/pixel-art-textures/TX%20Tileset%20Stone%20Ground.png";
+  txStruct.onload = onTexLoad; txStruct.onerror = onTexLoad;
+  txStruct.src = "assets/pixel-art-textures/TX%20Struct.png";
+  txProps.onload = onTexLoad; txProps.onerror = onTexLoad;
+  txProps.src = "assets/pixel-art-textures/TX%20Props.png";
+  txPlant.onload = onTexLoad; txPlant.onerror = onTexLoad;
+  txPlant.src = "assets/pixel-art-textures/TX%20Plant.png";
+})();
+
 // Sprite render dimensions (scaled to match player hitbox)
 var SPRITE_RENDER_W = 70;
 var SPRITE_RENDER_H = 70 / (283 / 160); // maintain aspect ratio ≈ 39.6
@@ -487,6 +522,8 @@ let killFeedEntries = [];
 // Cached grid canvas (used in resizeCanvas and render)
 let gridCanvas = null;
 let gridPatternCache = null;
+let wallLookup = null;       // Set of "x,y" strings for fast wall neighbor checks
+let mapDecorations = [];     // Visual-only plant/prop decorations
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
 
@@ -1542,6 +1579,8 @@ function showStartScreen() {
   players = [];
   bullets = [];
   gameObstacles = [];
+  wallLookup = null;
+  mapDecorations = [];
   explosions = [];
   bloodParticles = [];
   bloodStains = [];
@@ -1599,6 +1638,8 @@ function enterGame(data) {
 
   players = data.players || [];
   gameObstacles = data.obstacles || [];
+  wallLookup = null;
+  generateMapDecorations();
 
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -2253,6 +2294,8 @@ function connect() {
       roundTimeRemaining = 300;
 
       gameObstacles = data.obstacles || [];
+      wallLookup = null;
+      generateMapDecorations();
 
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
@@ -3183,24 +3226,75 @@ function renderDashTrails() {
 // Pre-render static grid to offscreen canvas for performance
 function ensureGridCanvas() {
   if (gridCanvas) return;
-  // Create a small tile and use createPattern for efficient rendering
-  gridCanvas = document.createElement("canvas");
-  const tileSize = 40;
-  gridCanvas.width = tileSize;
-  gridCanvas.height = tileSize;
-  const gc = gridCanvas.getContext("2d");
-  gc.fillStyle = "#2a3020";
-  gc.fillRect(0, 0, tileSize, tileSize);
-  gc.strokeStyle = "rgba(65, 85, 60, 0.35)";
-  gc.lineWidth = 0.5;
-  gc.beginPath();
-  gc.moveTo(0, 0);
-  gc.lineTo(0, tileSize);
-  gc.stroke();
-  gc.beginPath();
-  gc.moveTo(0, 0);
-  gc.lineTo(tileSize, 0);
-  gc.stroke();
+  // Use pixel art grass tileset if loaded, otherwise fallback to procedural grid
+  if (txGrass.complete && txGrass.naturalWidth > 0) {
+    // Extract 2x2 center grass tiles (64x64) from tileset rows 2-3, cols 2-3
+    gridCanvas = document.createElement("canvas");
+    gridCanvas.width = 64;
+    gridCanvas.height = 64;
+    var gc = gridCanvas.getContext("2d");
+    gc.imageSmoothingEnabled = false;
+    gc.drawImage(txGrass, 64, 64, 64, 64, 0, 0, 64, 64);
+    // Slight darkening to match game's moody tone
+    gc.fillStyle = "rgba(0,0,0,0.12)";
+    gc.fillRect(0, 0, 64, 64);
+  } else {
+    // Fallback: procedural dark grid
+    gridCanvas = document.createElement("canvas");
+    var tileSize = 40;
+    gridCanvas.width = tileSize;
+    gridCanvas.height = tileSize;
+    var gc = gridCanvas.getContext("2d");
+    gc.fillStyle = "#2a3020";
+    gc.fillRect(0, 0, tileSize, tileSize);
+    gc.strokeStyle = "rgba(65, 85, 60, 0.35)";
+    gc.lineWidth = 0.5;
+    gc.beginPath();
+    gc.moveTo(0, 0); gc.lineTo(0, tileSize);
+    gc.stroke();
+    gc.beginPath();
+    gc.moveTo(0, 0); gc.lineTo(tileSize, 0);
+    gc.stroke();
+  }
+}
+
+// Generate scattered visual decorations (plants, grass tufts) across the arena
+function generateMapDecorations() {
+  mapDecorations = [];
+  var aw = GAME_CONFIG.ARENA_WIDTH || 1600;
+  var ah = GAME_CONFIG.ARENA_HEIGHT || 1600;
+  // Simple seeded PRNG for deterministic placement across all clients
+  var seed = Math.floor(aw * 7 + ah * 13 + gameObstacles.length * 31);
+  function srand() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  }
+  // Decoration types: source regions from TX Plant.png (32px tile grid)
+  // Row 4 col 2 = small grass (px 64,128), Row 5 col 1 = bush (px 32,160)
+  // Row 5 col 2 = small plant (px 64,160), Row 4 col 4 = grass tuft (px 128,128)
+  var decoSpecs = [
+    { sx: 64,  sy: 128, sw: 32, sh: 32, dw: 20, dh: 20 },
+    { sx: 128, sy: 128, sw: 32, sh: 32, dw: 22, dh: 22 },
+    { sx: 192, sy: 128, sw: 32, sh: 32, dw: 18, dh: 18 },
+    { sx: 64,  sy: 160, sw: 32, sh: 32, dw: 26, dh: 26 },
+    { sx: 128, sy: 160, sw: 32, sh: 32, dw: 24, dh: 24 },
+  ];
+  // Place ~50 decorations
+  for (var i = 0; i < 50; i++) {
+    var dx = srand() * (aw - 120) + 60;
+    var dy = srand() * (ah - 120) + 60;
+    // Skip if overlapping any wall
+    var skip = false;
+    for (var j = 0; j < gameObstacles.length; j++) {
+      var o = gameObstacles[j];
+      if (dx > o.x - 20 && dx < o.x + o.size + 20 && dy > o.y - 20 && dy < o.y + o.size + 20) {
+        skip = true; break;
+      }
+    }
+    if (skip) continue;
+    var spec = decoSpecs[Math.floor(srand() * decoSpecs.length)];
+    mapDecorations.push({ x: dx, y: dy, sx: spec.sx, sy: spec.sy, sw: spec.sw, sh: spec.sh, dw: spec.dw, dh: spec.dh, alpha: 0.35 + srand() * 0.3 });
+  }
 }
 
 // Update interpolated positions for smooth movement
@@ -3264,8 +3358,8 @@ function _renderMinimapContent(mc, framePlayer) {
   mc.lineWidth = 1;
   mc.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
-  // Draw obstacles on minimap
-  mc.fillStyle = "rgba(180,160,120,0.7)";
+  // Draw obstacles on minimap (stone wall color to match pixel art textures)
+  mc.fillStyle = "rgba(140,125,105,0.8)";
   for (let i = 0; i < gameObstacles.length; i++) {
     const o = gameObstacles[i];
     if (o.destroyed) continue;
@@ -3341,47 +3435,147 @@ let _framePlayer = null;
 
 // ============ OBSTACLE RENDERING ============
 function renderObstacles() {
-  const cx = Math.floor(cameraX);
-  const cy = Math.floor(cameraY);
-  const vw = GAME_CONFIG.VIEWPORT_WIDTH;
-  const vh = GAME_CONFIG.VIEWPORT_HEIGHT;
-  // Only draw obstacles in viewport (with generous margin)
-  const viewL = cx - 60, viewT = cy - 60;
-  const viewR = cx + vw + 60, viewB = cy + vh + 60;
+  if (!gameObstacles.length) return;
+  var cx = Math.floor(cameraX);
+  var cy = Math.floor(cameraY);
+  var vw = GAME_CONFIG.VIEWPORT_WIDTH;
+  var vh = GAME_CONFIG.VIEWPORT_HEIGHT;
+  var viewL = cx - 60, viewT = cy - 60;
+  var viewR = cx + vw + 60, viewB = cy + vh + 60;
+  var bs = 40; // block size in game units
 
-  for (let i = 0; i < gameObstacles.length; i++) {
-    const o = gameObstacles[i];
-    if (o.destroyed) continue;
-    // Frustum cull
-    if (o.x + o.size < viewL || o.x > viewR || o.y + o.size < viewT || o.y > viewB) continue;
-
-    const s = o.size;
-    // Wall block — textured crate look
-    // Base fill
-    ctx.fillStyle = "#6b5b3d";
-    ctx.fillRect(o.x, o.y, s, s);
-    // Darker border / bevel
-    ctx.strokeStyle = "#3d3225";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(o.x + 1, o.y + 1, s - 2, s - 2);
-    // Inner highlight (top-left edge)
-    ctx.strokeStyle = "rgba(255,230,180,0.18)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(o.x + 2, o.y + s - 2);
-    ctx.lineTo(o.x + 2, o.y + 2);
-    ctx.lineTo(o.x + s - 2, o.y + 2);
-    ctx.stroke();
-    // Cross-brace lines (crate texture)
-    ctx.strokeStyle = "rgba(0,0,0,0.12)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(o.x + 3, o.y + 3);
-    ctx.lineTo(o.x + s - 3, o.y + s - 3);
-    ctx.moveTo(o.x + s - 3, o.y + 3);
-    ctx.lineTo(o.x + 3, o.y + s - 3);
-    ctx.stroke();
+  // Build wall position lookup (invalidated when obstacles change)
+  if (!wallLookup) {
+    wallLookup = new Set();
+    for (var wi = 0; wi < gameObstacles.length; wi++) {
+      var wo = gameObstacles[wi];
+      if (!wo.destroyed) wallLookup.add(wo.x + "," + wo.y);
+    }
   }
+
+  var useWallTex = txWall.complete && txWall.naturalWidth > 0;
+  var useStoneGround = txStoneGround.complete && txStoneGround.naturalWidth > 0;
+
+  // Wall fill tile source coordinates (TX Tileset Wall.png, 32px tiles)
+  // Solid stone surface tiles: grid rows 1-2, cols 5-7 → 6 variations
+  var wallSrc = [
+    [160, 32], [192, 32], [224, 32],
+    [160, 64], [192, 64], [224, 64],
+  ];
+
+  // -- Pass 0: stone ground patches around wall bases for foundation look --
+  if (useStoneGround) {
+    for (var i = 0; i < gameObstacles.length; i++) {
+      var o = gameObstacles[i];
+      if (o.destroyed) continue;
+      if (o.x + bs + 10 < viewL || o.x - 10 > viewR || o.y + bs + 10 < viewT || o.y - 10 > viewB) continue;
+      // Draw stone ground at each exposed edge (small border around wall base)
+      var hasN = wallLookup.has(o.x + "," + (o.y - bs));
+      var hasS = wallLookup.has(o.x + "," + (o.y + bs));
+      var hasE = wallLookup.has((o.x + bs) + "," + o.y);
+      var hasW = wallLookup.has((o.x - bs) + "," + o.y);
+      // Stone ground border (8px strip on exposed sides)
+      ctx.globalAlpha = 0.5;
+      if (!hasN) ctx.drawImage(txStoneGround, 0, 0, 32, 8, o.x - 4, o.y - 8, bs + 8, 8);
+      if (!hasS) ctx.drawImage(txStoneGround, 0, 24, 32, 8, o.x - 4, o.y + bs, bs + 8, 8);
+      if (!hasE) ctx.drawImage(txStoneGround, 24, 0, 8, 32, o.x + bs, o.y - 4, 8, bs + 8);
+      if (!hasW) ctx.drawImage(txStoneGround, 0, 0, 8, 32, o.x - 8, o.y - 4, 8, bs + 8);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // -- Pass 1: drop shadows below walls (south-exposed edges) --
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  for (var i = 0; i < gameObstacles.length; i++) {
+    var o = gameObstacles[i];
+    if (o.destroyed) continue;
+    if (o.x + bs < viewL || o.x > viewR || o.y + bs < viewT || o.y > viewB) continue;
+    if (!wallLookup.has(o.x + "," + (o.y + bs))) {
+      ctx.fillRect(o.x + 2, o.y + bs, bs - 4, 6);
+    }
+    // Small east shadow too
+    if (!wallLookup.has((o.x + bs) + "," + o.y)) {
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+      ctx.fillRect(o.x + bs, o.y + 2, 4, bs - 4);
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
+    }
+  }
+
+  // -- Pass 2: draw wall tiles with texture --
+  for (var i = 0; i < gameObstacles.length; i++) {
+    var o = gameObstacles[i];
+    if (o.destroyed) continue;
+    if (o.x + o.size < viewL || o.x > viewR || o.y + o.size < viewT || o.y > viewB) continue;
+    var s = o.size;
+
+    if (useWallTex) {
+      // Pick fill tile based on position for subtle variety
+      var tv = ((Math.floor(o.x / bs) * 7 + Math.floor(o.y / bs) * 13) & 0x7FFFFFFF) % 6;
+      var src = wallSrc[tv];
+      // Draw wall fill texture (32px source scaled to 40px game block)
+      ctx.drawImage(txWall, src[0], src[1], 32, 32, o.x, o.y, s, s);
+
+      // Check neighbors for edge rendering
+      var hasN = wallLookup.has(o.x + "," + (o.y - bs));
+      var hasS = wallLookup.has(o.x + "," + (o.y + bs));
+      var hasE = wallLookup.has((o.x + bs) + "," + o.y);
+      var hasW = wallLookup.has((o.x - bs) + "," + o.y);
+
+      // Dark edge on exposed sides (wall border / outline effect)
+      if (!hasN || !hasS || !hasE || !hasW) {
+        ctx.fillStyle = "rgba(35,25,15,0.5)";
+        if (!hasN) ctx.fillRect(o.x, o.y, s, 2);
+        if (!hasS) ctx.fillRect(o.x, o.y + s - 2, s, 2);
+        if (!hasE) ctx.fillRect(o.x + s - 2, o.y, 2, s);
+        if (!hasW) ctx.fillRect(o.x, o.y, 2, s);
+        // Light inner highlight (bevel effect on opposite edges)
+        ctx.fillStyle = "rgba(255,230,180,0.12)";
+        if (!hasS) ctx.fillRect(o.x + 2, o.y + 1, s - 4, 1);
+        if (!hasE) ctx.fillRect(o.x + 1, o.y + 2, 1, s - 4);
+      }
+    } else {
+      // Fallback: procedural crate-style blocks
+      ctx.fillStyle = "#6b5b3d";
+      ctx.fillRect(o.x, o.y, s, s);
+      ctx.strokeStyle = "#3d3225";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(o.x + 1, o.y + 1, s - 2, s - 2);
+      ctx.strokeStyle = "rgba(255,230,180,0.18)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(o.x + 2, o.y + s - 2);
+      ctx.lineTo(o.x + 2, o.y + 2);
+      ctx.lineTo(o.x + s - 2, o.y + 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(0,0,0,0.12)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(o.x + 3, o.y + 3);
+      ctx.lineTo(o.x + s - 3, o.y + s - 3);
+      ctx.moveTo(o.x + s - 3, o.y + 3);
+      ctx.lineTo(o.x + 3, o.y + s - 3);
+      ctx.stroke();
+    }
+  }
+}
+
+// Render ground decorations (plants, grass tufts — visual only)
+function renderDecorations() {
+  if (!mapDecorations.length) return;
+  if (!txPlant.complete || txPlant.naturalWidth === 0) return;
+  var cx = Math.floor(cameraX);
+  var cy = Math.floor(cameraY);
+  var vw = GAME_CONFIG.VIEWPORT_WIDTH;
+  var vh = GAME_CONFIG.VIEWPORT_HEIGHT;
+  for (var i = 0; i < mapDecorations.length; i++) {
+    var d = mapDecorations[i];
+    // Viewport cull
+    if (d.x + d.dw < cx - 20 || d.x - d.dw > cx + vw + 20) continue;
+    if (d.y + d.dh < cy - 20 || d.y - d.dh > cy + vh + 20) continue;
+    ctx.globalAlpha = d.alpha;
+    ctx.drawImage(txPlant, d.sx, d.sy, d.sw, d.sh, d.x - d.dw / 2, d.y - d.dh / 2, d.dw, d.dh);
+  }
+  ctx.globalAlpha = 1;
 }
 
 function render() {
@@ -3420,14 +3614,15 @@ function render() {
   ctx.save();
   ctx.scale(CAMERA_SCALE, CAMERA_SCALE);
 
-  // Draw grid background using cached tile pattern
+  // Draw grid background using cached tile pattern (grass texture or fallback grid)
   ensureGridCanvas();
   if (!gridPatternCache) gridPatternCache = ctx.createPattern(gridCanvas, "repeat");
   ctx.save();
   ctx.fillStyle = gridPatternCache;
-  // Offset pattern to align with camera
-  ctx.translate(-Math.floor(cameraX) % 40, -Math.floor(cameraY) % 40);
-  ctx.fillRect(0, 0, GAME_CONFIG.VIEWPORT_WIDTH + 40, GAME_CONFIG.VIEWPORT_HEIGHT + 40);
+  // Offset pattern to align with camera (use actual pattern tile dimensions)
+  var _gpw = gridCanvas.width, _gph = gridCanvas.height;
+  ctx.translate(-((Math.floor(cameraX) % _gpw) + _gpw) % _gpw, -((Math.floor(cameraY) % _gph) + _gph) % _gph);
+  ctx.fillRect(0, 0, GAME_CONFIG.VIEWPORT_WIDTH + _gpw, GAME_CONFIG.VIEWPORT_HEIGHT + _gph);
   ctx.restore();
 
   // Draw arena boundary — out-of-bounds overlay + border line
@@ -3511,7 +3706,10 @@ function render() {
   // Try to shoot if mouse is held (hold-to-shoot)
   tryShoot();
 
-  // Render obstacles (walls, crates — ground layer)
+  // Render ground decorations (plants, grass tufts — below walls)
+  renderDecorations();
+
+  // Render obstacles (walls — ground layer)
   renderObstacles();
 
   // Render blood stains (on ground, batched by color for performance)
