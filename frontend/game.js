@@ -198,10 +198,44 @@ function handleBinaryState(buf) {
     }
     previousHP = currentPlayer.hp;
 
+    // ── Reload sound & feedback (binary handler) ──
+    if (currentPlayer.reloading && !wasReloading) {
+      // Just started reloading — play per-weapon reload sound
+      if (currentPlayer.weapon === "shotgun") {
+        playSound("reload-shotgun", 0.6);
+        reloadDuration = 2200;
+      } else if (currentPlayer.weapon === "sniper") {
+        playSound("reload-sniper", 0.6);
+        reloadDuration = 2800;
+      } else {
+        playSound("reload-rifle", 0.6);
+        reloadDuration = 1800;
+      }
+      reloadStartTime = Date.now();
+      reloadFlashAlpha = 1.0;
+    }
+    if (!currentPlayer.reloading && wasReloading) {
+      // Reload just completed — brief flash + shotgun pump sound
+      reloadFlashAlpha = 0.8;
+      if (currentPlayer.weapon === "shotgun") {
+        playSound("shotgun-pump", 0.5);
+      }
+    }
+    wasReloading = currentPlayer.reloading;
+
     // Per-weapon ammo tracking (binary handler)
     weaponAmmoState[currentPlayer.weapon] = currentPlayer.shots;
     if (currentPlayer.weapon !== lastKnownWeapon) {
       lastKnownWeapon = currentPlayer.weapon;
+    }
+
+    // ── Low ammo warning tracking ──
+    var wpnMaxAmmo = currentPlayer.weapon === "shotgun" ? 8 : currentPlayer.weapon === "sniper" ? 5 : 35;
+    var lowAmmoThreshold = Math.max(1, Math.ceil(wpnMaxAmmo * 0.2));
+    if (currentPlayer.shots <= lowAmmoThreshold && currentPlayer.shots > 0 && !currentPlayer.reloading) {
+      lowAmmoWarningShown = true;
+    } else {
+      lowAmmoWarningShown = false;
     }
 
     var lastProcessed = currentPlayer.lastProcessedInput || 0;
