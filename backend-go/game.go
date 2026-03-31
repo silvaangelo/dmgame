@@ -163,37 +163,51 @@ func updateGame(game *Game) []playerStateSnapshot {
 	}
 
 	// ── Bullet physics ──
-	bulletsToRemove := make(map[string]bool)
+	// Use a slice-based set for O(1) removal lookups without map allocation
+	bulletRemoved := make([]bool, len(game.Bullets))
 
-	for _, bullet := range game.Bullets {
+	for bi, bullet := range game.Bullets {
+		// Save previous position for swept collision
+		prevX := bullet.X
+		prevY := bullet.Y
+
 		bullet.X += bullet.DX
 		bullet.Y += bullet.DY
 
 		// Out of bounds
 		if bullet.X < 0 || bullet.X > GameConfig.ArenaWidth ||
 			bullet.Y < 0 || bullet.Y > GameConfig.ArenaHeight {
-			bulletsToRemove[bullet.ID] = true
+			bulletRemoved[bi] = true
 			continue
 		}
 
-		// Bullet-obstacle collision
-		obstacleGrid := globalObstacleGrid
-		nearbyObs := obstacleGrid.QueryRadius(bullet.X, bullet.Y, 60)
+		// Swept bullet-obstacle collision: check the line from prevPos to curPos
+		// This prevents fast bullets (sniper=48px/tick) from phasing through 40px walls.
+		sweptMinX := math.Min(prevX, bullet.X) - 2
+		sweptMinY := math.Min(prevY, bullet.Y) - 2
+		sweptMaxX := math.Max(prevX, bullet.X) + 2
+		sweptMaxY := math.Max(prevY, bullet.Y) + 2
+		sweptW := sweptMaxX - sweptMinX
+		sweptH := sweptMaxY - sweptMinY
+		nearbyObs := globalObstacleGrid.QueryRect(sweptMinX, sweptMinY, sweptW, sweptH)
 		hitObstacle := false
+		var hitX, hitY float64
 		for _, e := range nearbyObs {
 			o := e.Data.(*Obstacle)
-			if bullet.X >= o.X && bullet.X <= o.X+o.Size &&
-				bullet.Y >= o.Y && bullet.Y <= o.Y+o.Size {
+			if segmentIntersectsAABB(prevX, prevY, bullet.X, bullet.Y, o.X, o.Y, o.X+o.Size, o.Y+o.Size) {
 				hitObstacle = true
+				// Approximate hit position: clamp bullet pos to obstacle edge
+				hitX = clamp(bullet.X, o.X, o.X+o.Size)
+				hitY = clamp(bullet.Y, o.Y, o.Y+o.Size)
 				break
 			}
 		}
 		if hitObstacle {
-			bulletsToRemove[bullet.ID] = true
+			bulletRemoved[bi] = true
 			broadcast(game, map[string]interface{}{
 				"type": "bulletHitWall",
-				"x":    int(math.Round(bullet.X)),
-				"y":    int(math.Round(bullet.Y)),
+				"x":    int(math.Round(hitX)),
+				"y":    int(math.Round(hitY)),
 			})
 			continue
 		}
@@ -210,13 +224,17 @@ func updateGame(game *Game) []playerStateSnapshot {
 			bdx := p.X - bullet.X
 			bdy := p.Y - bullet.Y
 			if bdx*bdx+bdy*bdy < hitRadiusSq {
-				enemy = p
-				break
+				// Line-of-sight check: make sure there's no wall between
+				// the bullet's previous position and the target player.
+				if hasLineOfSight(prevX, prevY, p.X, p.Y, globalObstacleGrid) {
+					enemy = p
+					break
+				}
 			}
 		}
 
 		if enemy != nil {
-			bulletsToRemove[bullet.ID] = true
+			bulletRemoved[bi] = true
 
 			// Headshot detection: check if bullet is within 5px of the enemy's
 			// sprite head position (varies by weapon, rotated by aim angle).
@@ -293,8 +311,8 @@ func updateGame(game *Game) []playerStateSnapshot {
 	// Remove hit/OOB/expired bullets (single pass, in-place compaction)
 	{
 		n := 0
-		for _, b := range game.Bullets {
-			if !bulletsToRemove[b.ID] && now-b.CreatedAt < GameConfig.BulletLifetime {
+		for bi, b := range game.Bullets {
+			if !bulletRemoved[bi] && now-b.CreatedAt < GameConfig.BulletLifetime {
 				game.Bullets[n] = b
 				n++
 			}
@@ -329,14 +347,14 @@ func updateGame(game *Game) []playerStateSnapshot {
 		vy := viewer.Y
 		half := cullMargin
 
-		// Cull entities to viewer's viewport
-		visPlayers := make([]*Player, 0)
+		// Cull entities to viewer's viewport (pre-allocate with estimated capacity)
+		visPlayers := make([]*Player, 0, len(game.Players))
 		for _, p := range game.Players {
 			if p.ID == viewer.ID || (math.Abs(p.X-vx) < half && math.Abs(p.Y-vy) < half) {
 				visPlayers = append(visPlayers, p)
 			}
 		}
-		visBullets := make([]*Bullet, 0)
+		visBullets := make([]*Bullet, 0, len(game.Bullets))
 		for _, b := range game.Bullets {
 			if math.Abs(b.X-vx) < half && math.Abs(b.Y-vy) < half {
 				visBullets = append(visBullets, b)
@@ -352,6 +370,82 @@ func updateGame(game *Game) []playerStateSnapshot {
 		snapshots = append(snapshots, playerStateSnapshot{player: viewer, data: buf})
 	}
 	return snapshots
+}
+
+// segmentIntersectsAABB tests whether the line segment (x1,y1)→(x2,y2)
+// intersects the axis-aligned bounding box [minX,minY]–[maxX,maxY].
+// Uses the slab method (Liang–Barsky variant).
+func segmentIntersectsAABB(x1, y1, x2, y2, minX, minY, maxX, maxY float64) bool {
+	dx := x2 - x1
+	dy := y2 - y1
+
+	tMin := 0.0
+	tMax := 1.0
+
+	// X slab
+	if math.Abs(dx) < 1e-12 {
+		if x1 < minX || x1 > maxX {
+			return false
+		}
+	} else {
+		ivd := 1.0 / dx
+		t0 := (minX - x1) * ivd
+		t1 := (maxX - x1) * ivd
+		if t0 > t1 {
+			t0, t1 = t1, t0
+		}
+		if t0 > tMin {
+			tMin = t0
+		}
+		if t1 < tMax {
+			tMax = t1
+		}
+		if tMin > tMax {
+			return false
+		}
+	}
+
+	// Y slab
+	if math.Abs(dy) < 1e-12 {
+		if y1 < minY || y1 > maxY {
+			return false
+		}
+	} else {
+		ivd := 1.0 / dy
+		t0 := (minY - y1) * ivd
+		t1 := (maxY - y1) * ivd
+		if t0 > t1 {
+			t0, t1 = t1, t0
+		}
+		if t0 > tMin {
+			tMin = t0
+		}
+		if t1 < tMax {
+			tMax = t1
+		}
+		if tMin > tMax {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasLineOfSight checks whether a straight line from (ax,ay) to (bx,by)
+// is unobstructed by any obstacle in the given spatial grid.
+func hasLineOfSight(ax, ay, bx, by float64, grid *SpatialGrid) bool {
+	minX := math.Min(ax, bx) - 2
+	minY := math.Min(ay, by) - 2
+	maxX := math.Max(ax, bx) + 2
+	maxY := math.Max(ay, by) + 2
+	nearby := grid.QueryRect(minX, minY, maxX-minX, maxY-minY)
+	for _, e := range nearby {
+		o := e.Data.(*Obstacle)
+		if segmentIntersectsAABB(ax, ay, bx, by, o.X, o.Y, o.X+o.Size, o.Y+o.Size) {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveCollisions pushes a player out of overlapping obstacles.

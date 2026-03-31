@@ -66,7 +66,7 @@ var GameConfig = struct {
 	ArenaHeight:     1600,
 	// Machinegun (M4A4-like)
 	MachinegunCooldown: 90,
-	MachinegunDamage:   27,
+	MachinegunDamage:   29,
 	MachinegunRecoil:   0.06,
 	// Shotgun (Nova-like)
 	ShotgunCooldown: 900,

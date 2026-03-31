@@ -44,7 +44,7 @@ func sendRaw(p *Player, data []byte) {
 	if p.Conn == nil {
 		return
 	}
-	_ = p.Conn.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
+	_ = p.Conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 	if err := p.Conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		// Connection likely closed, will be cleaned up by read loop
 	}
@@ -57,7 +57,7 @@ func sendBinary(p *Player, data []byte) {
 	if p.Conn == nil {
 		return
 	}
-	_ = p.Conn.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
+	_ = p.Conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 	if err := p.Conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		// Connection likely closed
 	}

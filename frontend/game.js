@@ -597,14 +597,16 @@ const KILL_FEED_MAX = 5;
 let maxHp = 100; // updated from server on game start
 
 const SELF_KILL_PHRASES = [
-  "Você eliminou {victim}! 🔥",
-  "{victim} não teve chance! 💀",
-  "Mais um pro caixão! ⚰️ {victim} caiu!",
+  "VOCÊ ACABOU COM {victim}! 🔥",
+  "{victim} JÁ ERA! 💀",
+  "{victim} ⚰️ JÁ ERA!",
+  "{victim} FOI PRO SACO!",
 ];
 const DEATH_PHRASES = [
-  "{killer} te pegou! 😵",
-  "Você foi eliminado por {killer}! 💀",
-  "{killer} te destruiu! Volta mais forte! 💪",
+  "{killer} TE PEGOU FORTE! 💀",
+  "{killer} TE MATOU! 💪",
+  "{killer} TE AMASSOU! 💀",
+  "{killer} TE HUMILHOU! 💀",
 ];
 
 // Client-side prediction variables
@@ -1542,6 +1544,7 @@ function initAudio() {
   // Player sounds
   loadAudioBuffer("scream", `${a}/scream.wav`);
   loadAudioBuffer("died", `${a}/died.mp3`);
+  loadAudioBuffer("footsteps", `${a}/footsteps.wav`);
 
   // Match sounds
   loadAudioBuffer("matchstart", `${a}/match-start.ogg`);
@@ -1603,17 +1606,23 @@ function playPositionalSound(
   const dx = sourceX - predictedX;
   const dy = sourceY - predictedY;
   const distance = Math.sqrt(dx * dx + dy * dy);
-  // Use a shorter hearing range for more noticeable spatial effect
-  const maxHearingDist = 600;
+  // Tiered hearing range: nearby sounds are loud, far sounds fade sharply
+  const maxHearingDist = 800;
+  if (distance > maxHearingDist) return; // skip inaudible sounds entirely
   const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
-  // Quadratic falloff for more realistic attenuation
-  const attenuation = distanceFactor * distanceFactor;
-  const finalVolume = volume * masterVolume * (0.05 + 0.95 * attenuation);
-  // Stronger panning for clearer left/right separation
-  const pan = Math.max(
-    -1,
-    Math.min(1, dx / (GAME_CONFIG.ARENA_WIDTH * 0.25)),
-  );
+  // Cubic falloff for sharper spatial awareness (close=loud, far=quiet fast)
+  const attenuation = distanceFactor * distanceFactor * distanceFactor;
+  const finalVolume = volume * masterVolume * (0.03 + 0.97 * attenuation);
+  if (finalVolume < 0.005) return; // skip nearly-silent sounds
+  // Compute stereo pan using camera-relative position for accurate left/right
+  // Use atan2 to get the angle from listener to source, then project to pan [-1,1]
+  const viewDirX = mouseX - predictedX;
+  const viewDirY = mouseY - predictedY;
+  const viewAngle = Math.atan2(viewDirY, viewDirX);
+  const soundAngle = Math.atan2(dy, dx);
+  const relAngle = soundAngle - viewAngle;
+  // sin(relAngle) gives left/right separation: >0 = right, <0 = left
+  const pan = Math.max(-1, Math.min(1, Math.sin(relAngle) * Math.min(1, distance / 80)));
   const source = audioCtx.createBufferSource();
   source.buffer = audioBuffers[bufferName];
   source.playbackRate.value = playbackRate;
@@ -1632,11 +1641,134 @@ function playPositionalSound(
   };
 }
 
+// ===== FOOTSTEPS SPATIAL AUDIO SYSTEM =====
+// Tracks looping footstep sounds for each moving player.
+// The footsteps.wav is 6 seconds long; we loop a portion of it per player.
+var footstepSources = new Map(); // playerId → { source, gain, panner, lastUpdate }
+var lastFootstepCleanup = 0;
+
+function updateFootstepSounds() {
+  if (!audioCtx || !audioBuffers["footsteps"]) return;
+  if (audioCtx.state === "suspended") return;
+  const now = Date.now();
+
+  // Track which players are currently moving
+  var movingPlayers = new Set();
+
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.hp <= 0) continue;
+    if (p.id === playerId) {
+      // Local player: use key state
+      if (currentKeys.w || currentKeys.a || currentKeys.s || currentKeys.d) {
+        movingPlayers.add(p.id);
+        updateOrCreateFootstep(p.id, predictedX, predictedY, 0.25);
+      }
+    } else {
+      // Remote players: detect movement from interpolation targets
+      var target = playerTargets.get(p.id);
+      if (target) {
+        var mvDx = target.targetX - target.currentX;
+        var mvDy = target.targetY - target.currentY;
+        if (mvDx * mvDx + mvDy * mvDy > 1) {
+          movingPlayers.add(p.id);
+          var interpX = target.currentX;
+          var interpY = target.currentY;
+          updateOrCreateFootstep(p.id, interpX, interpY, 0.35);
+        }
+      }
+    }
+  }
+
+  // Stop footsteps for players who stopped moving or are gone
+  footstepSources.forEach(function(fs, pid) {
+    if (!movingPlayers.has(pid)) {
+      // Fade out quickly then stop
+      try {
+        fs.gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
+        setTimeout(function() {
+          try { fs.source.stop(); } catch(_) {}
+        }, 200);
+      } catch(_) {}
+      footstepSources.delete(pid);
+    }
+  });
+}
+
+function updateOrCreateFootstep(pid, srcX, srcY, baseVolume) {
+  var dx = srcX - predictedX;
+  var dy = srcY - predictedY;
+  var distance = Math.sqrt(dx * dx + dy * dy);
+  var maxDist = 500;
+  if (pid !== playerId && distance > maxDist) {
+    // Too far, stop if playing
+    var existing = footstepSources.get(pid);
+    if (existing) {
+      try { existing.source.stop(); } catch(_) {}
+      footstepSources.delete(pid);
+    }
+    return;
+  }
+
+  var distFactor = (pid === playerId) ? 1 : Math.max(0, 1 - distance / maxDist);
+  var attenuation = distFactor * distFactor;
+  var vol = baseVolume * masterVolume * (0.02 + 0.98 * attenuation);
+
+  // Compute spatial pan
+  var viewDirX = mouseX - predictedX;
+  var viewDirY = mouseY - predictedY;
+  var viewAngle = Math.atan2(viewDirY, viewDirX);
+  var soundAngle = Math.atan2(dy, dx);
+  var relAngle = soundAngle - viewAngle;
+  var pan = (pid === playerId) ? 0 : Math.max(-1, Math.min(1, Math.sin(relAngle) * Math.min(1, distance / 60)));
+
+  var fs = footstepSources.get(pid);
+  if (fs) {
+    // Update volume and panning for existing source
+    try {
+      fs.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
+      fs.panner.pan.setTargetAtTime(pan, audioCtx.currentTime, 0.05);
+    } catch(_) {}
+    fs.lastUpdate = Date.now();
+    return;
+  }
+
+  // Create new looping footstep source
+  try {
+    var source = audioCtx.createBufferSource();
+    source.buffer = audioBuffers["footsteps"];
+    source.loop = true;
+    // Loop a 1-second segment from the 6-second file for natural variation
+    var loopStart = Math.random() * 4.5;
+    source.loopStart = loopStart;
+    source.loopEnd = loopStart + 1.2;
+    source.playbackRate.value = 0.9 + Math.random() * 0.2;
+    var gainNode = audioCtx.createGain();
+    gainNode.gain.value = vol;
+    var pannerNode = audioCtx.createStereoPanner();
+    pannerNode.pan.value = pan;
+    source.connect(gainNode);
+    gainNode.connect(pannerNode);
+    pannerNode.connect(audioCtx.destination);
+    source.start(0, loopStart);
+    activeGameSources.push(source);
+    source.onended = function() {
+      var idx = activeGameSources.indexOf(source);
+      if (idx !== -1) activeGameSources.splice(idx, 1);
+      footstepSources.delete(pid);
+    };
+    footstepSources.set(pid, { source: source, gain: gainNode, panner: pannerNode, lastUpdate: Date.now() });
+  } catch(_) {}
+}
+
 function stopAllGameSounds() {
   for (const src of activeGameSources) {
     try { src.stop(); } catch (_) { /* already stopped */ }
   }
   activeGameSources.length = 0;
+  // Stop all footstep loops
+  footstepSources.forEach(function(fs) { try { fs.source.stop(); } catch(_) {} });
+  footstepSources.clear();
 }
 
 // ===== UI FUNCTIONS =====
@@ -2436,6 +2568,9 @@ function connect() {
       damageIndicators = [];
       killEffects = [];
       deathAnimations = [];
+      // Stop all footstep sounds
+      footstepSources.forEach(function(fs) { try { fs.source.stop(); } catch(_) {} });
+      footstepSources.clear();
       previousBulletPositions.clear();
       screenShake = { intensity: 0, decay: 0.92 };
       killFeedEntries = [];
@@ -3857,6 +3992,9 @@ function render() {
     }
   }
 
+  // Update spatial footstep sounds for all players
+  updateFootstepSounds();
+
   // Try to shoot if mouse is held (hold-to-shoot)
   tryShoot();
 
@@ -4313,7 +4451,7 @@ function render() {
       const rElapsed = Date.now() - reloadStartTime;
       const rProg = Math.min(1, rElapsed / (reloadDuration || 1800));
       ctx.strokeStyle = "rgba(255,140,50,0.6)";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(crossX, crossY, 16, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rProg);
       ctx.stroke();
