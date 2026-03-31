@@ -1472,18 +1472,47 @@ let machinegunSoundIndex = 0;
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  loadAudioBuffer("shot", `${assetBase}/assets/shot.wav`);
-  for (let i = 1; i <= 4; i++) loadAudioBuffer(`machinegun-${i}`, `${assetBase}/assets/shot/machinegun-${i}.mp3`);
-  loadAudioBuffer("machinegun-5", `${assetBase}/assets/shot/machinegun-5.wav`);
-  loadAudioBuffer("shotgun-shot", `${assetBase}/assets/shot/shotgun.mp3`);
-  loadAudioBuffer("sniper-shot", `${assetBase}/assets/shot/sniper.mp3`);
-  loadAudioBuffer("reload", `${assetBase}/assets/reload.mp3`);
-  loadAudioBuffer("scream", `${assetBase}/assets/scream.wav`);
-  loadAudioBuffer("matchstart", `${assetBase}/assets/matchstart.ogg`);
-  loadAudioBuffer("died", `${assetBase}/assets/died.mp3`);
-  loadAudioBuffer("readyalarm", `${assetBase}/assets/readyalarm.wav`);
-  for (let i = 1; i <= 8; i++) loadAudioBuffer(`win-${i}`, `${assetBase}/assets/match-win/win-${i}.mp3`);
-  for (let i = 1; i <= 9; i++) loadAudioBuffer(`lose-${i}`, `${assetBase}/assets/match-lose/lose-${i}.mp3`);
+  const a = `${assetBase}/assets/audio`;
+
+  // Shooting sounds
+  for (let i = 1; i <= 4; i++) loadAudioBuffer(`machinegun-${i}`, `${a}/guns/shot/machinegun-${i}.mp3`);
+  loadAudioBuffer("machinegun-5", `${a}/guns/shot/machinegun-5.wav`);
+  loadAudioBuffer("shotgun-shot", `${a}/guns/shot/shotgun.mp3`);
+  loadAudioBuffer("sniper-shot", `${a}/guns/shot/sniper-shot-bolt-reload.mp3`);
+
+  // Per-weapon reload sounds
+  loadAudioBuffer("reload-rifle", `${a}/guns/reload.mp3`);
+  loadAudioBuffer("reload-shotgun", `${a}/guns/reload-shotgun.mp3`);
+  loadAudioBuffer("reload-sniper", `${a}/guns/sniper-reload.mp3`);
+  loadAudioBuffer("shotgun-pump", `${a}/guns/shogun-pump-bullet.mp3`);
+
+  // Weapon switch
+  loadAudioBuffer("weapon-switch", `${a}/guns/weapon-switch.mp3`);
+
+  // Combat feedback
+  loadAudioBuffer("empty-click", `${a}/guns/empty-click.wav`);
+  loadAudioBuffer("kill-confirm", `${a}/guns/kill-confirm.wav`);
+
+  // Player sounds
+  loadAudioBuffer("scream", `${a}/scream.wav`);
+  loadAudioBuffer("died", `${a}/died.mp3`);
+
+  // Match sounds
+  loadAudioBuffer("matchstart", `${a}/match-start.ogg`);
+  for (let i = 1; i <= 8; i++) loadAudioBuffer(`win-${i}`, `${a}/match-win/win-${i}.mp3`);
+  for (let i = 1; i <= 9; i++) loadAudioBuffer(`lose-${i}`, `${a}/match-lose/lose-${i}.mp3`);
+
+  // Kill streak announcements (random variant picked at play time)
+  loadAudioBuffer("streak-double-1", `${a}/killstreaks/double-kill.mp3`);
+  loadAudioBuffer("streak-double-2", `${a}/killstreaks/double-kill-2.mp3`);
+  loadAudioBuffer("streak-double-3", `${a}/killstreaks/double-kill-3.mp3`);
+  loadAudioBuffer("streak-double-4", `${a}/killstreaks/double-kill-4.mp3`);
+  loadAudioBuffer("streak-monster-1", `${a}/killstreaks/monster-kill.mp3`);
+  loadAudioBuffer("streak-monster-2", `${a}/killstreaks/monster-kill-2.mp3`);
+  loadAudioBuffer("streak-unstoppable-1", `${a}/killstreaks/unstoppable.mp3`);
+  loadAudioBuffer("streak-unstoppable-2", `${a}/killstreaks/unstoppable_2.mp3`);
+  loadAudioBuffer("streak-legendary", `${a}/killstreaks/legendary.mp3`);
+  loadAudioBuffer("streak-godlike", `${a}/killstreaks/godlike.mp3`);
 }
 
 async function loadAudioBuffer(name, url) {
@@ -1758,6 +1787,7 @@ function tryShoot() {
     const now = Date.now();
     if (now - lastEmptyClickTime > 400) {
       lastEmptyClickTime = now;
+      playSound("empty-click", 0.4);
       // Auto-trigger reload on empty mag
       ws.send(serialize({ type: "reload" }));
       reloadFlashAlpha = 1.0;
@@ -1965,6 +1995,7 @@ function connect() {
       const localPlayer = players.find(function(p) { return p.id === playerId; });
       if (localPlayer) {
         if (data.killer === localPlayer.username) {
+          playSound("kill-confirm", 0.5);
           if (data.isRevenge) {
             showRevengeAnimation();
           } else {
@@ -1998,6 +2029,18 @@ function connect() {
       const color = streakColors[data.streak] || "#ffaa00";
       showToast("🔥 " + data.player + ": " + data.message, color);
       addKillFeedEntry(data.player, data.message, "streak");
+      // Play killstreak announcement sound (random variant)
+      if (data.streak === 2) {
+        playSound("streak-double-" + (Math.floor(Math.random() * 4) + 1), 0.7);
+      } else if (data.streak === 3) {
+        playSound("streak-monster-" + (Math.floor(Math.random() * 2) + 1), 0.7);
+      } else if (data.streak === 5) {
+        playSound("streak-unstoppable-" + (Math.floor(Math.random() * 2) + 1), 0.7);
+      } else if (data.streak === 7) {
+        playSound("streak-legendary", 0.8);
+      } else if (data.streak >= 10) {
+        playSound("streak-godlike", 0.9);
+      }
       return;
     }
 
@@ -2159,18 +2202,26 @@ function connect() {
 
         // ── Reload sound & feedback ──
         if (currentPlayer.reloading && !wasReloading) {
-          // Just started reloading — play reload sound
-          playSound("reload", 0.6);
+          // Just started reloading — play per-weapon reload sound
+          if (currentPlayer.weapon === "shotgun") {
+            playSound("reload-shotgun", 0.6);
+            reloadDuration = 2200;
+          } else if (currentPlayer.weapon === "sniper") {
+            playSound("reload-sniper", 0.6);
+            reloadDuration = 2800;
+          } else {
+            playSound("reload-rifle", 0.6);
+            reloadDuration = 1800;
+          }
           reloadStartTime = Date.now();
-          // Set reload duration per weapon (approx match server values)
-          if (currentPlayer.weapon === "shotgun") reloadDuration = 2200;
-          else if (currentPlayer.weapon === "sniper") reloadDuration = 2800;
-          else reloadDuration = 1800;
           reloadFlashAlpha = 1.0;
         }
         if (!currentPlayer.reloading && wasReloading) {
-          // Reload just completed — brief flash
+          // Reload just completed — brief flash + shotgun pump sound
           reloadFlashAlpha = 0.8;
+          if (currentPlayer.weapon === "shotgun") {
+            playSound("shotgun-pump", 0.5);
+          }
         }
         wasReloading = currentPlayer.reloading;
 
@@ -2305,9 +2356,9 @@ function connect() {
         // Play win/lose sound
         var localP = players.find(function(p) { return p.id === playerId; });
         if (localP && localP.username === data.winnerName) {
-          playSound("match-win/match-win-" + data.audioIndex, 0.6);
+          playSound("win-" + data.audioIndex, 0.6);
         } else {
-          playSound("match-lose/match-lose-" + data.audioIndex, 0.6);
+          playSound("lose-" + data.audioIndex, 0.6);
         }
       }
       // Hide death overlay if shown
@@ -2541,6 +2592,7 @@ document.addEventListener("keydown", (e) => {
   // Q key to cycle weapons
   if (mappedKey === "q") {
     ws.send(serialize({ type: "switchWeapon" }));
+    playSound("weapon-switch", 0.5);
     return;
   }
 
@@ -2549,6 +2601,7 @@ document.addEventListener("keydown", (e) => {
     const weapons = ["machinegun", "shotgun", "sniper"];
     const weaponIndex = parseInt(e.key) - 1;
     ws.send(serialize({ type: "switchWeapon", weapon: weapons[weaponIndex] }));
+    playSound("weapon-switch", 0.5);
     return;
   }
 
@@ -2934,6 +2987,7 @@ function initMobileControls() {
     weaponBtn.classList.add("pressed");
     if (ws && gameReady) {
       ws.send(serialize({ type: "switchWeapon" }));
+      playSound("weapon-switch", 0.5);
     }
     setTimeout(() => weaponBtn.classList.remove("pressed"), 150);
   }, { passive: false });
