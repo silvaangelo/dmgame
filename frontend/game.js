@@ -266,7 +266,7 @@ let cameraX = 0;
 let cameraY = 0;
 let CAMERA_SCALE = 1.1; // Zoomed in to see sprites better (let, not const — dynamic for sniper zoom)
 const CAMERA_SCALE_DEFAULT = 1.1;
-const CAMERA_SCALE_SNIPER = CAMERA_SCALE_DEFAULT * 0.9; // 10% zoom out for sniper
+const CAMERA_SCALE_SNIPER = CAMERA_SCALE_DEFAULT * 0.75; // 25% zoom out for sniper
 let _cameraInitialized = false;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
