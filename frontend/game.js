@@ -505,7 +505,9 @@ let killEffects = [];
 // Death animation particles (replaces instant despawn)
 let deathAnimations = [];
 // Track death timestamps separately (survives players array replacement)
-const playerDeathTimes = new Map();\n\n// Cached DOM elements (avoid getElementById in hot paths)
+const playerDeathTimes = new Map();
+
+// Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
 function getCachedDOM() {
   if (!_cachedDOM) {
