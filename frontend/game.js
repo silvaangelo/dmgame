@@ -1642,123 +1642,130 @@ function playPositionalSound(
 }
 
 // ===== FOOTSTEPS SPATIAL AUDIO SYSTEM =====
-// Tracks looping footstep sounds for each moving player.
-// The footsteps.wav is 6 seconds long; we loop a portion of it per player.
-var footstepSources = new Map(); // playerId → { source, gain, panner, lastUpdate }
-var lastFootstepCleanup = 0;
+// One looping footstep source per moving player. Stopped immediately when
+// the player stops. The Map is the single source of truth — an entry only
+// exists while a source is actively playing.
+var footstepSources = new Map(); // playerId → { source, gain, panner }
 
 function updateFootstepSounds() {
   if (!audioCtx || !audioBuffers["footsteps"]) return;
   if (audioCtx.state === "suspended") return;
-  const now = Date.now();
 
-  // Track which players are currently moving
+  // Build set of currently-moving player IDs
   var movingPlayers = new Set();
 
   for (var i = 0; i < players.length; i++) {
     var p = players[i];
     if (p.hp <= 0) continue;
     if (p.id === playerId) {
-      // Local player: use key state
       if (currentKeys.w || currentKeys.a || currentKeys.s || currentKeys.d) {
         movingPlayers.add(p.id);
-        updateOrCreateFootstep(p.id, predictedX, predictedY, 0.25);
       }
     } else {
-      // Remote players: detect movement from interpolation targets
       var target = playerTargets.get(p.id);
       if (target) {
         var mvDx = target.targetX - target.currentX;
         var mvDy = target.targetY - target.currentY;
         if (mvDx * mvDx + mvDy * mvDy > 1) {
           movingPlayers.add(p.id);
-          var interpX = target.currentX;
-          var interpY = target.currentY;
-          updateOrCreateFootstep(p.id, interpX, interpY, 0.35);
         }
       }
     }
   }
 
-  // Stop footsteps for players who stopped moving or are gone
+  // --- Stop sources for players who are no longer moving ---
   footstepSources.forEach(function(fs, pid) {
     if (!movingPlayers.has(pid)) {
-      // Fade out quickly then stop
-      try {
-        fs.gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
-        setTimeout(function() {
-          try { fs.source.stop(); } catch(_) {}
-        }, 200);
-      } catch(_) {}
-      footstepSources.delete(pid);
+      stopFootstep(pid);
     }
+  });
+
+  // --- Create or update sources for moving players ---
+  movingPlayers.forEach(function(pid) {
+    var p = null;
+    for (var j = 0; j < players.length; j++) {
+      if (players[j].id === pid) { p = players[j]; break; }
+    }
+    if (!p) return;
+
+    var srcX, srcY, baseVol;
+    if (pid === playerId) {
+      srcX = predictedX; srcY = predictedY; baseVol = 0.20;
+    } else {
+      var tgt = playerTargets.get(pid);
+      if (!tgt) return;
+      srcX = tgt.currentX; srcY = tgt.currentY; baseVol = 0.30;
+    }
+
+    var dx = srcX - predictedX;
+    var dy = srcY - predictedY;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    var maxDist = 500;
+
+    // Too far — don't bother
+    if (pid !== playerId && distance > maxDist) {
+      stopFootstep(pid);
+      return;
+    }
+
+    var distFactor = (pid === playerId) ? 1 : Math.max(0, 1 - distance / maxDist);
+    var vol = baseVol * masterVolume * distFactor * distFactor;
+
+    // Stereo pan relative to view direction
+    var viewAngle = Math.atan2(mouseY - predictedY, mouseX - predictedX);
+    var soundAngle = Math.atan2(dy, dx);
+    var pan = (pid === playerId) ? 0
+      : Math.max(-1, Math.min(1, Math.sin(soundAngle - viewAngle) * Math.min(1, distance / 60)));
+
+    var fs = footstepSources.get(pid);
+    if (fs) {
+      // Already playing — just update volume + pan smoothly
+      try {
+        fs.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.06);
+        fs.panner.pan.setTargetAtTime(pan, audioCtx.currentTime, 0.06);
+      } catch(_) {}
+      return;
+    }
+
+    // --- Create a new looping source ---
+    try {
+      var source = audioCtx.createBufferSource();
+      source.buffer = audioBuffers["footsteps"];
+      source.loop = true;
+      var loopStart = Math.random() * 4.5;
+      source.loopStart = loopStart;
+      source.loopEnd = loopStart + 1.2;
+      source.playbackRate.value = 0.9 + Math.random() * 0.2;
+
+      var gainNode = audioCtx.createGain();
+      gainNode.gain.value = vol;
+      var pannerNode = audioCtx.createStereoPanner();
+      pannerNode.pan.value = pan;
+
+      source.connect(gainNode);
+      gainNode.connect(pannerNode);
+      pannerNode.connect(audioCtx.destination);
+      source.start(0, loopStart);
+
+      activeGameSources.push(source);
+      var capturedPid = pid; // closure safety
+      source.onended = function() {
+        var idx = activeGameSources.indexOf(source);
+        if (idx !== -1) activeGameSources.splice(idx, 1);
+        // Only delete from map if this is still the current source for this player
+        var cur = footstepSources.get(capturedPid);
+        if (cur && cur.source === source) footstepSources.delete(capturedPid);
+      };
+      footstepSources.set(pid, { source: source, gain: gainNode, panner: pannerNode });
+    } catch(_) {}
   });
 }
 
-function updateOrCreateFootstep(pid, srcX, srcY, baseVolume) {
-  var dx = srcX - predictedX;
-  var dy = srcY - predictedY;
-  var distance = Math.sqrt(dx * dx + dy * dy);
-  var maxDist = 500;
-  if (pid !== playerId && distance > maxDist) {
-    // Too far, stop if playing
-    var existing = footstepSources.get(pid);
-    if (existing) {
-      try { existing.source.stop(); } catch(_) {}
-      footstepSources.delete(pid);
-    }
-    return;
-  }
-
-  var distFactor = (pid === playerId) ? 1 : Math.max(0, 1 - distance / maxDist);
-  var attenuation = distFactor * distFactor;
-  var vol = baseVolume * masterVolume * (0.02 + 0.98 * attenuation);
-
-  // Compute spatial pan
-  var viewDirX = mouseX - predictedX;
-  var viewDirY = mouseY - predictedY;
-  var viewAngle = Math.atan2(viewDirY, viewDirX);
-  var soundAngle = Math.atan2(dy, dx);
-  var relAngle = soundAngle - viewAngle;
-  var pan = (pid === playerId) ? 0 : Math.max(-1, Math.min(1, Math.sin(relAngle) * Math.min(1, distance / 60)));
-
+function stopFootstep(pid) {
   var fs = footstepSources.get(pid);
-  if (fs) {
-    // Update volume and panning for existing source
-    try {
-      fs.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
-      fs.panner.pan.setTargetAtTime(pan, audioCtx.currentTime, 0.05);
-    } catch(_) {}
-    fs.lastUpdate = Date.now();
-    return;
-  }
-
-  // Create new looping footstep source
-  try {
-    var source = audioCtx.createBufferSource();
-    source.buffer = audioBuffers["footsteps"];
-    source.loop = true;
-    // Loop a 1-second segment from the 6-second file for natural variation
-    var loopStart = Math.random() * 4.5;
-    source.loopStart = loopStart;
-    source.loopEnd = loopStart + 1.2;
-    source.playbackRate.value = 0.9 + Math.random() * 0.2;
-    var gainNode = audioCtx.createGain();
-    gainNode.gain.value = vol;
-    var pannerNode = audioCtx.createStereoPanner();
-    pannerNode.pan.value = pan;
-    source.connect(gainNode);
-    gainNode.connect(pannerNode);
-    pannerNode.connect(audioCtx.destination);
-    source.start(0, loopStart);
-    activeGameSources.push(source);
-    source.onended = function() {
-      var idx = activeGameSources.indexOf(source);
-      if (idx !== -1) activeGameSources.splice(idx, 1);
-      footstepSources.delete(pid);
-    };
-    footstepSources.set(pid, { source: source, gain: gainNode, panner: pannerNode, lastUpdate: Date.now() });
-  } catch(_) {}
+  if (!fs) return;
+  try { fs.source.stop(); } catch(_) {}
+  footstepSources.delete(pid);
 }
 
 function stopAllGameSounds() {
