@@ -303,6 +303,18 @@ const CAMERA_SCALE_DEFAULT = 1.1;
 const CAMERA_SCALE_SNIPER = CAMERA_SCALE_DEFAULT * 0.75; // 25% zoom out for sniper
 let _cameraInitialized = false;
 
+// Vision funnel: directional cone in the aim direction + small peripheral circle.
+// Everything outside is 95% dark. Edges are smoothed with a canvas blur filter.
+const VISION_CONE_ANGLE = Math.PI * 0.65;  // ~117° total cone width (58° each side)
+const VISION_CONE_RANGE = 1600;             // How far the cone reaches (screen px)
+const VISION_NEAR_RADIUS = 120;            // Small peripheral circle around player
+const VISION_DARKNESS = 0.90;              // Opacity of darkness outside vision
+const VISION_BLUR = 60;                    // Blur radius (px) for soft edges
+let _visionCanvas = null;  // darkness mask
+let _visionCtx = null;
+let _visionLightCanvas = null;  // light shape (blurred then used to punch darkness)
+let _visionLightCtx = null;
+
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
 
@@ -4194,6 +4206,77 @@ function render() {
 
   // === Restore camera scale — switch to screen-space for HUD overlays ===
   ctx.restore(); // Restore camera scale
+
+  // ── VISION FUNNEL: directional cone toward aim + small peripheral circle ──
+  if (framePlayer && framePlayer.hp > 0) {
+    const plrSX = (predictedX - cameraX) * CAMERA_SCALE;
+    const plrSY = (predictedY - cameraY) * CAMERA_SCALE;
+    const aimAng = Math.atan2(mouseY - predictedY, mouseX - predictedX);
+    const cw = canvas.width, ch = canvas.height;
+
+    // Lazy-init / resize offscreen canvases
+    if (!_visionCanvas || _visionCanvas.width !== cw || _visionCanvas.height !== ch) {
+      _visionCanvas = document.createElement('canvas');
+      _visionCanvas.width = cw;
+      _visionCanvas.height = ch;
+      _visionCtx = _visionCanvas.getContext('2d');
+      _visionLightCanvas = document.createElement('canvas');
+      _visionLightCanvas.width = cw;
+      _visionLightCanvas.height = ch;
+      _visionLightCtx = _visionLightCanvas.getContext('2d');
+    }
+    const vc = _visionCtx;
+    const lc = _visionLightCtx;
+
+    // --- Step 1: Draw sharp vision shape on the light canvas (white on transparent) ---
+    lc.clearRect(0, 0, cw, ch);
+    lc.globalCompositeOperation = 'source-over';
+
+    // 1a. Peripheral circle around player
+    var nearGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_NEAR_RADIUS);
+    nearGrad.addColorStop(0, 'rgba(255,255,255,0.75)');
+    nearGrad.addColorStop(0.7, 'rgba(255,255,255,0.35)');
+    nearGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    lc.fillStyle = nearGrad;
+    lc.beginPath();
+    lc.arc(plrSX, plrSY, VISION_NEAR_RADIUS, 0, Math.PI * 2);
+    lc.fill();
+
+    // 1b. Directional cone with distance falloff
+    var halfArc = VISION_CONE_ANGLE / 2;
+    var coneGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_CONE_RANGE);
+    coneGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    coneGrad.addColorStop(0.65, 'rgba(255,255,255,1)');
+    coneGrad.addColorStop(0.88, 'rgba(255,255,255,0.45)');
+    coneGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    lc.fillStyle = coneGrad;
+    lc.beginPath();
+    lc.moveTo(plrSX, plrSY);
+    lc.arc(plrSX, plrSY, VISION_CONE_RANGE, aimAng - halfArc, aimAng + halfArc);
+    lc.closePath();
+    lc.fill();
+
+    // --- Step 2: Blur the light shape for smooth edges ---
+    lc.filter = 'blur(' + VISION_BLUR + 'px)';
+    lc.globalCompositeOperation = 'copy';  // replace contents with blurred version
+    lc.drawImage(_visionLightCanvas, 0, 0);
+    lc.filter = 'none';
+    lc.globalCompositeOperation = 'source-over';
+
+    // --- Step 3: Build final darkness mask ---
+    vc.clearRect(0, 0, cw, ch);
+    vc.globalCompositeOperation = 'source-over';
+    vc.fillStyle = 'rgba(0,0,0,' + VISION_DARKNESS + ')';
+    vc.fillRect(0, 0, cw, ch);
+
+    // Punch out the blurred light shape from the darkness
+    vc.globalCompositeOperation = 'destination-out';
+    vc.drawImage(_visionLightCanvas, 0, 0);
+    vc.globalCompositeOperation = 'source-over';
+
+    // --- Step 4: Composite the darkness mask onto the main canvas ---
+    ctx.drawImage(_visionCanvas, 0, 0);
+  }
 
   // Render crosshair (in screen space)
   if (framePlayer) {
