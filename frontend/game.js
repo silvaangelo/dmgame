@@ -305,10 +305,10 @@ let _cameraInitialized = false;
 
 // Vision funnel: directional cone in the aim direction + small peripheral circle.
 // Everything outside is 95% dark. Edges are smoothed with a canvas blur filter.
-const VISION_CONE_ANGLE = Math.PI * 0.65;  // ~117° total cone width (58° each side)
-const VISION_CONE_RANGE = 1600;             // How far the cone reaches (screen px)
-const VISION_NEAR_RADIUS = 120;            // Small peripheral circle around player
-const VISION_DARKNESS = 0.90;              // Opacity of darkness outside vision
+const VISION_CONE_ANGLE = Math.PI * 0.75;  // ~117° total cone width (58° each side)
+const VISION_CONE_RANGE = 1200;             // How far the cone reaches (screen px)
+const VISION_NEAR_RADIUS = 90;            // Small peripheral circle around player
+const VISION_DARKNESS = 0.95;              // Opacity of darkness outside vision
 const VISION_BLUR = 60;                    // Blur radius (px) for soft edges
 let _visionCanvas = null;  // darkness mask
 let _visionCtx = null;
