@@ -189,6 +189,11 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		return
 	}
 
+	// Ensure WeaponAmmo map exists
+	if player.WeaponAmmo == nil {
+		player.WeaponAmmo = make(map[WeaponType]int)
+	}
+
 	now := unixMs()
 	moving := isPlayerMoving(player)
 
@@ -370,9 +375,11 @@ func startReload(player *Player, reloadTimeMs int64, refillAmount int) {
 		actualReload = int64(float64(reloadTimeMs) * 0.8)
 	}
 	player.Reloading = true
+	player.ReloadingWeapon = player.Weapon
 	if player.ReloadTimer != nil {
 		player.ReloadTimer.Stop()
 	}
+	reloadWeapon := player.Weapon
 	player.ReloadTimer = time.AfterFunc(time.Duration(actualReload)*time.Millisecond, func() {
 		game := getPersistentGame()
 		if game == nil {
@@ -380,8 +387,16 @@ func startReload(player *Player, reloadTimeMs int64, refillAmount int) {
 		}
 		game.mu.Lock()
 		defer game.mu.Unlock()
-		player.Shots = refillAmount
-		player.Reloading = false
+		// Only apply reload if player still has the same weapon
+		if player.Weapon == reloadWeapon {
+			player.Shots = refillAmount
+			player.Reloading = false
+		}
+		// Always update the WeaponAmmo for the weapon that was reloading
+		if player.WeaponAmmo == nil {
+			player.WeaponAmmo = make(map[WeaponType]int)
+		}
+		player.WeaponAmmo[reloadWeapon] = refillAmount
 	})
 }
 

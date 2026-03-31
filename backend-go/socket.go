@@ -245,6 +245,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				Weapon:   WeaponMachinegun,
 				Skin:     skinVal,
 
+				WeaponAmmo: map[WeaponType]int{
+					WeaponMachinegun: GameConfig.ShotsPerMag,
+					WeaponShotgun:    GameConfig.ShotgunAmmo,
+					WeaponSniper:     GameConfig.SniperAmmo,
+				},
+
 				KillStreak:   0,
 				LastKilledBy: "",
 
@@ -446,6 +452,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			p.LastWeaponSwitch = now
 
 			game.mu.Lock()
+			oldWeapon := p.Weapon
+
 			requestedWeapon := WeaponType(safeString(m, "weapon", ""))
 			if requestedWeapon != "" {
 				// Check if the requested weapon is in the cycle
@@ -475,7 +483,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Save current weapon's ammo before switching
+			if p.WeaponAmmo == nil {
+				p.WeaponAmmo = make(map[WeaponType]int)
+			}
+			p.WeaponAmmo[oldWeapon] = p.Shots
+
 			// Cancel any active reload when switching weapons
+			// The old weapon keeps its current (unreloaded) ammo
 			if p.Reloading {
 				p.Reloading = false
 				if p.ReloadTimer != nil {
@@ -484,18 +499,19 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Clamp ammo to new weapon's max
-			var maxAmmo int
-			switch p.Weapon {
-			case WeaponShotgun:
-				maxAmmo = GameConfig.ShotgunAmmo
-			case WeaponSniper:
-				maxAmmo = GameConfig.SniperAmmo
-			default:
-				maxAmmo = GameConfig.ShotsPerMag
-			}
-			if p.Shots > maxAmmo {
-				p.Shots = maxAmmo
+			// Restore the new weapon's saved ammo
+			if savedAmmo, ok := p.WeaponAmmo[p.Weapon]; ok {
+				p.Shots = savedAmmo
+			} else {
+				// First time using this weapon — full ammo
+				switch p.Weapon {
+				case WeaponShotgun:
+					p.Shots = GameConfig.ShotgunAmmo
+				case WeaponSniper:
+					p.Shots = GameConfig.SniperAmmo
+				default:
+					p.Shots = GameConfig.ShotsPerMag
+				}
 			}
 			game.mu.Unlock()
 		}

@@ -189,6 +189,11 @@ func resetPersistentRound(game *Game) {
 		p.Reloading = false
 		p.Weapon = WeaponMachinegun
 		p.Keys = Keys{}
+		p.WeaponAmmo = map[WeaponType]int{
+			WeaponMachinegun: GameConfig.ShotsPerMag,
+			WeaponShotgun:    GameConfig.ShotgunAmmo,
+			WeaponSniper:     GameConfig.SniperAmmo,
+		}
 
 		// Reset MVP tracking
 		p.TotalDamage = 0
@@ -346,6 +351,11 @@ func addPlayerToGame(player *Player, game *Game) {
 	player.Weapon = WeaponMachinegun
 	player.Keys = Keys{}
 	player.WaitingForRespawn = false
+	player.WeaponAmmo = map[WeaponType]int{
+		WeaponMachinegun: GameConfig.ShotsPerMag,
+		WeaponShotgun:    GameConfig.ShotgunAmmo,
+		WeaponSniper:     GameConfig.SniperAmmo,
+	}
 
 	game.Players = append(game.Players, player)
 
@@ -439,6 +449,11 @@ func respawnPlayer(player *Player, game *Game) {
 	player.Reloading = false
 	player.Keys = Keys{}
 	player.Weapon = WeaponMachinegun
+	player.WeaponAmmo = map[WeaponType]int{
+		WeaponMachinegun: GameConfig.ShotsPerMag,
+		WeaponShotgun:    GameConfig.ShotgunAmmo,
+		WeaponSniper:     GameConfig.SniperAmmo,
+	}
 
 	// Push out of obstacles
 	pr := GameConfig.PlayerRadius

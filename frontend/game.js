@@ -198,6 +198,12 @@ function handleBinaryState(buf) {
     }
     previousHP = currentPlayer.hp;
 
+    // Per-weapon ammo tracking (binary handler)
+    weaponAmmoState[currentPlayer.weapon] = currentPlayer.shots;
+    if (currentPlayer.weapon !== lastKnownWeapon) {
+      lastKnownWeapon = currentPlayer.weapon;
+    }
+
     var lastProcessed = currentPlayer.lastProcessedInput || 0;
     pendingInputs = pendingInputs.filter(function(inp) { return inp.sequence > lastProcessed; });
 
@@ -258,7 +264,9 @@ const GAME_CONFIG = {
 // Camera state
 let cameraX = 0;
 let cameraY = 0;
-const CAMERA_SCALE = 1.1; // Zoomed in to see sprites better
+let CAMERA_SCALE = 1.1; // Zoomed in to see sprites better (let, not const — dynamic for sniper zoom)
+const CAMERA_SCALE_DEFAULT = 1.1;
+const CAMERA_SCALE_SNIPER = CAMERA_SCALE_DEFAULT * 0.9; // 10% zoom out for sniper
 let _cameraInitialized = false;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
@@ -474,6 +482,11 @@ let reloadDuration = 0;  // ms — set per weapon when reload starts
 let lastEmptyClickTime = 0;
 let lowAmmoWarningShown = false;
 let reloadFlashAlpha = 0;
+
+// Per-weapon ammo state (client-side tracking for HUD display)
+let weaponAmmoState = { machinegun: 35, shotgun: 8, sniper: 5 };
+let lastKnownWeapon = "machinegun";
+
 let bloodParticles = [];
 let bloodStains = [];
 let muzzleFlashes = [];
@@ -1423,6 +1436,27 @@ function applyInput(x, y, keys, weapon) {
     }
   }
 
+  // Player-player collision (push local player away from other players)
+  const minPlayerDist = playerRadius * 2;
+  const minPlayerDistSq = minPlayerDist * minPlayerDist;
+  for (let i = 0; i < players.length; i++) {
+    const other = players[i];
+    if (other.id === playerId) continue;
+    if (other.hp <= 0) continue;
+    const pdx = newX - other.x;
+    const pdy = newY - other.y;
+    const pdSq = pdx * pdx + pdy * pdy;
+    if (pdSq < minPlayerDistSq && pdSq > 0.0001) {
+      const pdist = Math.sqrt(pdSq);
+      const overlap = minPlayerDist - pdist;
+      // Push local player out entirely (server pushes both, but client only controls local)
+      newX += (pdx / pdist) * overlap;
+      newY += (pdy / pdist) * overlap;
+      newX = Math.max(margin, Math.min(GAME_CONFIG.ARENA_WIDTH - margin, newX));
+      newY = Math.max(margin, Math.min(GAME_CONFIG.ARENA_HEIGHT - margin, newY));
+    }
+  }
+
   return { x: newX, y: newY };
 }
 
@@ -1588,6 +1622,8 @@ function showStartScreen() {
   lastEmptyClickTime = 0;
   lowAmmoWarningShown = false;
   reloadFlashAlpha = 0;
+  weaponAmmoState = { machinegun: 35, shotgun: 8, sniper: 5 };
+  lastKnownWeapon = "machinegun";
 }
 
 function enterGame(data) {
@@ -1883,6 +1919,9 @@ function connect() {
           // Local player respawned
           predictedX = data.x;
           predictedY = data.y;
+          // Reset per-weapon ammo state (server resets all weapons)
+          weaponAmmoState = { machinegun: 35, shotgun: 8, sniper: 5 };
+          lastKnownWeapon = "machinegun";
           // Clear auto-respawn timer
           if (autoRespawnTimer) {
             clearInterval(autoRespawnTimer);
@@ -2135,6 +2174,14 @@ function connect() {
         }
         wasReloading = currentPlayer.reloading;
 
+        // ── Per-weapon ammo tracking ──
+        // Update ammo state for the current weapon from server
+        weaponAmmoState[currentPlayer.weapon] = currentPlayer.shots;
+        // Detect weapon switch: if weapon changed, we saved old ammo already via server
+        if (currentPlayer.weapon !== lastKnownWeapon) {
+          lastKnownWeapon = currentPlayer.weapon;
+        }
+
         // ── Low ammo warning tracking ──
         const wpnMaxAmmo = currentPlayer.weapon === "shotgun" ? 8 : currentPlayer.weapon === "sniper" ? 5 : 35;
         const lowAmmoThreshold = Math.max(1, Math.ceil(wpnMaxAmmo * 0.2));
@@ -2300,6 +2347,8 @@ function connect() {
       previousPlayerStates.clear();
       floatingNumbers = [];
       lowHPPulseTime = 0;
+      weaponAmmoState = { machinegun: 35, shotgun: 8, sniper: 5 };
+      lastKnownWeapon = "machinegun";
 
       gameObstacles = data.obstacles || [];
       wallLookup = null;
@@ -3366,11 +3415,17 @@ function _renderMinimapContent(mc, framePlayer) {
     }
   }
 
-  // Draw other players as colored dots
+  // Draw other players as colored dots (only if within viewport)
   for (let i = 0; i < players.length; i++) {
     const p = players[i];
     if (p.id === playerId) continue;
     if (p.hp <= 0) continue;
+    // Only show players on minimap if they are within the player's viewport
+    const vpX = cameraX;
+    const vpY = cameraY;
+    const vpW = GAME_CONFIG.VIEWPORT_WIDTH;
+    const vpH = GAME_CONFIG.VIEWPORT_HEIGHT;
+    if (p.x < vpX || p.x > vpX + vpW || p.y < vpY || p.y > vpY + vpH) continue;
     if (minimapCrownId === p.id) {
       mc.fillStyle = "#ffd700";
     } else {
@@ -3579,6 +3634,13 @@ function render() {
 
   // Update camera position to follow local player (smooth lerp to reduce stutter)
   if (framePlayer) {
+    // Sniper zoom: smoothly transition camera scale
+    const targetScale = (framePlayer.weapon === "sniper") ? CAMERA_SCALE_SNIPER : CAMERA_SCALE_DEFAULT;
+    CAMERA_SCALE += (targetScale - CAMERA_SCALE) * 0.12;
+    // Update viewport size based on current camera scale
+    GAME_CONFIG.VIEWPORT_WIDTH = Math.ceil(window.innerWidth / CAMERA_SCALE);
+    GAME_CONFIG.VIEWPORT_HEIGHT = Math.ceil(window.innerHeight / CAMERA_SCALE);
+
     const targetCamX = predictedX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
     const targetCamY = predictedY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
     // Clamp camera to arena bounds (with padding so edge players stay visible)
@@ -4225,7 +4287,7 @@ function render() {
         { key: "2", name: "SHOTGUN", weapon: "shotgun" },
         { key: "3", name: "SNIPER", weapon: "sniper" },
       ];
-      const slotW = 68, slotH = 22, slotGap = 4;
+      const slotW = 68, slotH = 28, slotGap = 4;
       const totalSlotsW = weaponSlots.length * slotW + (weaponSlots.length - 1) * slotGap;
       const slotStartX = hudCenterX - totalSlotsW / 2;
       const slotY = hudRY - slotH - 6;
@@ -4274,7 +4336,18 @@ function render() {
         ctx.font = "bold 9px 'Share Tech Mono', monospace";
         ctx.fillStyle = isActive ? "#ffffff" : "rgba(160,160,160,0.6)";
         ctx.textAlign = "center";
-        ctx.fillText(slot.name, sx + slotW / 2 + 4, slotY + 14);
+        ctx.fillText(slot.name, sx + slotW / 2 + 4, slotY + 9);
+
+        // Per-weapon ammo count
+        const slotMaxAmmo = slot.weapon === "shotgun" ? 8 : slot.weapon === "sniper" ? 5 : 35;
+        const slotAmmo = isActive ? localP.shots : (weaponAmmoState[slot.weapon] != null ? weaponAmmoState[slot.weapon] : slotMaxAmmo);
+        ctx.font = "bold 7px 'Share Tech Mono', monospace";
+        if (slotAmmo === 0) {
+          ctx.fillStyle = isActive ? "#ff4444" : "rgba(255,80,80,0.5)";
+        } else {
+          ctx.fillStyle = isActive ? "rgba(200,220,200,0.9)" : "rgba(140,140,140,0.5)";
+        }
+        ctx.fillText(slotAmmo + "/" + slotMaxAmmo, sx + slotW / 2 + 4, slotY + 19);
       }
       ctx.textAlign = "start";
     }

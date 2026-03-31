@@ -100,6 +100,44 @@ func updateGame(game *Game) []playerStateSnapshot {
 		resolveCollisions(player, globalObstacleGrid, playerRadius, false)
 	}
 
+	// ── Player-player collision (push apart so they can't overlap) ──
+	{
+		pr := GameConfig.PlayerRadius
+		minDist := pr * 2 // two radii
+		for i := 0; i < len(game.Players); i++ {
+			a := game.Players[i]
+			if a.HP <= 0 {
+				continue
+			}
+			for j := i + 1; j < len(game.Players); j++ {
+				b := game.Players[j]
+				if b.HP <= 0 {
+					continue
+				}
+				dx := a.X - b.X
+				dy := a.Y - b.Y
+				distSq := dx*dx + dy*dy
+				if distSq < minDist*minDist && distSq > 0.0001 {
+					dist := math.Sqrt(distSq)
+					overlap := minDist - dist
+					// Push each player half the overlap
+					nx := dx / dist
+					ny := dy / dist
+					half := overlap / 2
+					a.X += nx * half
+					a.Y += ny * half
+					b.X -= nx * half
+					b.Y -= ny * half
+					// Clamp to arena
+					a.X = clamp(a.X, pr, GameConfig.ArenaWidth-pr)
+					a.Y = clamp(a.Y, pr, GameConfig.ArenaHeight-pr)
+					b.X = clamp(b.X, pr, GameConfig.ArenaWidth-pr)
+					b.Y = clamp(b.Y, pr, GameConfig.ArenaHeight-pr)
+				}
+			}
+		}
+	}
+
 	// Build player grid after movement
 	globalPlayerGrid.Clear()
 	playerGrid := globalPlayerGrid

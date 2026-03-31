@@ -59,6 +59,11 @@ type Player struct {
 	Violations       int   `msgpack:"-"`
 	LastWeaponSwitch int64 `msgpack:"-"`
 
+	// Per-weapon ammo state (each weapon keeps its own bullet count)
+	WeaponAmmo map[WeaponType]int `msgpack:"-"`
+	// Track which weapon is currently reloading (so switching cancels only that weapon's reload)
+	ReloadingWeapon WeaponType `msgpack:"-"`
+
 	// Reload timer
 	ReloadTimer *time.Timer `msgpack:"-"`
 
