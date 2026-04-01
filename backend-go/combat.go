@@ -539,16 +539,16 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 	player.ThrowingGrenadeType = grenadeType
 	player.ThrowStartTime = now
 
-	// Clamp charge time: min 100ms, max 1500ms
+	// Clamp charge time: min 100ms, max 2500ms
 	if chargeMs < 100 {
 		chargeMs = 100
 	}
-	if chargeMs > 1500 {
-		chargeMs = 1500
+	if chargeMs > 2500 {
+		chargeMs = 2500
 	}
 
 	// Charge ratio 0..1: longer press = farther travel (longer fuse)
-	chargeRatio := float64(chargeMs) / 1500.0
+	chargeRatio := float64(chargeMs) / 2500.0
 
 	// Fuse time scales with charge: short press = short fuse (explodes near), long press = long fuse (travels far)
 	fuseTime := GameConfig.GrenadeFuseMin + int64(float64(GameConfig.GrenadeFuseMax-GameConfig.GrenadeFuseMin)*chargeRatio)
@@ -557,8 +557,8 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 	dirX := math.Cos(player.AimAngle)
 	dirY := math.Sin(player.AimAngle)
 
-	// Speed scales slightly with charge too
-	speed := GameConfig.GrenadeSpeed * (0.6 + 0.4*chargeRatio)
+	// Speed scales strongly with charge: quick tap = weak lob, full charge = powerful throw
+	speed := GameConfig.GrenadeSpeed * (0.25 + 0.75*chargeRatio)
 
 	// Movement momentum: if the player is moving, add their velocity to the throw
 	var moveVX, moveVY float64

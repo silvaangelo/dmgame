@@ -1638,8 +1638,8 @@ function renderGrenadeCooldownHUD() {
 
   // Charge bar (shown while holding G)
   if (grenadeKeyHeld) {
-    var chargeMs = Math.min(1500, Date.now() - grenadeChargeStart);
-    var chargeRatio = chargeMs / 1500;
+    var chargeMs = Math.min(2500, Date.now() - grenadeChargeStart);
+    var chargeRatio = chargeMs / 2500;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(startX - 2, hudY - 10, 36, 6);
     ctx.fillStyle = "rgba(255," + Math.floor(180 * (1 - chargeRatio)) + ",30,0.9)";
@@ -1683,8 +1683,8 @@ function renderGrenadeCooldownHUD() {
 
   // Charge bar (shown while holding F)
   if (flashbangKeyHeld) {
-    var chargeMsF = Math.min(1500, Date.now() - flashbangChargeStart);
-    var chargeRatioF = chargeMsF / 1500;
+    var chargeMsF = Math.min(2500, Date.now() - flashbangChargeStart);
+    var chargeRatioF = chargeMsF / 2500;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(startX - 2, hudY - 10, 36, 6);
     ctx.fillStyle = "rgba(180,180,255,0.9)";
@@ -2670,9 +2670,10 @@ function connect() {
 
     // ===== GRENADE EXPLOSION =====
     if (data.type === "grenadeExplosion") {
-      var gRange = 350; // only players within this range hear/feel effects
       var gdx = data.x - predictedX, gdy = data.y - predictedY;
       var gDist = Math.sqrt(gdx * gdx + gdy * gdy);
+      // HE grenades have wider effect range, flashbangs are tighter
+      var gRange = data.gType === "grenade" ? 350 : 200;
       // Visual explosion & debris always render (they're visible from afar)
       createGrenadeExplosion(data.x, data.y, data.gType);
       createGrenadeDebris(data.x, data.y);
@@ -2680,7 +2681,7 @@ function connect() {
       if (gDist < gRange) {
         var shakeFalloff = 1 - gDist / gRange;
         // 2.7: Directional camera jolt — push camera away from blast
-        var joltMag = (data.gType === "grenade" ? 18 : 10) * shakeFalloff;
+        var joltMag = (data.gType === "grenade" ? 18 : 12) * shakeFalloff;
         triggerScreenShake(joltMag);
         // 2.8: HE fire lick particles on screen edges
         if (data.gType === "grenade" && shakeFalloff > 0.3) {
@@ -2700,17 +2701,13 @@ function connect() {
           grenadeRedPulse.alpha = Math.max(grenadeRedPulse.alpha, 0.6 * (1 - gDist / gRange));
         }
       } else {
-        playPositionalSound("flashbang-explode", data.x, data.y, 0.6, 1.0, gRange);
-        var bombIdx2 = Math.floor(Math.random() * 5) + 1;
-        playPositionalSound("bomb-" + bombIdx2, data.x, data.y, 0.4, 1.0, gRange);
+        playPositionalSound("flashbang-explode", data.x, data.y, 0.7, 1.0, gRange);
       }
       return;
     }
 
     // ===== GRENADE THROWN (confirmation from server) =====
     if (data.type === "grenadeThrown") {
-      // Play throw sound positionally from thrower's location (350px range)
-      playPositionalSound("grenade-throw", data.x, data.y, 0.12, 1.0, 350);
       // Track throwing animation for the player who threw
       grenadeThrowIndicators.push({
         playerId: data.playerId,
