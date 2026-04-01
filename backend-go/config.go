@@ -110,8 +110,8 @@ var GameConfig = struct {
 	GrenadeSpeed:         18.0,
 	GrenadeFriction:      0.94,
 	GrenadeDamage:        70,
-	GrenadeRadius:        250.0,
-	FlashbangRadius:      200.0,
+	GrenadeRadius:        350.0,
+	FlashbangRadius:      350.0,
 	GrenadeChargeRate:    1.0,
 	// Username
 	UsernameMinLen: 2,

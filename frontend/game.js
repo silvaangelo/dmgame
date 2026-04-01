@@ -43,6 +43,9 @@ function parseBinaryState(buf) {
     var weaponCode = dv.getUint8(off); off += 1;
     var kills = dv.getUint16(off, true); off += 2;
     var skin = dv.getUint8(off); off += 1;
+    var chargingByte = dv.getUint8(off); off += 1;
+    // 0=none, 1=charging grenade, 2=charging flashbang
+    var charging = chargingByte === 1 ? "grenade" : chargingByte === 2 ? "flashbang" : null;
 
     var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
     parsedPlayers.push({
@@ -54,6 +57,7 @@ function parseBinaryState(buf) {
       aimAngle: aimAngle,
       weapon: BINARY_WEAPON_MAP[weaponCode] || "machinegun",
       kills: kills, skin: skin,
+      charging: charging,
     });
   }
 
@@ -142,7 +146,11 @@ function handleBinaryState(buf) {
       createBloodStain(p.x, p.y);
       var isHS = recentHeadshots.has(p.username);
       recentHeadshots.delete(p.username);
-      createFloatingNumber(p.x, p.y, prevState.hp - p.hp, isHS);
+      var dmgTaken = prevState.hp - p.hp;
+      createFloatingNumber(p.x, p.y, dmgTaken, isHS);
+      // Red damage flash — intensity scales with damage (min 0.3, max 0.9)
+      var flashAlpha = Math.min(0.9, 0.3 + (dmgTaken / 100) * 0.6);
+      playerDamageFlash.set(p.id, { alpha: flashAlpha, decay: 0.92 });
       if (p.id !== playerId) createHitMarker();
       if (p.id === playerId) {
         createDamageIndicator(p.x, p.y);
@@ -569,6 +577,9 @@ let lastDustTime = 0;
 let hitMarkers = [];
 let damageIndicators = [];
 let previousBulletPositions = new Map();
+
+// Per-player red damage flash: playerId -> { alpha, decay }
+let playerDamageFlash = new Map();
 
 // Low HP vignette + heartbeat
 let lowHPPulseTime = 0;
@@ -1927,6 +1938,7 @@ function playPositionalSound(
   sourceY,
   volume = 1.0,
   playbackRate = 1.0,
+  maxDist = 0,
 ) {
   if (!audioCtx || !audioBuffers[bufferName]) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
@@ -1934,7 +1946,7 @@ function playPositionalSound(
   const dy = sourceY - predictedY;
   const distance = Math.sqrt(dx * dx + dy * dy);
   // Tiered hearing range: nearby sounds are loud, far sounds fade sharply
-  const maxHearingDist = 800;
+  const maxHearingDist = maxDist > 0 ? maxDist : 800;
   if (distance > maxHearingDist) return; // skip inaudible sounds entirely
   const distanceFactor = Math.max(0, 1 - distance / maxHearingDist);
   // Cubic falloff for sharper spatial awareness (close=loud, far=quiet fast)
@@ -2139,6 +2151,7 @@ function showStartScreen() {
   dustClouds = [];
   hitMarkers = [];
   damageIndicators = [];
+  playerDamageFlash.clear();
   killEffects = [];
   deathAnimations = [];
   grenades = [];
@@ -2510,32 +2523,37 @@ function connect() {
 
     // ===== GRENADE EXPLOSION =====
     if (data.type === "grenadeExplosion") {
+      var gRange = 350; // only players within this range hear/feel effects
+      var gdx = data.x - predictedX, gdy = data.y - predictedY;
+      var gDist = Math.sqrt(gdx * gdx + gdy * gdy);
+      // Visual explosion & debris always render (they're visible from afar)
       createGrenadeExplosion(data.x, data.y, data.gType);
       createGrenadeDebris(data.x, data.y);
-      triggerScreenShake(data.gType === "grenade" ? 14 : 10);
+      // Screen shake + sound only if close
+      if (gDist < gRange) {
+        var shakeFalloff = 1 - gDist / gRange;
+        triggerScreenShake((data.gType === "grenade" ? 14 : 10) * shakeFalloff);
+      }
       if (data.gType === "grenade") {
-        // Play random bomb sound
         var bombIdx = Math.floor(Math.random() * 5) + 1;
-        playPositionalSound("bomb-" + bombIdx, data.x, data.y, 0.7);
-        playPositionalSound("grenade-explode-" + (Math.random() > 0.5 ? "1" : "2"), data.x, data.y, 0.5);
+        playPositionalSound("bomb-" + bombIdx, data.x, data.y, 0.7, 1.0, gRange);
+        playPositionalSound("grenade-explode-" + (Math.random() > 0.5 ? "1" : "2"), data.x, data.y, 0.5, 1.0, gRange);
         // Red pulse for nearby players
-        var dx = data.x - predictedX, dy = data.y - predictedY;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 400) {
-          grenadeRedPulse.alpha = Math.max(grenadeRedPulse.alpha, 0.6 * (1 - dist / 400));
+        if (gDist < gRange) {
+          grenadeRedPulse.alpha = Math.max(grenadeRedPulse.alpha, 0.6 * (1 - gDist / gRange));
         }
       } else {
-        playPositionalSound("flashbang-explode", data.x, data.y, 0.6);
+        playPositionalSound("flashbang-explode", data.x, data.y, 0.6, 1.0, gRange);
         var bombIdx2 = Math.floor(Math.random() * 5) + 1;
-        playPositionalSound("bomb-" + bombIdx2, data.x, data.y, 0.4);
+        playPositionalSound("bomb-" + bombIdx2, data.x, data.y, 0.4, 1.0, gRange);
       }
       return;
     }
 
     // ===== GRENADE THROWN (confirmation from server) =====
     if (data.type === "grenadeThrown") {
-      // Play throw sound positionally from thrower's location
-      playPositionalSound("grenade-throw", data.x, data.y, 0.4);
+      // Play throw sound positionally from thrower's location (350px range)
+      playPositionalSound("grenade-throw", data.x, data.y, 0.4, 1.0, 350);
       // Track throwing animation for the player who threw
       grenadeThrowIndicators.push({
         playerId: data.playerId,
@@ -2691,7 +2709,10 @@ function connect() {
         } else if (prevState && prevState.hp > p.hp && p.hp > 0) {
           createBlood(p.x, p.y);
           createBloodStain(p.x, p.y);
-          createFloatingNumber(p.x, p.y, prevState.hp - p.hp);
+          var dmgTaken2 = prevState.hp - p.hp;
+          createFloatingNumber(p.x, p.y, dmgTaken2);
+          var flashAlpha2 = Math.min(0.9, 0.3 + (dmgTaken2 / 100) * 0.6);
+          playerDamageFlash.set(p.id, { alpha: flashAlpha2, decay: 0.92 });
           if (p.id !== playerId) createHitMarker();
           if (p.id === playerId) {
             createDamageIndicator(p.x, p.y);
@@ -2957,6 +2978,7 @@ function connect() {
       dustClouds = [];
       hitMarkers = [];
       damageIndicators = [];
+      playerDamageFlash.clear();
       killEffects = [];
       deathAnimations = [];
       grenades = [];
@@ -3199,6 +3221,7 @@ document.addEventListener("keydown", (e) => {
     if (Date.now() - lastGrenadeThrownTime < GRENADE_COOLDOWN_MS) return;
     grenadeKeyHeld = true;
     grenadeChargeStart = Date.now();
+    if (ws && gameReady) ws.send(serialize({ type: "startChargeGrenade" }));
     return;
   }
 
@@ -3208,6 +3231,7 @@ document.addEventListener("keydown", (e) => {
     if (Date.now() - lastFlashbangThrownTime < GRENADE_COOLDOWN_MS) return;
     flashbangKeyHeld = true;
     flashbangChargeStart = Date.now();
+    if (ws && gameReady) ws.send(serialize({ type: "startChargeFlashbang" }));
     return;
   }
 
@@ -3371,6 +3395,8 @@ function releaseAllKeys() {
       var chargeMs = now - grenadeChargeStart;
       ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
       lastGrenadeThrownTime = now;
+    } else {
+      ws.send(serialize({ type: "cancelCharge" }));
     }
   }
   grenadeKeyHeld = false;
@@ -3381,6 +3407,8 @@ function releaseAllKeys() {
       var chargeMs = now - flashbangChargeStart;
       ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
       lastFlashbangThrownTime = now;
+    } else {
+      ws.send(serialize({ type: "cancelCharge" }));
     }
   }
   flashbangKeyHeld = false;
@@ -4447,6 +4475,12 @@ function render() {
   updateHitMarkers();
   updateDamageIndicators();
   updateFloatingNumbers();
+
+  // Decay per-player damage flash
+  playerDamageFlash.forEach(function(flash, pid) {
+    flash.alpha *= flash.decay;
+    if (flash.alpha < 0.02) playerDamageFlash.delete(pid);
+  });
   updateKillEffects();
   updateDeathAnimations();
   updateGrenadeExplosions();
@@ -4586,6 +4620,14 @@ function render() {
       ctx.rotate(gunAngle);
       // Draw sprite centered on player, offset slightly so gun points forward
       ctx.drawImage(spriteImg, -SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+      // Red damage flash overlay on sprite
+      var dmgFlash = playerDamageFlash.get(p.id);
+      if (dmgFlash && dmgFlash.alpha > 0.02) {
+        ctx.globalCompositeOperation = "source-atop";
+        ctx.fillStyle = "rgba(255,30,20," + dmgFlash.alpha.toFixed(3) + ")";
+        ctx.fillRect(-SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+        ctx.globalCompositeOperation = "source-over";
+      }
       ctx.restore();
     } else {
       // Fallback: draw circle body + weapon if sprites not loaded
@@ -4720,6 +4762,65 @@ function render() {
       ctx.fillText("R", renderX, reloadArcY);
       ctx.textBaseline = "alphabetic";
       ctx.textAlign = "start";
+    }
+
+    // ── Grenade/flashbang charging indicator (visible to all players) ──
+    if (p.charging) {
+      var chargeArcY = renderY - 38;
+      var chargeArcR = 12;
+      var chargeType = p.charging; // "grenade" or "flashbang"
+      var isLocal = (p.id === playerId);
+
+      // For local player, use actual charge progress; for others, use a pulsing animation
+      var cProgress = 0;
+      if (isLocal) {
+        var held = chargeType === "grenade" ? grenadeKeyHeld : flashbangKeyHeld;
+        var start = chargeType === "grenade" ? grenadeChargeStart : flashbangChargeStart;
+        if (held && start > 0) {
+          cProgress = Math.min(1, (Date.now() - start) / 1500);
+        }
+      } else {
+        // Smooth pulsing fill for remote players (shows they're charging)
+        cProgress = 0.5 + 0.5 * Math.sin(Date.now() * 0.006);
+      }
+
+      // Pulsing glow ring
+      var pulseAlpha = 0.4 + 0.3 * Math.sin(Date.now() * 0.008);
+      var ringColor = chargeType === "flashbang" ? "rgba(180,180,255," : "rgba(255,120,30,";
+      ctx.strokeStyle = ringColor + pulseAlpha.toFixed(2) + ")";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(renderX, renderY, 22 + 3 * Math.sin(Date.now() * 0.005), 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Background arc
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(renderX, chargeArcY, chargeArcR, -Math.PI / 2, Math.PI * 1.5);
+      ctx.stroke();
+
+      // Progress arc
+      var arcColor = chargeType === "flashbang" ? "#aaaaff" : "#ff8833";
+      ctx.strokeStyle = arcColor;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(renderX, chargeArcY, chargeArcR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cProgress);
+      ctx.stroke();
+
+      // Icon in center
+      var chargeSprite = chargeType === "flashbang" ? spriteFlashbang : spriteGrenade;
+      if (chargeSprite && chargeSprite.complete && chargeSprite.naturalWidth > 0) {
+        ctx.drawImage(chargeSprite, renderX - 7, chargeArcY - 7, 14, 14);
+      } else {
+        ctx.font = "bold 8px 'Share Tech Mono', monospace";
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(chargeType === "flashbang" ? "F" : "G", renderX, chargeArcY);
+        ctx.textBaseline = "alphabetic";
+        ctx.textAlign = "start";
+      }
     }
   });
 

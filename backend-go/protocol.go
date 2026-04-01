@@ -24,7 +24,7 @@ func Deserialize(raw []byte) (map[string]interface{}, error) {
 const (
 	binaryMarker = 0x42
 	headerBytes  = 8
-	playerBytes  = 25
+	playerBytes  = 26 // +1 byte for charging state
 	bulletBytes  = 11
 	grenadeBytes = 12 // shortId(2) + x(2) + y(2) + type(1) + aimAngle(4) + fuseProgress(1)
 )
@@ -101,6 +101,15 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		binary.LittleEndian.PutUint16(buf[off:], uint16(p.Kills))
 		off += 2
 		buf[off] = byte(p.Skin)
+		off++
+		// Charging state: 0=none, 1=charging grenade, 2=charging flashbang
+		var chargeByte uint8 = 0
+		if p.ChargingGrenade == GrenadeHE {
+			chargeByte = 1
+		} else if p.ChargingGrenade == GrenadeFlash {
+			chargeByte = 2
+		}
+		buf[off] = chargeByte
 		off++
 	}
 

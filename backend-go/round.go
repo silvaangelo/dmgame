@@ -204,6 +204,8 @@ func resetPersistentRound(game *Game) {
 		// Reset grenade cooldowns
 		p.LastGrenadeTime = 0
 		p.LastFlashbangTime = 0
+		p.ChargingGrenade = ""
+		p.ThrowingGrenade = false
 	}
 
 	// Respawn all players
@@ -407,6 +409,7 @@ func removePlayerFromGame(playerID string, game *Game) {
 func respawnPlayer(player *Player, game *Game) {
 	player.WaitingForRespawn = false
 	player.ThrowingGrenade = false
+	player.ChargingGrenade = ""
 
 	bestX := GameConfig.ArenaWidth / 2
 	bestY := GameConfig.ArenaHeight / 2

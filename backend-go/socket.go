@@ -444,15 +444,32 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				game.mu.Unlock()
 			}
 
+		case "startChargeGrenade":
+			game.mu.Lock()
+			p.ChargingGrenade = GrenadeHE
+			game.mu.Unlock()
+
+		case "startChargeFlashbang":
+			game.mu.Lock()
+			p.ChargingGrenade = GrenadeFlash
+			game.mu.Unlock()
+
+		case "cancelCharge":
+			game.mu.Lock()
+			p.ChargingGrenade = ""
+			game.mu.Unlock()
+
 		case "throwGrenade":
 			chargeMs := int64(safeInt(m, "chargeMs", 100))
 			game.mu.Lock()
+			p.ChargingGrenade = ""
 			throwGrenade(p, game, GrenadeHE, chargeMs)
 			game.mu.Unlock()
 
 		case "throwFlashbang":
 			chargeMs := int64(safeInt(m, "chargeMs", 100))
 			game.mu.Lock()
+			p.ChargingGrenade = ""
 			throwGrenade(p, game, GrenadeFlash, chargeMs)
 			game.mu.Unlock()
 

@@ -90,6 +90,10 @@ type Player struct {
 	ThrowingGrenade     bool        `msgpack:"-"`
 	ThrowingGrenadeType GrenadeType `msgpack:"-"`
 	ThrowStartTime      int64       `msgpack:"-"`
+
+	// Charging state (visible to other players via binary protocol)
+	// 0=none, GrenadeHE=charging grenade, GrenadeFlash=charging flashbang
+	ChargingGrenade GrenadeType `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.

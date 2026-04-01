@@ -477,13 +477,35 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 	// Speed scales slightly with charge too
 	speed := GameConfig.GrenadeSpeed * (0.6 + 0.4*chargeRatio)
 
+	// Movement momentum: if the player is moving, add their velocity to the throw
+	var moveVX, moveVY float64
+	if player.Keys.A {
+		moveVX -= GameConfig.PlayerSpeed
+	}
+	if player.Keys.D {
+		moveVX += GameConfig.PlayerSpeed
+	}
+	if player.Keys.W {
+		moveVY -= GameConfig.PlayerSpeed
+	}
+	if player.Keys.S {
+		moveVY += GameConfig.PlayerSpeed
+	}
+	// Normalize diagonal movement
+	if moveVX != 0 && moveVY != 0 {
+		moveVX *= 0.7071
+		moveVY *= 0.7071
+	}
+	// Add 40% of player movement velocity to grenade launch
+	momentumFactor := 0.4
+
 	grenade := &Grenade{
 		ID:        nextEntityID(),
 		ShortID:   game.NextShortID,
 		X:         player.X + dirX*25, // start slightly in front of player
 		Y:         player.Y + dirY*25,
-		DX:        dirX * speed,
-		DY:        dirY * speed,
+		DX:        dirX*speed + moveVX*momentumFactor,
+		DY:        dirY*speed + moveVY*momentumFactor,
 		PlayerID:  player.ID,
 		GType:     grenadeType,
 		CreatedAt: now,
