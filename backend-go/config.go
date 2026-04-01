@@ -47,7 +47,9 @@ var GameConfig = struct {
 	// Respawn
 	RespawnTime int64
 	// Grenades
-	GrenadeCooldown      int64   // ms between throws (15s)
+	GrenadeCooldown      int64   // ms between throws (2s)
+	MaxGrenades          int     // max grenades of each type a player can hold
+	GrenadeRechargeTime  int64   // ms to recharge one grenade after throwing
 	GrenadeFuseMin       int64   // minimum fuse time ms (short press)
 	GrenadeFuseMax       int64   // maximum fuse time ms (long press)
 	GrenadeSpeed         float64 // initial throw speed
@@ -123,7 +125,9 @@ var GameConfig = struct {
 	// Respawn
 	RespawnTime: 5000,
 	// Grenades
-	GrenadeCooldown:      15000,
+	GrenadeCooldown:      2000,
+	MaxGrenades:          2,
+	GrenadeRechargeTime:  15000,
 	GrenadeFuseMin:       600,
 	GrenadeFuseMax:       2000,
 	GrenadeSpeed:         18.0,

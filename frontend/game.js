@@ -618,7 +618,11 @@ let grenadeDebris = []; // debris particles from explosions
 let flashbangOverlay = { alpha: 0, decay: 0.97 }; // white flash overlay
 let grenadeRedPulse = { alpha: 0, decay: 0.95 }; // red pulse overlay for HE
 var GRENADE_TYPE_MAP = { 0: "grenade", 1: "flashbang" };
-var GRENADE_COOLDOWN_MS = 15000;
+var GRENADE_COOLDOWN_MS = 2000; // 2s between throws
+var GRENADE_RECHARGE_MS = 15000; // 15s to recharge a used grenade
+var MAX_GRENADES = 2; // max grenades of each type
+var myGrenadeCount = 2; // current HE grenades
+var myFlashCount = 2; // current flashbangs
 // Key charge tracking for grenade throws
 let grenadeChargeStart = 0; // timestamp when G was pressed
 let flashbangChargeStart = 0; // timestamp when F was pressed
@@ -1597,10 +1601,11 @@ function renderGrenadeCooldownHUD() {
   var hudY = canvas.height - 82;
   var startX = canvas.width / 2 + 200;
 
-  // Grenade cooldown
+  // Grenade cooldown + count
   var gCooldownRemain = Math.max(0, GRENADE_COOLDOWN_MS - (now - lastGrenadeThrownTime));
-  var gReady = gCooldownRemain <= 0;
-  var gProgress = gReady ? 1 : 1 - gCooldownRemain / GRENADE_COOLDOWN_MS;
+  var gCooldownReady = gCooldownRemain <= 0;
+  var gReady = gCooldownReady && myGrenadeCount > 0;
+  var gProgress = gCooldownReady ? 1 : 1 - gCooldownRemain / GRENADE_COOLDOWN_MS;
 
   // Draw grenade icon slot
   ctx.fillStyle = gReady ? "rgba(80,100,60,0.5)" : "rgba(40,40,40,0.5)";
@@ -1615,7 +1620,7 @@ function renderGrenadeCooldownHUD() {
     ctx.globalAlpha = 1.0;
   }
   // Cooldown overlay
-  if (!gReady) {
+  if (!gCooldownReady) {
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(startX, hudY, 32, 32 * (1 - gProgress));
     ctx.font = "bold 9px 'Share Tech Mono', monospace";
@@ -1623,6 +1628,11 @@ function renderGrenadeCooldownHUD() {
     ctx.textAlign = "center";
     ctx.fillText(Math.ceil(gCooldownRemain / 1000) + "s", startX + 16, hudY + 20);
   }
+  // Grenade count display
+  ctx.font = "bold 10px 'Share Tech Mono', monospace";
+  ctx.fillStyle = myGrenadeCount > 0 ? "#aaffaa" : "#ff4444";
+  ctx.textAlign = "right";
+  ctx.fillText(myGrenadeCount + "/" + MAX_GRENADES, startX + 32, hudY - 2);
   // Key label
   ctx.font = "bold 8px 'Share Tech Mono', monospace";
   ctx.fillStyle = gReady ? "#aaffaa" : "#777";
@@ -1639,11 +1649,12 @@ function renderGrenadeCooldownHUD() {
     ctx.fillRect(startX - 2, hudY - 10, 36 * chargeRatio, 6);
   }
 
-  // Flashbang cooldown
+  // Flashbang cooldown + count
   startX += 40;
   var fCooldownRemain = Math.max(0, GRENADE_COOLDOWN_MS - (now - lastFlashbangThrownTime));
-  var fReady = fCooldownRemain <= 0;
-  var fProgress = fReady ? 1 : 1 - fCooldownRemain / GRENADE_COOLDOWN_MS;
+  var fCooldownReady = fCooldownRemain <= 0;
+  var fReady = fCooldownReady && myFlashCount > 0;
+  var fProgress = fCooldownReady ? 1 : 1 - fCooldownRemain / GRENADE_COOLDOWN_MS;
 
   ctx.fillStyle = fReady ? "rgba(80,80,100,0.5)" : "rgba(40,40,40,0.5)";
   ctx.fillRect(startX, hudY, 32, 32);
@@ -1655,7 +1666,7 @@ function renderGrenadeCooldownHUD() {
     ctx.drawImage(spriteFlashbang, startX + 4, hudY + 4, 24, 24);
     ctx.globalAlpha = 1.0;
   }
-  if (!fReady) {
+  if (!fCooldownReady) {
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(startX, hudY, 32, 32 * (1 - fProgress));
     ctx.font = "bold 9px 'Share Tech Mono', monospace";
@@ -1663,6 +1674,11 @@ function renderGrenadeCooldownHUD() {
     ctx.textAlign = "center";
     ctx.fillText(Math.ceil(fCooldownRemain / 1000) + "s", startX + 16, hudY + 20);
   }
+  // Flashbang count display
+  ctx.font = "bold 10px 'Share Tech Mono', monospace";
+  ctx.fillStyle = myFlashCount > 0 ? "#aaaaff" : "#ff4444";
+  ctx.textAlign = "right";
+  ctx.fillText(myFlashCount + "/" + MAX_GRENADES, startX + 32, hudY - 2);
   ctx.font = "bold 8px 'Share Tech Mono', monospace";
   ctx.fillStyle = fReady ? "#aaaaff" : "#777";
   ctx.textAlign = "center";
@@ -2337,6 +2353,11 @@ function enterGame(data) {
 
   _cachedDOM = null;
   gameReady = true;
+  // Reset grenade counts on game join
+  myGrenadeCount = MAX_GRENADES;
+  myFlashCount = MAX_GRENADES;
+  lastGrenadeThrownTime = 0;
+  lastFlashbangThrownTime = 0;
 
   resizeCanvas();
 
@@ -2613,6 +2634,9 @@ function connect() {
           canvas.style.transition = '';
           // 2.16: Clear death cam
           deathCamState = null;
+          // Refill grenades on respawn
+          myGrenadeCount = MAX_GRENADES;
+          myFlashCount = MAX_GRENADES;
           showToast("🔄 Respawned!", "#44ff44");
         }
       }
@@ -2726,6 +2750,9 @@ function connect() {
           playSound("kill-confirm", 0.5);
           // 2.10: Kill-confirmed screen flash
           killConfirmFlash = { alpha: data.isHeadshot ? 0.2 : 0.1, isHeadshot: !!data.isHeadshot };
+          // Refill grenades on kill
+          myGrenadeCount = MAX_GRENADES;
+          myFlashCount = MAX_GRENADES;
           if (data.isRevenge) {
             showRevengeAnimation();
           } else {
@@ -3375,7 +3402,8 @@ document.addEventListener("keydown", (e) => {
 
   // G key to start charging grenade throw
   if (mappedKey === "g" && !grenadeKeyHeld) {
-    // Don't start charging if still on cooldown
+    // Don't start charging if no grenades or still on cooldown
+    if (myGrenadeCount <= 0) return;
     if (Date.now() - lastGrenadeThrownTime < GRENADE_COOLDOWN_MS) return;
     grenadeKeyHeld = true;
     grenadeChargeStart = Date.now();
@@ -3385,7 +3413,8 @@ document.addEventListener("keydown", (e) => {
 
   // F key to start charging flashbang throw
   if (mappedKey === "f" && !flashbangKeyHeld) {
-    // Don't start charging if still on cooldown
+    // Don't start charging if no flashbangs or still on cooldown
+    if (myFlashCount <= 0) return;
     if (Date.now() - lastFlashbangThrownTime < GRENADE_COOLDOWN_MS) return;
     flashbangKeyHeld = true;
     flashbangChargeStart = Date.now();
@@ -3467,12 +3496,16 @@ document.addEventListener("keyup", (e) => {
   if (mappedKey === "g" && grenadeKeyHeld) {
     grenadeKeyHeld = false;
     if (ws && gameReady) {
-      // Client-side cooldown check — don't send if still on cooldown
       var now = Date.now();
-      if (now - lastGrenadeThrownTime >= GRENADE_COOLDOWN_MS) {
+      if (myGrenadeCount > 0 && now - lastGrenadeThrownTime >= GRENADE_COOLDOWN_MS) {
         var chargeMs = now - grenadeChargeStart;
         ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
         lastGrenadeThrownTime = now;
+        myGrenadeCount--;
+        // Start recharge timer
+        setTimeout(function() {
+          if (myGrenadeCount < MAX_GRENADES) myGrenadeCount++;
+        }, GRENADE_RECHARGE_MS);
       }
     }
     return;
@@ -3482,12 +3515,16 @@ document.addEventListener("keyup", (e) => {
   if (mappedKey === "f" && flashbangKeyHeld) {
     flashbangKeyHeld = false;
     if (ws && gameReady) {
-      // Client-side cooldown check — don't send if still on cooldown
       var now = Date.now();
-      if (now - lastFlashbangThrownTime >= GRENADE_COOLDOWN_MS) {
+      if (myFlashCount > 0 && now - lastFlashbangThrownTime >= GRENADE_COOLDOWN_MS) {
         var chargeMs = now - flashbangChargeStart;
         ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
         lastFlashbangThrownTime = now;
+        myFlashCount--;
+        // Start recharge timer
+        setTimeout(function() {
+          if (myFlashCount < MAX_GRENADES) myFlashCount++;
+        }, GRENADE_RECHARGE_MS);
       }
     }
     return;
@@ -4812,12 +4849,18 @@ function render() {
         ctx.fillRect(-SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
         ctx.globalCompositeOperation = "source-over";
       }
-      // 2.13: Respawn shimmer — translucent white glow on recently-respawned players
+      // 2.13: Respawn shimmer — pulsing glow ring around recently-respawned players
       if (p.respawnShimmer) {
-        ctx.globalCompositeOperation = "source-atop";
-        var shimmerAlpha = 0.25 + 0.15 * Math.sin(Date.now() * 0.008);
-        ctx.fillStyle = "rgba(180,220,255," + shimmerAlpha.toFixed(3) + ")";
-        ctx.fillRect(-SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+        var shimmerAlpha = 0.3 + 0.2 * Math.sin(Date.now() * 0.008);
+        var shimGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, 28);
+        shimGrad.addColorStop(0, "rgba(180,220,255,0)");
+        shimGrad.addColorStop(0.6, "rgba(180,220,255," + (shimmerAlpha * 0.4).toFixed(3) + ")");
+        shimGrad.addColorStop(1, "rgba(180,220,255,0)");
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = shimGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, 28, 0, Math.PI * 2);
+        ctx.fill();
         ctx.globalCompositeOperation = "source-over";
       }
       ctx.restore();
@@ -5652,39 +5695,34 @@ function renderChromaticAberration() {
 function renderSniperScope() {
   var framePlayer = _framePlayer;
   if (!framePlayer || framePlayer.hp <= 0) { sniperScopeAlpha = 0; return; }
-  var targetAlpha = (framePlayer.weapon === "sniper") ? 0.6 : 0;
+  var targetAlpha = (framePlayer.weapon === "sniper") ? 0.45 : 0;
   sniperScopeAlpha += (targetAlpha - sniperScopeAlpha) * 0.1;
   if (sniperScopeAlpha < 0.02) return;
   var w = canvas.width, h = canvas.height;
   var cx = w / 2, cy = h / 2;
-  var scopeR = Math.min(w, h) * 0.35;
   ctx.save();
   ctx.globalAlpha = sniperScopeAlpha;
-  // Dark vignette outside scope circle
-  var grad = ctx.createRadialGradient(cx, cy, scopeR * 0.9, cx, cy, scopeR * 1.4);
-  grad.addColorStop(0, "rgba(0,0,0,0)");
-  grad.addColorStop(1, "rgba(0,0,0,0.7)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-  // Scope reticle
+  // Thin scope reticle circle (small, centered)
+  ctx.strokeStyle = "rgba(100,200,255,0.4)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.stroke();
+  // Short cross lines with gap in center
   ctx.strokeStyle = "rgba(100,200,255,0.5)";
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, scopeR * 0.6, 0, Math.PI * 2); ctx.stroke();
-  // Cross lines
+  ctx.lineWidth = 0.7;
   ctx.beginPath();
-  ctx.moveTo(cx - scopeR * 0.8, cy); ctx.lineTo(cx - 20, cy);
-  ctx.moveTo(cx + 20, cy); ctx.lineTo(cx + scopeR * 0.8, cy);
-  ctx.moveTo(cx, cy - scopeR * 0.8); ctx.lineTo(cx, cy - 20);
-  ctx.moveTo(cx, cy + 20); ctx.lineTo(cx, cy + scopeR * 0.8);
+  ctx.moveTo(cx - 50, cy); ctx.lineTo(cx - 8, cy);
+  ctx.moveTo(cx + 8, cy); ctx.lineTo(cx + 50, cy);
+  ctx.moveTo(cx, cy - 50); ctx.lineTo(cx, cy - 8);
+  ctx.moveTo(cx, cy + 8); ctx.lineTo(cx, cy + 50);
   ctx.stroke();
-  // Mil-dots
-  for (var i = 1; i <= 3; i++) {
-    var d = i * 30;
-    ctx.fillStyle = "rgba(100,200,255,0.4)";
-    ctx.beginPath(); ctx.arc(cx + d, cy, 1.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx - d, cy, 1.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx, cy + d, 1.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx, cy - d, 1.5, 0, Math.PI*2); ctx.fill();
+  // Mil-dots along crosshairs
+  for (var i = 1; i <= 2; i++) {
+    var d = i * 18;
+    ctx.fillStyle = "rgba(100,200,255,0.35)";
+    ctx.beginPath(); ctx.arc(cx + d, cy, 1.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - d, cy, 1.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy + d, 1.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy - d, 1.2, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
   ctx.restore();

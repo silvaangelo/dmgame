@@ -111,6 +111,10 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game, isHea
 		maxHP := GameConfig.PlayerHP
 		killer.HP = min(maxHP, killer.HP+(maxHP+1)/2)
 
+		// Refill grenades on kill
+		killer.GrenadeCount = GameConfig.MaxGrenades
+		killer.FlashCount = GameConfig.MaxGrenades
+
 		// Revenge tracking
 		isRevenge := victim.LastKilledBy != "" && killer.LastKilledBy == victim.ID
 
@@ -482,18 +486,52 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 
 	now := unixMs()
 
-	// Check cooldown
+	// Check cooldown and grenade count
 	switch grenadeType {
 	case GrenadeHE:
+		if player.GrenadeCount <= 0 {
+			return
+		}
 		if now-player.LastGrenadeTime < GameConfig.GrenadeCooldown {
 			return
 		}
 		player.LastGrenadeTime = now
+		player.GrenadeCount--
+		// Schedule recharge after 15s
+		go func() {
+			time.Sleep(time.Duration(GameConfig.GrenadeRechargeTime) * time.Millisecond)
+			g := getPersistentGame()
+			if g == nil {
+				return
+			}
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if player.GrenadeCount < GameConfig.MaxGrenades {
+				player.GrenadeCount++
+			}
+		}()
 	case GrenadeFlash:
+		if player.FlashCount <= 0 {
+			return
+		}
 		if now-player.LastFlashbangTime < GameConfig.GrenadeCooldown {
 			return
 		}
 		player.LastFlashbangTime = now
+		player.FlashCount--
+		// Schedule recharge after 15s
+		go func() {
+			time.Sleep(time.Duration(GameConfig.GrenadeRechargeTime) * time.Millisecond)
+			g := getPersistentGame()
+			if g == nil {
+				return
+			}
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if player.FlashCount < GameConfig.MaxGrenades {
+				player.FlashCount++
+			}
+		}()
 	}
 
 	// Mark player as throwing (for visual indicator, auto-clears after 500ms)

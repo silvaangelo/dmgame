@@ -85,6 +85,8 @@ type Player struct {
 	// Grenade cooldowns (ms timestamp of last throw)
 	LastGrenadeTime   int64 `msgpack:"-"`
 	LastFlashbangTime int64 `msgpack:"-"`
+	GrenadeCount      int   `msgpack:"-"` // current HE grenades (max 2)
+	FlashCount        int   `msgpack:"-"` // current flashbangs (max 2)
 
 	// Throwing visual indicator
 	ThrowingGrenade     bool        `msgpack:"-"`

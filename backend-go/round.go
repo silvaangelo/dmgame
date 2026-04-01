@@ -204,6 +204,8 @@ func resetPersistentRound(game *Game) {
 		// Reset grenade cooldowns
 		p.LastGrenadeTime = 0
 		p.LastFlashbangTime = 0
+		p.GrenadeCount = GameConfig.MaxGrenades
+		p.FlashCount = GameConfig.MaxGrenades
 		p.ChargingGrenade = ""
 		p.ThrowingGrenade = false
 		// Reset velocity and new mechanics
@@ -373,6 +375,9 @@ func addPlayerToGame(player *Player, game *Game) {
 		WeaponShotgun:    GameConfig.ShotgunAmmo,
 		WeaponSniper:     GameConfig.SniperAmmo,
 	}
+	// Start with full grenades
+	player.GrenadeCount = GameConfig.MaxGrenades
+	player.FlashCount = GameConfig.MaxGrenades
 
 	game.Players = append(game.Players, player)
 
@@ -492,6 +497,9 @@ func respawnPlayer(player *Player, game *Game) {
 	player.CounterStrafeY = 0
 	player.SprayIndex = 0
 	player.RespawnShimmerEnd = unixMs() + GameConfig.RespawnShimmerDuration
+	// Refill grenades on respawn
+	player.GrenadeCount = GameConfig.MaxGrenades
+	player.FlashCount = GameConfig.MaxGrenades
 
 	// Push out of obstacles
 	pr := GameConfig.PlayerRadius
