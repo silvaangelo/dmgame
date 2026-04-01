@@ -26,6 +26,7 @@ const (
 	headerBytes  = 8
 	playerBytes  = 25
 	bulletBytes  = 11
+	grenadeBytes = 12 // shortId(2) + x(2) + y(2) + type(1) + aimAngle(4) + fuseProgress(1)
 )
 
 // Weapon code mapping
@@ -35,18 +36,26 @@ var weaponCodes = map[WeaponType]uint8{
 	WeaponSniper:     4,
 }
 
+// Grenade type codes for binary protocol
+var grenadeTypeCodes = map[GrenadeType]uint8{
+	GrenadeHE:    0,
+	GrenadeFlash: 1,
+}
+
 // BinaryStateInput holds the data needed to encode a binary state message.
 type BinaryStateInput struct {
-	Seq     uint32
-	Players []*Player
-	Bullets []*Bullet
+	Seq      uint32
+	Players  []*Player
+	Bullets  []*Bullet
+	Grenades []*Grenade
 }
 
 // EncodeBinaryState encodes a per-player state snapshot into compact binary.
 func EncodeBinaryState(input *BinaryStateInput) []byte {
 	totalSize := headerBytes +
 		len(input.Players)*playerBytes +
-		2 + len(input.Bullets)*bulletBytes
+		2 + len(input.Bullets)*bulletBytes +
+		2 + len(input.Grenades)*grenadeBytes
 
 	buf := make([]byte, totalSize)
 	off := 0
@@ -114,6 +123,37 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		bAngle := float32(math.Atan2(b.DY, b.DX))
 		binary.LittleEndian.PutUint32(buf[off:], math.Float32bits(bAngle))
 		off += 4
+	}
+
+	// Grenades
+	binary.LittleEndian.PutUint16(buf[off:], uint16(len(input.Grenades)))
+	off += 2
+	for _, g := range input.Grenades {
+		binary.LittleEndian.PutUint16(buf[off:], g.ShortID)
+		off += 2
+		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(g.X))))
+		off += 2
+		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(g.Y))))
+		off += 2
+		gtc, ok := grenadeTypeCodes[g.GType]
+		if !ok {
+			gtc = 0
+		}
+		buf[off] = gtc
+		off++
+		// Encode direction angle for rendering
+		gAngle := float32(math.Atan2(g.DY, g.DX))
+		binary.LittleEndian.PutUint32(buf[off:], math.Float32bits(gAngle))
+		off += 4
+		// Fuse progress (0-255)
+		now := unixMs()
+		elapsed := now - g.CreatedAt
+		progress := float64(elapsed) / float64(g.FuseTime)
+		if progress > 1 {
+			progress = 1
+		}
+		buf[off] = byte(progress * 255)
+		off++
 	}
 
 	return buf[:off]

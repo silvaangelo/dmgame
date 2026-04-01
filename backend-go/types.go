@@ -16,6 +16,14 @@ const (
 	WeaponSniper     WeaponType = "sniper"
 )
 
+// GrenadeType represents grenade variants.
+type GrenadeType string
+
+const (
+	GrenadeHE    GrenadeType = "grenade"
+	GrenadeFlash GrenadeType = "flashbang"
+)
+
 // Keys tracks WASD input state.
 type Keys struct {
 	W bool `msgpack:"w"`
@@ -73,6 +81,10 @@ type Player struct {
 	// MVP tracking
 	TotalDamage int `msgpack:"-"`
 	MaxStreak   int `msgpack:"-"`
+
+	// Grenade cooldowns (ms timestamp of last throw)
+	LastGrenadeTime   int64 `msgpack:"-"`
+	LastFlashbangTime int64 `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.
@@ -99,6 +111,21 @@ type Obstacle struct {
 	GroupID string  `msgpack:"groupId,omitempty"`
 }
 
+// Grenade represents a thrown grenade or flashbang in flight.
+type Grenade struct {
+	ID        string
+	ShortID   uint16
+	X         float64
+	Y         float64
+	DX        float64 // velocity X per tick
+	DY        float64 // velocity Y per tick
+	PlayerID  string
+	GType     GrenadeType
+	CreatedAt int64
+	FuseTime  int64   // ms until detonation from creation
+	Friction  float64 // deceleration factor per tick
+}
+
 // Game holds all state for a game instance.
 type Game struct {
 	mu sync.Mutex // protects all game state
@@ -107,6 +134,7 @@ type Game struct {
 	NextShortID uint16
 	Players     []*Player
 	Bullets     []*Bullet
+	Grenades    []*Grenade
 	Obstacles   []*Obstacle
 
 	Started    bool

@@ -324,6 +324,9 @@ func updateGame(game *Game) []playerStateSnapshot {
 		game.Bullets = game.Bullets[:n]
 	}
 
+	// ── Grenade physics ──
+	updateGrenades(game, now)
+
 	// ── Per-player viewport-culled binary state broadcast ──
 	// Snapshots are encoded here (inside the lock) and sent after the lock is released.
 	game.StateSequence++
@@ -360,11 +363,18 @@ func updateGame(game *Game) []playerStateSnapshot {
 				visBullets = append(visBullets, b)
 			}
 		}
+		visGrenades := make([]*Grenade, 0, len(game.Grenades))
+		for _, g := range game.Grenades {
+			if math.Abs(g.X-vx) < half && math.Abs(g.Y-vy) < half {
+				visGrenades = append(visGrenades, g)
+			}
+		}
 
 		buf := EncodeBinaryState(&BinaryStateInput{
-			Seq:     seq,
-			Players: visPlayers,
-			Bullets: visBullets,
+			Seq:      seq,
+			Players:  visPlayers,
+			Bullets:  visBullets,
+			Grenades: visGrenades,
 		})
 
 		snapshots = append(snapshots, playerStateSnapshot{player: viewer, data: buf})
@@ -533,6 +543,7 @@ func initPersistentGame() *Game {
 		NextShortID: 1,
 		Players:     make([]*Player, 0),
 		Bullets:     make([]*Bullet, 0),
+		Grenades:    make([]*Grenade, 0),
 		Obstacles:   obstacles,
 		Started:     true,
 		RoundEnded:  false,

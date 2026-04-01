@@ -175,6 +175,7 @@ func resetPersistentRound(game *Game) {
 	CurrentMapName = chosenMap.Name
 	game.Obstacles = GenerateObstaclesFromMap(chosenMap)
 	game.Bullets = make([]*Bullet, 0)
+	game.Grenades = make([]*Grenade, 0)
 	game.StateSequence = 0
 
 	// Reset all player stats
@@ -199,6 +200,10 @@ func resetPersistentRound(game *Game) {
 		p.TotalDamage = 0
 		p.MaxStreak = 0
 		p.IsUnderdog = false
+
+		// Reset grenade cooldowns
+		p.LastGrenadeTime = 0
+		p.LastFlashbangTime = 0
 	}
 
 	// Respawn all players
@@ -386,6 +391,15 @@ func removePlayerFromGame(playerID string, game *Game) {
 		}
 	}
 	game.Bullets = filtered
+
+	// Remove their grenades
+	filteredGrenades := make([]*Grenade, 0, len(game.Grenades))
+	for _, g := range game.Grenades {
+		if g.PlayerID != playerID {
+			filteredGrenades = append(filteredGrenades, g)
+		}
+	}
+	game.Grenades = filteredGrenades
 }
 
 /* ================= RESPAWN ================= */

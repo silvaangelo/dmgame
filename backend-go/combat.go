@@ -426,4 +426,252 @@ func reloadWeapon(player *Player) {
 	startReload(player, reloadTime, maxAmmo)
 }
 
+/* ================= GRENADES ================= */
 
+// throwGrenade creates a grenade/flashbang and adds it to the game.
+// chargeMs is how long the player held the key (determines fuse/distance).
+func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs int64) {
+	if game.RoundEnded || player.HP <= 0 {
+		return
+	}
+
+	now := unixMs()
+
+	// Check cooldown
+	switch grenadeType {
+	case GrenadeHE:
+		if now-player.LastGrenadeTime < GameConfig.GrenadeCooldown {
+			return
+		}
+		player.LastGrenadeTime = now
+	case GrenadeFlash:
+		if now-player.LastFlashbangTime < GameConfig.GrenadeCooldown {
+			return
+		}
+		player.LastFlashbangTime = now
+	}
+
+	// Clamp charge time: min 100ms, max 1500ms
+	if chargeMs < 100 {
+		chargeMs = 100
+	}
+	if chargeMs > 1500 {
+		chargeMs = 1500
+	}
+
+	// Charge ratio 0..1: longer press = farther travel (longer fuse)
+	chargeRatio := float64(chargeMs) / 1500.0
+
+	// Fuse time scales with charge: short press = short fuse (explodes near), long press = long fuse (travels far)
+	fuseTime := GameConfig.GrenadeFuseMin + int64(float64(GameConfig.GrenadeFuseMax-GameConfig.GrenadeFuseMin)*chargeRatio)
+
+	// Throw direction = player aim angle
+	dirX := math.Cos(player.AimAngle)
+	dirY := math.Sin(player.AimAngle)
+
+	// Speed scales slightly with charge too
+	speed := GameConfig.GrenadeSpeed * (0.6 + 0.4*chargeRatio)
+
+	grenade := &Grenade{
+		ID:        nextEntityID(),
+		ShortID:   game.NextShortID,
+		X:         player.X + dirX*25, // start slightly in front of player
+		Y:         player.Y + dirY*25,
+		DX:        dirX * speed,
+		DY:        dirY * speed,
+		PlayerID:  player.ID,
+		GType:     grenadeType,
+		CreatedAt: now,
+		FuseTime:  fuseTime,
+		Friction:  GameConfig.GrenadeFriction,
+	}
+	game.NextShortID++
+	game.Grenades = append(game.Grenades, grenade)
+}
+
+// updateGrenades moves grenades, applies friction, checks collisions, and detonates expired ones.
+// Returns lists of explosion events to broadcast.
+func updateGrenades(game *Game, now int64) {
+	if len(game.Grenades) == 0 {
+		return
+	}
+
+	grenadeRemoved := make([]bool, len(game.Grenades))
+
+	for gi, g := range game.Grenades {
+		// Apply friction (deceleration)
+		g.DX *= g.Friction
+		g.DY *= g.Friction
+
+		// Move
+		g.X += g.DX
+		g.Y += g.DY
+
+		// Bounce off arena walls
+		if g.X < 0 {
+			g.X = 0
+			g.DX = -g.DX * 0.5
+		}
+		if g.X > GameConfig.ArenaWidth {
+			g.X = GameConfig.ArenaWidth
+			g.DX = -g.DX * 0.5
+		}
+		if g.Y < 0 {
+			g.Y = 0
+			g.DY = -g.DY * 0.5
+		}
+		if g.Y > GameConfig.ArenaHeight {
+			g.Y = GameConfig.ArenaHeight
+			g.DY = -g.DY * 0.5
+		}
+
+		// Bounce off obstacles
+		nearby := globalObstacleGrid.QueryRadius(g.X, g.Y, 60)
+		for _, e := range nearby {
+			o := e.Data.(*Obstacle)
+			// Simple AABB collision
+			closestX := clamp(g.X, o.X, o.X+o.Size)
+			closestY := clamp(g.Y, o.Y, o.Y+o.Size)
+			dx := g.X - closestX
+			dy := g.Y - closestY
+			distSq := dx*dx + dy*dy
+			if distSq < 10*10 { // 10px radius for grenade
+				if distSq > 0.001 {
+					dist := math.Sqrt(distSq)
+					// Push out
+					g.X += (dx / dist) * (10 - dist)
+					g.Y += (dy / dist) * (10 - dist)
+					// Reflect velocity
+					nx := dx / dist
+					ny := dy / dist
+					dot := g.DX*nx + g.DY*ny
+					g.DX -= 2 * dot * nx * 0.5
+					g.DY -= 2 * dot * ny * 0.5
+				}
+			}
+		}
+
+		// Check fuse
+		if now-g.CreatedAt >= g.FuseTime {
+			grenadeRemoved[gi] = true
+			detonateGrenade(g, game)
+		}
+	}
+
+	// Remove detonated grenades (in-place compaction)
+	n := 0
+	for gi, g := range game.Grenades {
+		if !grenadeRemoved[gi] {
+			game.Grenades[n] = g
+			n++
+		}
+	}
+	for i := n; i < len(game.Grenades); i++ {
+		game.Grenades[i] = nil
+	}
+	game.Grenades = game.Grenades[:n]
+}
+
+// detonateGrenade handles the explosion of a grenade.
+func detonateGrenade(g *Grenade, game *Game) {
+	switch g.GType {
+	case GrenadeHE:
+		// HE grenade: damage players in radius, damage falls off with distance
+		radius := GameConfig.GrenadeRadius
+		for _, p := range game.Players {
+			if p.HP <= 0 {
+				continue
+			}
+			dx := p.X - g.X
+			dy := p.Y - g.Y
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist < radius {
+				// Check line of sight (walls block grenade damage)
+				if !hasLineOfSight(g.X, g.Y, p.X, p.Y, globalObstacleGrid) {
+					continue
+				}
+				// Damage falloff: full damage at center, 20% at edge
+				falloff := 1.0 - (dist/radius)*0.8
+				dmg := int(float64(GameConfig.GrenadeDamage) * falloff)
+				if dmg < 1 {
+					dmg = 1
+				}
+				p.HP -= dmg
+
+				// Track damage for MVP
+				for _, shooter := range game.Players {
+					if shooter.ID == g.PlayerID {
+						shooter.TotalDamage += dmg
+						break
+					}
+				}
+
+				// Knockback away from explosion
+				if dist > 1 {
+					kbForce := 8.0 * falloff
+					p.X += (dx / dist) * kbForce
+					p.Y += (dy / dist) * kbForce
+					p.X = clamp(p.X, GameConfig.PlayerRadius, GameConfig.ArenaWidth-GameConfig.PlayerRadius)
+					p.Y = clamp(p.Y, GameConfig.PlayerRadius, GameConfig.ArenaHeight-GameConfig.PlayerRadius)
+				}
+
+				if p.HP <= 0 {
+					p.HP = 0
+					var thrower *Player
+					for _, pp := range game.Players {
+						if pp.ID == g.PlayerID {
+							thrower = pp
+							break
+						}
+					}
+					handleKill(thrower, p, "grenade", game, false)
+				}
+			}
+		}
+
+		// Broadcast HE explosion event
+		broadcast(game, map[string]interface{}{
+			"type": "grenadeExplosion",
+			"x":    int(math.Round(g.X)),
+			"y":    int(math.Round(g.Y)),
+			"gType": "grenade",
+		})
+
+	case GrenadeFlash:
+		// Flashbang: blind players in radius who have line of sight
+		radius := GameConfig.FlashbangRadius
+		for _, p := range game.Players {
+			if p.HP <= 0 {
+				continue
+			}
+			dx := p.X - g.X
+			dy := p.Y - g.Y
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist < radius {
+				// Check line of sight
+				if !hasLineOfSight(g.X, g.Y, p.X, p.Y, globalObstacleGrid) {
+					continue
+				}
+				// Flash intensity based on distance (closer = stronger)
+				intensity := 1.0 - (dist/radius)*0.7
+
+				// Send per-player flash effect
+				flashMsg, _ := Serialize(map[string]interface{}{
+					"type":      "flashbangHit",
+					"x":         int(math.Round(g.X)),
+					"y":         int(math.Round(g.Y)),
+					"intensity": intensity,
+				})
+				sendRaw(p, flashMsg)
+			}
+		}
+
+		// Broadcast flashbang explosion event (for visual/sound effects)
+		broadcast(game, map[string]interface{}{
+			"type": "grenadeExplosion",
+			"x":    int(math.Round(g.X)),
+			"y":    int(math.Round(g.Y)),
+			"gType": "flashbang",
+		})
+	}
+}

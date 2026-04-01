@@ -46,6 +46,16 @@ var GameConfig = struct {
 	RoundRestartDelay int64
 	// Respawn
 	RespawnTime int64
+	// Grenades
+	GrenadeCooldown      int64   // ms between throws (15s)
+	GrenadeFuseMin       int64   // minimum fuse time ms (short press)
+	GrenadeFuseMax       int64   // maximum fuse time ms (long press)
+	GrenadeSpeed         float64 // initial throw speed
+	GrenadeFriction      float64 // velocity multiplier per tick (deceleration)
+	GrenadeDamage        int     // HE grenade max damage
+	GrenadeRadius        float64 // explosion radius
+	FlashbangRadius      float64 // flashbang effect radius
+	GrenadeChargeRate    float64 // ms per charge unit (longer press = more fuse)
 	// Username
 	UsernameMinLen int
 	UsernameMaxLen int
@@ -93,6 +103,16 @@ var GameConfig = struct {
 	RoundRestartDelay: 10000,
 	// Respawn
 	RespawnTime: 5000,
+	// Grenades
+	GrenadeCooldown:      15000,
+	GrenadeFuseMin:       600,
+	GrenadeFuseMax:       2000,
+	GrenadeSpeed:         18.0,
+	GrenadeFriction:      0.94,
+	GrenadeDamage:        70,
+	GrenadeRadius:        150.0,
+	FlashbangRadius:      200.0,
+	GrenadeChargeRate:    1.0,
 	// Username
 	UsernameMinLen: 2,
 	UsernameMaxLen: 16,

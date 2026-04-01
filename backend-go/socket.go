@@ -444,6 +444,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				game.mu.Unlock()
 			}
 
+		case "throwGrenade":
+			chargeMs := int64(safeInt(m, "chargeMs", 100))
+			game.mu.Lock()
+			throwGrenade(p, game, GrenadeHE, chargeMs)
+			game.mu.Unlock()
+
+		case "throwFlashbang":
+			chargeMs := int64(safeInt(m, "chargeMs", 100))
+			game.mu.Lock()
+			throwGrenade(p, game, GrenadeFlash, chargeMs)
+			game.mu.Unlock()
+
 		case "switchWeapon":
 			now := unixMs()
 			if now-p.LastWeaponSwitch < 250 {
