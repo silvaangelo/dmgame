@@ -46,6 +46,12 @@ function parseBinaryState(buf) {
     var chargingByte = dv.getUint8(off); off += 1;
     // 0=none, 1=charging grenade, 2=charging flashbang
     var charging = chargingByte === 1 ? "grenade" : chargingByte === 2 ? "flashbang" : null;
+    // VX/VY for client-side extrapolation
+    var vx = dv.getFloat32(off, true); off += 4;
+    var vy = dv.getFloat32(off, true); off += 4;
+    // Flags: bit0=dodgeRolling, bit1=crouching, bit2=respawnShimmer, bit3=tagged
+    var pflags = dv.getUint8(off); off += 1;
+    var respawnShimmer = !!(pflags & 0x04);
 
     var info = shortIdMap[sid] || { id: "unknown-" + sid, username: "Player" };
     parsedPlayers.push({
@@ -58,6 +64,8 @@ function parseBinaryState(buf) {
       weapon: BINARY_WEAPON_MAP[weaponCode] || "machinegun",
       kills: kills, skin: skin,
       charging: charging,
+      vx: vx, vy: vy,
+      respawnShimmer: respawnShimmer,
     });
   }
 
@@ -638,6 +646,55 @@ let killFeedDirty = true;
 
 // Screen shake
 let screenShake = { intensity: 0, decay: 0.92 };
+
+// ===== IMPROVEMENT STATE VARIABLES =====
+// Death screen effects (2.1)
+let deathScreenActive = false;
+let deathScreenStartTime = 0;
+
+// Directional damage vignettes (2.2)
+let damageVignettes = [];
+
+// Bullet tracers (2.17)
+let bulletTrails = new Map();
+
+// Kill-confirmed flash (2.10)
+let killConfirmFlash = { alpha: 0, isHeadshot: false };
+
+// Camera aim-lookahead (1.10)
+let cameraLookaheadX = 0;
+let cameraLookaheadY = 0;
+
+// Flashbang progressive recovery (2.5)
+let flashbangState = { phase: 0, startTime: 0, intensity: 0 };
+
+// Flashbang tinnitus (2.9)
+let tinnitusOscillator = null;
+let tinnitusGainNode = null;
+
+// HE fire lick particles (2.8)
+let fireLickParticles = [];
+
+// Chromatic aberration (2.4)
+let chromaticAberration = { intensity: 0, startTime: 0 };
+
+// Sniper scope (2.12)
+let sniperScopeAlpha = 0;
+
+// Hit-stop (2.14)
+let hitStopPlayers = new Map();
+
+// Death cam (2.16)
+let deathCamState = null;
+
+// Environmental hit particles (2.18)
+let wallHitDebris = [];
+
+// Frame timing for dt-based effects (1.3, bug fixes)
+let lastFrameTime = 0;
+let frameDeltaTime = 16.67;
+const TARGET_FPS = 60;
+
 let killFeedEntries = [];
 
 // Cached grid canvas (used in resizeCanvas and render)
@@ -1294,14 +1351,22 @@ function updateDamageIndicators() {
 
 function renderDamageIndicators() {
   if (damageIndicators.length === 0) return;
-  const cx = GAME_CONFIG.ARENA_WIDTH / 2;
-  const cy = GAME_CONFIG.ARENA_HEIGHT / 2;
-  const radius = Math.min(cx, cy) * 0.85;
-  damageIndicators.forEach((d) => {
+  // 1.4 Fix: use local player position instead of arena center
+  var cx = predictedX;
+  var cy = predictedY;
+  var radius = Math.min(GAME_CONFIG.VIEWPORT_WIDTH, GAME_CONFIG.VIEWPORT_HEIGHT) * 0.32;
+  damageIndicators.forEach(function(d) {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(d.angle);
-    ctx.globalAlpha = d.life * 0.6;
+    ctx.globalAlpha = d.life * 0.7;
+    // 2.2: Directional damage vignette — radial gradient on damage side
+    var grad = ctx.createRadialGradient(radius - 10, 0, 0, radius + 20, 0, 60);
+    grad.addColorStop(0, "rgba(255, 30, 10, 0.6)");
+    grad.addColorStop(1, "rgba(255, 30, 10, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(radius - 30, -50, 80, 100);
+    // Arrow indicator
     ctx.fillStyle = "#ff2222";
     ctx.beginPath();
     ctx.moveTo(radius, -12);
@@ -1315,14 +1380,16 @@ function renderDamageIndicators() {
 }
 
 // Floating damage numbers system
-function createFloatingNumber(x, y, amount, isHeadshot) {
+// 2.15: Enhanced damage numbers — headshot gold 2x, grenade orange
+function createFloatingNumber(x, y, amount, isHeadshot, weapon) {
   floatingNumbers.push({
-    x: x + (Math.random() - 0.5) * 10,
+    x: x + (Math.random() - 0.5) * (isHeadshot ? 20 : 10),
     y: y - 10,
     vy: -1.5,
     life: 1.0,
     text: "-" + amount,
     headshot: !!isHeadshot,
+    weapon: weapon || "machinegun",
   });
   if (floatingNumbers.length > 20) floatingNumbers.shift();
 }
@@ -1337,6 +1404,7 @@ function updateFloatingNumbers() {
   compactInPlace(floatingNumbers, (f) => f.life > 0);
 }
 
+// 2.15: Enhanced damage number rendering
 function renderFloatingNumbers() {
   if (floatingNumbers.length === 0) return;
   for (let i = 0; i < floatingNumbers.length; i++) {
@@ -1344,17 +1412,28 @@ function renderFloatingNumbers() {
     if (!isOnScreen(f.x, f.y)) continue;
     ctx.save();
     ctx.globalAlpha = Math.max(0, f.life);
-    const scale = 1 + (1 - f.life) * 0.3; // Slight grow as it fades
-    const fontSize = f.headshot ? Math.round(24 * scale) : Math.round(18 * scale);
-    ctx.font = `bold ${fontSize}px 'Rajdhani', sans-serif`;
+    const scale = 1 + (1 - f.life) * 0.3;
+    var fontSize, displayText, fillColor;
+    if (f.headshot) {
+      fontSize = Math.round(28 * scale); // 2x larger for headshots
+      displayText = "🎯 " + f.text;
+      fillColor = "#ffd700";
+    } else if (f.weapon === "grenade") {
+      fontSize = Math.round(20 * scale);
+      displayText = "💥 " + f.text;
+      fillColor = "#ff8833";
+    } else {
+      fontSize = Math.round(18 * scale);
+      displayText = f.text;
+      fillColor = "#ff3333";
+    }
+    ctx.font = "bold " + fontSize + "px 'Rajdhani', sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    // Headshot = gold text, normal = red text
     ctx.strokeStyle = "rgba(0,0,0,0.8)";
-    ctx.lineWidth = 3;
-    const displayText = f.headshot ? "🎯 " + f.text : f.text;
+    ctx.lineWidth = f.headshot ? 4 : 3;
     ctx.strokeText(displayText, f.x, f.y);
-    ctx.fillStyle = f.headshot ? "#ffd700" : "#ff3333";
+    ctx.fillStyle = fillColor;
     ctx.fillText(displayText, f.x, f.y);
     ctx.restore();
   }
@@ -1403,17 +1482,16 @@ function updateGrenadeExplosions() {
 }
 
 function updateGrenadeDebris() {
-  for (var i = grenadeDebris.length - 1; i >= 0; i--) {
+  for (var i = 0; i < grenadeDebris.length; i++) {
     var d = grenadeDebris[i];
     d.x += d.vx;
     d.y += d.vy;
     d.vy += d.gravity;
     d.vx *= 0.96;
     d.life -= 0.025;
-    if (d.life <= 0) {
-      grenadeDebris.splice(i, 1);
-    }
   }
+  // Bug fix: swap-and-pop instead of splice()
+  compactInPlace(grenadeDebris, function(d) { return d.life > 0; });
 }
 
 function renderGrenades() {
@@ -1719,8 +1797,9 @@ function playHeartbeatLoop() {
 }
 
 // Screen shake system
+// 2.3: Screen shake cap raised to 25 for heavy hits
 function triggerScreenShake(intensity) {
-  screenShake.intensity = Math.min(screenShake.intensity + intensity, 18);
+  screenShake.intensity = Math.min(screenShake.intensity + intensity, 25);
 }
 
 function getScreenShakeOffset() {
@@ -1732,7 +1811,9 @@ function getScreenShakeOffset() {
 
 function updateScreenShake() {
   if (screenShake.intensity > 0.3) {
-    screenShake.intensity *= screenShake.decay;
+    // Bug fix: dt-normalized decay (was frame-rate dependent)
+    var dt = frameDeltaTime / (1000 / TARGET_FPS);
+    screenShake.intensity *= Math.pow(screenShake.decay, dt);
   } else {
     screenShake.intensity = 0;
   }
@@ -1930,6 +2011,37 @@ function playSound(bufferName, volume = 1.0, playbackRate = 1.0) {
     const idx = activeGameSources.indexOf(source);
     if (idx !== -1) activeGameSources.splice(idx, 1);
   };
+}
+
+// ===== 2.9: FLASHBANG TINNITUS AUDIO =====
+function startFlashbangTinnitus(intensity) {
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  stopFlashbangTinnitus();
+  tinnitusOscillator = audioCtx.createOscillator();
+  tinnitusGainNode = audioCtx.createGain();
+  tinnitusOscillator.type = 'sine';
+  tinnitusOscillator.frequency.setValueAtTime(4200, audioCtx.currentTime);
+  tinnitusOscillator.frequency.linearRampToValueAtTime(3800, audioCtx.currentTime + 1);
+  tinnitusOscillator.frequency.linearRampToValueAtTime(4400, audioCtx.currentTime + 2);
+  var peakVol = 0.15 * intensity;
+  tinnitusGainNode.gain.setValueAtTime(peakVol, audioCtx.currentTime);
+  tinnitusGainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 3.5);
+  tinnitusOscillator.connect(tinnitusGainNode);
+  tinnitusGainNode.connect(audioCtx.destination);
+  tinnitusOscillator.start();
+  tinnitusOscillator.stop(audioCtx.currentTime + 3.5);
+  tinnitusOscillator.onended = function() {
+    tinnitusOscillator = null; tinnitusGainNode = null;
+  };
+}
+
+function stopFlashbangTinnitus() {
+  if (tinnitusOscillator) {
+    try { tinnitusOscillator.stop(); } catch(e) {}
+    tinnitusOscillator = null;
+    tinnitusGainNode = null;
+  }
 }
 
 function playPositionalSound(
@@ -2495,6 +2607,12 @@ function connect() {
           // Hide death overlay
           const deathOv = document.getElementById("deathOverlay");
           if (deathOv) deathOv.style.display = "none";
+          // 2.1: Clear death screen desaturation
+          deathScreenActive = false;
+          canvas.style.filter = '';
+          canvas.style.transition = '';
+          // 2.16: Clear death cam
+          deathCamState = null;
           showToast("🔄 Respawned!", "#44ff44");
         }
       }
@@ -2509,8 +2627,14 @@ function connect() {
       const localPlayer = players.find(function(p) { return p.id === playerId; });
       if (localPlayer && data.victim !== localPlayer.username) {
         createHitMarker();
-        // Extra screen shake for headshot
         triggerScreenShake(3);
+        // 2.14: Hit-stop — freeze victim interpolation for 3 frames
+        var victimP = players.find(function(p) { return p.username === data.victim; });
+        if (victimP) hitStopPlayers.set(victimP.id, 3);
+      }
+      // 2.4: Chromatic aberration on heavy headshot
+      if (localPlayer && data.victim === localPlayer.username) {
+        triggerChromaticAberration(60);
       }
       return;
     }
@@ -2518,6 +2642,8 @@ function connect() {
     // ===== BULLET HIT WALL =====
     if (data.type === "bulletHitWall") {
       createImpactSparks(data.x, data.y);
+      // 2.18: Environmental hit feedback — stone debris + dust
+      createWallHitDebris(data.x, data.y);
       return;
     }
 
@@ -2532,7 +2658,17 @@ function connect() {
       // Screen shake + sound only if close
       if (gDist < gRange) {
         var shakeFalloff = 1 - gDist / gRange;
-        triggerScreenShake((data.gType === "grenade" ? 14 : 10) * shakeFalloff);
+        // 2.7: Directional camera jolt — push camera away from blast
+        var joltMag = (data.gType === "grenade" ? 18 : 10) * shakeFalloff;
+        triggerScreenShake(joltMag);
+        // 2.8: HE fire lick particles on screen edges
+        if (data.gType === "grenade" && shakeFalloff > 0.3) {
+          createFireLickParticles();
+        }
+        // 2.4: Chromatic aberration on close HE
+        if (data.gType === "grenade" && shakeFalloff > 0.5) {
+          triggerChromaticAberration(joltMag * 3);
+        }
       }
       if (data.gType === "grenade") {
         var bombIdx = Math.floor(Math.random() * 5) + 1;
@@ -2566,10 +2702,15 @@ function connect() {
 
     // ===== FLASHBANG HIT (per-player) =====
     if (data.type === "flashbangHit") {
-      // White flash overlay proportional to intensity
-      flashbangOverlay.alpha = Math.min(1.0, data.intensity || 0.8);
-      flashbangOverlay.decay = 0.985; // slow fade for realistic flash
+      var fIntensity = Math.min(1.0, data.intensity || 0.8);
+      // Original overlay for backward compat
+      flashbangOverlay.alpha = fIntensity;
+      flashbangOverlay.decay = 0.985;
       triggerScreenShake(8);
+      // 2.5: Start progressive recovery phases
+      flashbangState = { phase: 1, startTime: Date.now(), intensity: fIntensity, noiseCanvas: null };
+      // 2.9: Flashbang tinnitus audio
+      startFlashbangTinnitus(fIntensity);
       return;
     }
 
@@ -2583,6 +2724,8 @@ function connect() {
       if (localPlayer) {
         if (data.killer === localPlayer.username) {
           playSound("kill-confirm", 0.5);
+          // 2.10: Kill-confirmed screen flash
+          killConfirmFlash = { alpha: data.isHeadshot ? 0.2 : 0.1, isHeadshot: !!data.isHeadshot };
           if (data.isRevenge) {
             showRevengeAnimation();
           } else {
@@ -2592,6 +2735,16 @@ function connect() {
           }
         } else if (data.victim === localPlayer.username) {
           lastKilledByUsername = data.killer;
+          // 2.1: Activate death screen desaturation
+          deathScreenActive = true;
+          deathScreenStartTime = Date.now();
+          canvas.style.filter = 'saturate(0.15) brightness(0.5)';
+          canvas.style.transition = 'filter 0.5s ease-out';
+          // 2.16: Death cam — find killer and pan to them
+          var killerPlayer = players.find(function(p) { return p.username === data.killer; });
+          if (killerPlayer && killerPlayer.id !== playerId) {
+            deathCamState = { active: true, startTime: Date.now(), killerX: killerPlayer.x, killerY: killerPlayer.y, originX: predictedX, originY: predictedY, phase: 'pan' };
+          }
           // Show death overlay with respawn button
           const deathOv = document.getElementById("deathOverlay");
           if (deathOv) {
@@ -2716,7 +2869,12 @@ function connect() {
           if (p.id !== playerId) createHitMarker();
           if (p.id === playerId) {
             createDamageIndicator(p.x, p.y);
-            triggerScreenShake(6);
+            // 2.3: Scale screen shake with damage fraction
+            var shakeBase = 15;
+            var shakeAmount = (dmgTaken2 / maxHp) * shakeBase;
+            triggerScreenShake(Math.max(3, shakeAmount));
+            // 2.4: Chromatic aberration on heavy hits (40+ damage)
+            triggerChromaticAberration(dmgTaken2);
             if (p.hp <= 20) startHeartbeat();
           }
         } else if (prevState && p.hp > prevState.hp && p.id === playerId) {
@@ -4070,13 +4228,20 @@ function generateMapDecorations() {
 }
 
 // Update interpolated positions for smooth movement
+// 1.3: Delta-time interpolation (frame-rate independent)
 function updateInterpolation() {
-  playerTargets.forEach((target) => {
-    // Lerp towards target position
-    target.currentX +=
-      (target.targetX - target.currentX) * INTERPOLATION_SPEED;
-    target.currentY +=
-      (target.targetY - target.currentY) * INTERPOLATION_SPEED;
+  var dt = frameDeltaTime / (1000 / TARGET_FPS);
+  var t = 1 - Math.pow(1 - INTERPOLATION_SPEED, dt);
+  playerTargets.forEach(function(target, pid) {
+    // 2.14: Hit-stop — freeze interpolation for headshot victims
+    var stopFrames = hitStopPlayers.get(pid);
+    if (stopFrames && stopFrames > 0) {
+      hitStopPlayers.set(pid, stopFrames - 1);
+      if (stopFrames - 1 <= 0) hitStopPlayers.delete(pid);
+      return;
+    }
+    target.currentX += (target.targetX - target.currentX) * t;
+    target.currentY += (target.targetY - target.currentY) * t;
   });
 }
 
@@ -4362,6 +4527,11 @@ function renderDecorations() {
 
 function render() {
   const frameNow = Date.now();
+  // Frame timing for dt-based effects (1.3, bug fixes)
+  if (lastFrameTime > 0) {
+    frameDeltaTime = Math.min(50, frameNow - lastFrameTime); // cap at 50ms (20fps min)
+  }
+  lastFrameTime = frameNow;
   _framePlayer = players.find((p) => p.id === playerId);
   const framePlayer = _framePlayer;
 
@@ -4374,14 +4544,28 @@ function render() {
     GAME_CONFIG.VIEWPORT_WIDTH = Math.ceil(window.innerWidth / CAMERA_SCALE);
     GAME_CONFIG.VIEWPORT_HEIGHT = Math.ceil(window.innerHeight / CAMERA_SCALE);
 
-    const targetCamX = predictedX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
-    const targetCamY = predictedY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
+    // 1.10: Camera aim-lookahead — offset toward cursor direction
+    var aimDx = mouseX - predictedX;
+    var aimDy = mouseY - predictedY;
+    var aimDist = Math.sqrt(aimDx * aimDx + aimDy * aimDy);
+    var maxLookahead = Math.min(GAME_CONFIG.VIEWPORT_WIDTH, GAME_CONFIG.VIEWPORT_HEIGHT) * 0.17;
+    if (aimDist > 1) {
+      var targetLAx = (aimDx / aimDist) * Math.min(aimDist * 0.3, maxLookahead);
+      var targetLAy = (aimDy / aimDist) * Math.min(aimDist * 0.3, maxLookahead);
+      cameraLookaheadX += (targetLAx - cameraLookaheadX) * 0.08;
+      cameraLookaheadY += (targetLAy - cameraLookaheadY) * 0.08;
+    }
+
+    const targetCamX = predictedX + cameraLookaheadX - GAME_CONFIG.VIEWPORT_WIDTH / 2;
+    const targetCamY = predictedY + cameraLookaheadY - GAME_CONFIG.VIEWPORT_HEIGHT / 2;
     // Clamp camera to arena bounds (with padding so edge players stay visible)
     const pad = GAME_CONFIG.ARENA_PADDING;
     const clampedX = Math.max(-pad, Math.min(GAME_CONFIG.ARENA_WIDTH + pad - GAME_CONFIG.VIEWPORT_WIDTH, targetCamX));
     const clampedY = Math.max(-pad, Math.min(GAME_CONFIG.ARENA_HEIGHT + pad - GAME_CONFIG.VIEWPORT_HEIGHT, targetCamY));
-    // Smooth camera interpolation to prevent jitter from server reconciliation
-    const CAMERA_LERP = 0.25;
+    // 1.3: dt-normalized camera interpolation (was frame-rate dependent)
+    var baseCameraLerp = 0.25;
+    var dtCam = frameDeltaTime / (1000 / TARGET_FPS);
+    const CAMERA_LERP = 1 - Math.pow(1 - baseCameraLerp, dtCam);
     if (cameraX === 0 && cameraY === 0 && !_cameraInitialized) {
       cameraX = clampedX;
       cameraY = clampedY;
@@ -4625,6 +4809,14 @@ function render() {
       if (dmgFlash && dmgFlash.alpha > 0.02) {
         ctx.globalCompositeOperation = "source-atop";
         ctx.fillStyle = "rgba(255,30,20," + dmgFlash.alpha.toFixed(3) + ")";
+        ctx.fillRect(-SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
+        ctx.globalCompositeOperation = "source-over";
+      }
+      // 2.13: Respawn shimmer — translucent white glow on recently-respawned players
+      if (p.respawnShimmer) {
+        ctx.globalCompositeOperation = "source-atop";
+        var shimmerAlpha = 0.25 + 0.15 * Math.sin(Date.now() * 0.008);
+        ctx.fillStyle = "rgba(180,220,255," + shimmerAlpha.toFixed(3) + ")";
         ctx.fillRect(-SPRITE_RENDER_W * 0.35, -SPRITE_RENDER_H / 2, SPRITE_RENDER_W, SPRITE_RENDER_H);
         ctx.globalCompositeOperation = "source-over";
       }
@@ -4890,6 +5082,45 @@ function render() {
   // Render shell casings
   renderShellCasings();
 
+  // 2.17: Bullet tracers — draw fading trails behind bullets
+  bullets.forEach(function(b) {
+    var trail = bulletTrails.get(b.id);
+    if (trail) {
+      var dx = b.x - trail.prevX;
+      var dy = b.y - trail.prevY;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 2) {
+        ctx.save();
+        var trailLen, trailColor, trailWidth;
+        if (b.weapon === "sniper") {
+          trailLen = Math.min(dist, 40); trailColor = "rgba(255,255,200,0.6)"; trailWidth = 2;
+        } else if (b.weapon === "shotgun") {
+          trailLen = Math.min(dist, 12); trailColor = "rgba(255,180,80,0.4)"; trailWidth = 1.5;
+        } else {
+          trailLen = Math.min(dist, 18); trailColor = "rgba(255,220,100,0.35)"; trailWidth = 1;
+        }
+        var ratio = trailLen / dist;
+        var startX = b.x - dx * ratio;
+        var startY = b.y - dy * ratio;
+        var grad = ctx.createLinearGradient(startX, startY, b.x, b.y);
+        grad.addColorStop(0, "rgba(255,255,200,0)");
+        grad.addColorStop(1, trailColor);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = trailWidth;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    bulletTrails.set(b.id, { prevX: b.x, prevY: b.y, weapon: b.weapon });
+  });
+  // Clean up trails for removed bullets
+  bulletTrails.forEach(function(_, id) {
+    if (!bullets.some(function(b) { return b.id === id; })) bulletTrails.delete(id);
+  });
+
   // Render grenades in flight
   renderGrenades();
 
@@ -4899,6 +5130,10 @@ function render() {
   // Render grenade explosions and debris
   renderGrenadeExplosions();
   renderGrenadeDebris();
+
+  // 2.18: Render wall hit debris (stone particles + dust)
+  updateWallHitDebris();
+  renderWallHitDebris();
 
   // Render blood particles
   renderBloodParticles();
@@ -5266,10 +5501,293 @@ function render() {
   // Grenade screen overlays (flashbang white, grenade red pulse)
   renderGrenadeOverlays();
 
+  // 2.5: Flashbang progressive recovery overlay
+  renderFlashbangProgressive();
+
+  // 2.8: HE fire lick particles on screen edges
+  renderFireLickParticles();
+
+  // 2.10: Kill-confirmed screen flash
+  if (killConfirmFlash.alpha > 0.005) {
+    ctx.save();
+    ctx.fillStyle = killConfirmFlash.isHeadshot
+      ? "rgba(255,255,255," + killConfirmFlash.alpha.toFixed(3) + ")"
+      : "rgba(100,255,100," + killConfirmFlash.alpha.toFixed(3) + ")";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    killConfirmFlash.alpha *= 0.88;
+    if (killConfirmFlash.alpha < 0.005) killConfirmFlash.alpha = 0;
+  }
+
+  // 2.4: Chromatic aberration on heavy hits
+  renderChromaticAberration();
+
+  // 2.12: Sniper scope overlay
+  renderSniperScope();
+
   // Grenade cooldown HUD
   renderGrenadeCooldownHUD();
 
+  // 2.16: Death cam — update camera pan to killer
+  updateDeathCam();
+
   requestAnimationFrame(render);
 }
+
+// ===== 2.5: FLASHBANG PROGRESSIVE RECOVERY =====
+function renderFlashbangProgressive() {
+  if (flashbangState.phase === 0) return;
+  var now = Date.now();
+  var elapsed = now - flashbangState.startTime;
+  var intensity = flashbangState.intensity;
+  var w = canvas.width, h = canvas.height;
+  ctx.save();
+
+  if (flashbangState.phase === 1 && elapsed < 500) {
+    // Phase 1: full white
+    ctx.fillStyle = "rgba(255,255,255," + (intensity * 0.95).toFixed(3) + ")";
+    ctx.fillRect(0, 0, w, h);
+  } else if (flashbangState.phase === 1 && elapsed >= 500) {
+    flashbangState.phase = 2;
+  }
+
+  if (flashbangState.phase === 2) {
+    var t2 = (elapsed - 500) / 1500; // 0-1 over 1.5s
+    if (t2 >= 1) { flashbangState.phase = 3; }
+    else {
+      var whiteAlpha = intensity * (1 - t2) * 0.8;
+      ctx.fillStyle = "rgba(255,255,255," + whiteAlpha.toFixed(3) + ")";
+      ctx.fillRect(0, 0, w, h);
+      // TV static noise
+      var noiseAlpha = intensity * 0.3 * (1 - t2);
+      if (noiseAlpha > 0.01) {
+        if (!flashbangState.noiseCanvas) {
+          flashbangState.noiseCanvas = document.createElement('canvas');
+          flashbangState.noiseCanvas.width = 128;
+          flashbangState.noiseCanvas.height = 128;
+          var nc = flashbangState.noiseCanvas.getContext('2d');
+          var imgData = nc.createImageData(128, 128);
+          for (var i = 0; i < imgData.data.length; i += 4) {
+            var v = Math.floor(Math.random() * 255);
+            imgData.data[i] = v; imgData.data[i+1] = v; imgData.data[i+2] = v; imgData.data[i+3] = 255;
+          }
+          nc.putImageData(imgData, 0, 0);
+        }
+        ctx.globalAlpha = noiseAlpha;
+        ctx.drawImage(flashbangState.noiseCanvas, 0, 0, w, h);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  if (flashbangState.phase === 3) {
+    var t3 = (elapsed - 2000) / 1500; // 0-1 over 1.5s
+    if (t3 >= 1) { flashbangState.phase = 0; flashbangState.noiseCanvas = null; }
+    else {
+      // Fading desaturation
+      var desatAlpha = intensity * 0.3 * (1 - t3);
+      ctx.fillStyle = "rgba(200,200,200," + desatAlpha.toFixed(3) + ")";
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+  ctx.restore();
+}
+
+// ===== 2.8: HE FIRE LICK PARTICLES =====
+function createFireLickParticles() {
+  var w = canvas.width, h = canvas.height;
+  for (var i = 0; i < 8; i++) {
+    var side = Math.floor(Math.random() * 4);
+    var x, y, vx, vy;
+    if (side === 0) { x = Math.random() * w; y = h; vx = (Math.random()-0.5)*2; vy = -2 - Math.random()*3; }
+    else if (side === 1) { x = Math.random() * w; y = 0; vx = (Math.random()-0.5)*2; vy = 2 + Math.random()*3; }
+    else if (side === 2) { x = 0; y = Math.random() * h; vx = 2 + Math.random()*3; vy = (Math.random()-0.5)*2; }
+    else { x = w; y = Math.random() * h; vx = -2 - Math.random()*3; vy = (Math.random()-0.5)*2; }
+    fireLickParticles.push({ x: x, y: y, vx: vx, vy: vy, life: 1.0, size: 15 + Math.random() * 20 });
+  }
+}
+
+function renderFireLickParticles() {
+  if (fireLickParticles.length === 0) return;
+  ctx.save();
+  for (var i = 0; i < fireLickParticles.length; i++) {
+    var p = fireLickParticles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.life -= 0.02;
+    p.size *= 0.98;
+    if (p.life <= 0) continue;
+    var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+    grad.addColorStop(0, "rgba(255,120,20," + (p.life * 0.7).toFixed(3) + ")");
+    grad.addColorStop(0.5, "rgba(255,60,10," + (p.life * 0.4).toFixed(3) + ")");
+    grad.addColorStop(1, "rgba(200,30,5,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  compactInPlace(fireLickParticles, function(p) { return p.life > 0; });
+  ctx.restore();
+}
+
+// ===== 2.4: CHROMATIC ABERRATION =====
+function triggerChromaticAberration(damage) {
+  if (damage > 40) {
+    chromaticAberration.intensity = Math.min(4, damage / 25);
+    chromaticAberration.startTime = Date.now();
+  }
+}
+
+function renderChromaticAberration() {
+  if (chromaticAberration.intensity <= 0) return;
+  var elapsed = Date.now() - chromaticAberration.startTime;
+  if (elapsed > 150) { chromaticAberration.intensity = 0; return; }
+  var t = elapsed / 150;
+  var offset = chromaticAberration.intensity * (1 - t);
+  // Simple CSS-based approach: briefly shift the canvas hue
+  canvas.style.textShadow = offset + 'px 0 rgba(255,0,0,0.3), -' + offset + 'px 0 rgba(0,0,255,0.3)';
+  if (elapsed > 140) canvas.style.textShadow = '';
+}
+
+// ===== 2.12: SNIPER SCOPE OVERLAY =====
+function renderSniperScope() {
+  var framePlayer = _framePlayer;
+  if (!framePlayer || framePlayer.hp <= 0) { sniperScopeAlpha = 0; return; }
+  var targetAlpha = (framePlayer.weapon === "sniper") ? 0.6 : 0;
+  sniperScopeAlpha += (targetAlpha - sniperScopeAlpha) * 0.1;
+  if (sniperScopeAlpha < 0.02) return;
+  var w = canvas.width, h = canvas.height;
+  var cx = w / 2, cy = h / 2;
+  var scopeR = Math.min(w, h) * 0.35;
+  ctx.save();
+  ctx.globalAlpha = sniperScopeAlpha;
+  // Dark vignette outside scope circle
+  var grad = ctx.createRadialGradient(cx, cy, scopeR * 0.9, cx, cy, scopeR * 1.4);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, "rgba(0,0,0,0.7)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  // Scope reticle
+  ctx.strokeStyle = "rgba(100,200,255,0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, scopeR * 0.6, 0, Math.PI * 2); ctx.stroke();
+  // Cross lines
+  ctx.beginPath();
+  ctx.moveTo(cx - scopeR * 0.8, cy); ctx.lineTo(cx - 20, cy);
+  ctx.moveTo(cx + 20, cy); ctx.lineTo(cx + scopeR * 0.8, cy);
+  ctx.moveTo(cx, cy - scopeR * 0.8); ctx.lineTo(cx, cy - 20);
+  ctx.moveTo(cx, cy + 20); ctx.lineTo(cx, cy + scopeR * 0.8);
+  ctx.stroke();
+  // Mil-dots
+  for (var i = 1; i <= 3; i++) {
+    var d = i * 30;
+    ctx.fillStyle = "rgba(100,200,255,0.4)";
+    ctx.beginPath(); ctx.arc(cx + d, cy, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - d, cy, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy + d, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy - d, 1.5, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ===== 2.16: DEATH CAM =====
+function updateDeathCam() {
+  if (!deathCamState || !deathCamState.active) return;
+  var elapsed = Date.now() - deathCamState.startTime;
+  if (elapsed < 1500) {
+    // Pan phase: smoothly move camera to killer
+    var t = elapsed / 1500;
+    t = t * t * (3 - 2 * t); // smoothstep
+    predictedX = deathCamState.originX + (deathCamState.killerX - deathCamState.originX) * t;
+    predictedY = deathCamState.originY + (deathCamState.killerY - deathCamState.originY) * t;
+  } else if (elapsed < 2500) {
+    // Hold on killer
+    predictedX = deathCamState.killerX;
+    predictedY = deathCamState.killerY;
+  } else {
+    // Done
+    deathCamState.active = false;
+    deathCamState = null;
+  }
+}
+
+// ===== 2.18: ENVIRONMENTAL HIT FEEDBACK =====
+function createWallHitDebris(x, y) {
+  // Stone-colored particles + dust puff
+  for (var i = 0; i < 4; i++) {
+    var angle = Math.random() * Math.PI * 2;
+    var speed = 1 + Math.random() * 2.5;
+    wallHitDebris.push({
+      x: x, y: y,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 0.5,
+      life: 1.0, size: 1.5 + Math.random() * 2,
+      color: Math.random() > 0.5 ? "#8a7a60" : "#6a5a40",
+      gravity: 0.08,
+    });
+  }
+  // Dust puff (expanding circle)
+  wallHitDebris.push({
+    x: x, y: y, vx: 0, vy: 0,
+    life: 1.0, size: 4, color: "dust", gravity: 0,
+  });
+}
+
+function updateWallHitDebris() {
+  for (var i = 0; i < wallHitDebris.length; i++) {
+    var d = wallHitDebris[i];
+    d.x += d.vx; d.y += d.vy;
+    d.vy += d.gravity;
+    d.vx *= 0.96;
+    d.life -= 0.035;
+    if (d.color === "dust") d.size += 0.4;
+  }
+  compactInPlace(wallHitDebris, function(d) { return d.life > 0; });
+  capInPlace(wallHitDebris, 60);
+}
+
+function renderWallHitDebris() {
+  for (var i = 0; i < wallHitDebris.length; i++) {
+    var d = wallHitDebris[i];
+    if (!isOnScreen(d.x, d.y)) continue;
+    ctx.globalAlpha = d.life;
+    if (d.color === "dust") {
+      ctx.fillStyle = "rgba(120,105,80," + (d.life * 0.3).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = d.color;
+      ctx.fillRect(d.x - d.size/2, d.y - d.size/2, d.size, d.size);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ===== 2.11: SYNCED HEARTBEAT VIGNETTE =====
+// Override renderLowHPVignette to sync with heartbeat audio
+var _origRenderLowHPVignette = renderLowHPVignette;
+renderLowHPVignette = function() {
+  var localPlayer = players.find(function(p) { return p.id === playerId; });
+  if (!localPlayer || localPlayer.hp <= 0 || localPlayer.hp > 20) return;
+  // 2.11: Sync pulse with heartbeat timing (800ms period)
+  var beatPhase = (Date.now() % 800) / 800;
+  // Double-thump pattern: two sharp pulses at 0-0.15 and 0.2-0.35
+  var beatIntensity = 0;
+  if (beatPhase < 0.15) beatIntensity = Math.sin(beatPhase / 0.15 * Math.PI);
+  else if (beatPhase > 0.2 && beatPhase < 0.35) beatIntensity = Math.sin((beatPhase - 0.2) / 0.15 * Math.PI) * 0.7;
+  var pulse = 0.15 + 0.25 * beatIntensity;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  var w = canvas.width, h = canvas.height;
+  if (!lowHPVignetteGradient || lowHPVignetteW !== w || lowHPVignetteH !== h) {
+    lowHPVignetteGradient = ctx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.3, w/2, h/2, Math.min(w,h)*0.7);
+    lowHPVignetteGradient.addColorStop(0, "rgba(255,0,0,0)");
+    lowHPVignetteGradient.addColorStop(1, "rgba(180,0,0,1)");
+    lowHPVignetteW = w; lowHPVignetteH = h;
+  }
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = lowHPVignetteGradient;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+};
 
 render();

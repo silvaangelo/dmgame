@@ -24,7 +24,7 @@ func Deserialize(raw []byte) (map[string]interface{}, error) {
 const (
 	binaryMarker = 0x42
 	headerBytes  = 8
-	playerBytes  = 26 // +1 byte for charging state
+	playerBytes  = 35 // +9 bytes: VX(4) + VY(4) + flags(1)
 	bulletBytes  = 11
 	grenadeBytes = 12 // shortId(2) + x(2) + y(2) + type(1) + aimAngle(4) + fuseProgress(1)
 )
@@ -110,6 +110,28 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 			chargeByte = 2
 		}
 		buf[off] = chargeByte
+		off++
+		// Velocity (for client-side extrapolation and reconciliation)
+		putFloat32LE(buf[off:], float32(p.VX))
+		off += 4
+		putFloat32LE(buf[off:], float32(p.VY))
+		off += 4
+		// Flags byte: bit0=dodgeRolling, bit1=crouching, bit2=respawnShimmer, bit3=tagged
+		var flags uint8 = 0
+		if p.DodgeRolling {
+			flags |= 0x01
+		}
+		if p.Crouching {
+			flags |= 0x02
+		}
+		now := unixMs()
+		if p.RespawnShimmerEnd > now {
+			flags |= 0x04
+		}
+		if p.TaggedUntil > now {
+			flags |= 0x08
+		}
+		buf[off] = flags
 		off++
 	}
 

@@ -473,6 +473,47 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			throwGrenade(p, game, GrenadeFlash, chargeMs)
 			game.mu.Unlock()
 
+		case "dodgeRoll":
+			game.mu.Lock()
+			now := unixMs()
+			if !p.DodgeRolling && p.HP > 0 && now >= p.DodgeRollCooldownEnd {
+				// Determine roll direction from current keys or aim angle
+				dirX := 0.0
+				dirY := 0.0
+				if p.Keys.A {
+					dirX -= 1
+				}
+				if p.Keys.D {
+					dirX += 1
+				}
+				if p.Keys.W {
+					dirY -= 1
+				}
+				if p.Keys.S {
+					dirY += 1
+				}
+				mag := math.Sqrt(dirX*dirX + dirY*dirY)
+				if mag < 0.1 {
+					// No movement keys: roll in aim direction
+					dirX = math.Cos(p.AimAngle)
+					dirY = math.Sin(p.AimAngle)
+				} else {
+					dirX /= mag
+					dirY /= mag
+				}
+				p.DodgeRolling = true
+				p.DodgeRollEnd = now + GameConfig.DodgeRollDuration
+				p.DodgeRollCooldownEnd = now + GameConfig.DodgeRollCooldown
+				p.DodgeRollDirX = dirX
+				p.DodgeRollDirY = dirY
+			}
+			game.mu.Unlock()
+
+		case "crouch":
+			game.mu.Lock()
+			p.Crouching = safeString(m, "state", "") == "on"
+			game.mu.Unlock()
+
 		case "switchWeapon":
 			now := unixMs()
 			if now-p.LastWeaponSwitch < 250 {

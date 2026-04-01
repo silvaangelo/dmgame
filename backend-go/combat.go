@@ -158,17 +158,44 @@ func handleKill(killer *Player, victim *Player, weapon string, game *Game, isHea
 
 /* ================= SHOOTING ================= */
 
-// isPlayerMoving returns true if any movement key is pressed (CS2-style: moving = inaccurate).
-func isPlayerMoving(p *Player) bool {
-	return p.Keys.W || p.Keys.A || p.Keys.S || p.Keys.D
+// playerSpeed returns the current speed of a player from their velocity.
+func playerSpeed(p *Player) float64 {
+	return math.Sqrt(p.VX*p.VX + p.VY*p.VY)
 }
 
-// applySpread adds weapon base spread + movement spread to a direction vector.
-func applySpread(dirX, dirY float64, baseSpread, moveSpread float64, moving bool) (float64, float64) {
-	totalSpread := baseSpread
-	if moving {
-		totalSpread += moveSpread
+// isPlayerMoving returns true if the player has meaningful velocity.
+func isPlayerMoving(p *Player) bool {
+	return playerSpeed(p) > 0.5
+}
+
+// isCounterStrafing returns true if the player is in a counter-strafe window.
+func isCounterStrafing(p *Player) bool {
+	return p.CounterStrafeX > 0 || p.CounterStrafeY > 0
+}
+
+// Machinegun spray pattern (deterministic recoil offsets in radians)
+var machinegunSprayPattern = []float64{
+	0, 0.012, 0.025, 0.04, 0.06, 0.05, 0.03, 0.01,
+	-0.02, -0.04, -0.03, -0.01,
+}
+
+// applySpread adds weapon base spread + velocity-scaled movement spread to a direction vector.
+// Counter-strafing grants standing accuracy; crouching reduces spread.
+func applySpread(dirX, dirY float64, baseSpread, moveSpread float64, player *Player) (float64, float64) {
+	speedRatio := playerSpeed(player) / GameConfig.PlayerSpeed
+	if speedRatio > 1.0 {
+		speedRatio = 1.0
 	}
+	// Counter-strafing: treat as standing for spread purposes
+	if isCounterStrafing(player) {
+		speedRatio = 0
+	}
+	// Crouching reduces spread
+	crouchMult := 1.0
+	if player.Crouching {
+		crouchMult = GameConfig.CrouchSpreadMult
+	}
+	totalSpread := (baseSpread + moveSpread*speedRatio) * crouchMult
 	if totalSpread > 0 {
 		spreadAngle := (rand.Float64() - 0.5) * 2 * totalSpread
 		cos := math.Cos(spreadAngle)
@@ -195,7 +222,11 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	}
 
 	now := unixMs()
-	moving := isPlayerMoving(player)
+
+	// Reset spray pattern after 300ms of no shots
+	if now-player.LastSprayReset > 300 {
+		player.SprayIndex = 0
+	}
 
 	// Sniper (AWP-like: extremely accurate when still, terrible when moving)
 	if player.Weapon == WeaponSniper {
@@ -213,7 +244,7 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		}
 
 		// Apply accuracy (CS2: sniper is pinpoint when still, very inaccurate when moving)
-		finalDirX, finalDirY := applySpread(dirX, dirY, GameConfig.SniperBaseSpread, GameConfig.SniperMoveSpread, moving)
+		finalDirX, finalDirY := applySpread(dirX, dirY, GameConfig.SniperBaseSpread, GameConfig.SniperMoveSpread, player)
 
 		mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponSniper)
 		// Block shot if muzzle is inside/behind a wall
@@ -291,10 +322,14 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 			}
 			return
 		}
-		// Movement adds extra spread to shotgun
-		spreadBase := GameConfig.ShotgunSpread
-		if moving {
-			spreadBase += GameConfig.ShotgunMoveSpread
+		// Movement adds extra spread to shotgun (velocity-scaled)
+		speedRatio := playerSpeed(player) / GameConfig.PlayerSpeed
+		if isCounterStrafing(player) {
+			speedRatio = 0
+		}
+		spreadBase := GameConfig.ShotgunSpread + GameConfig.ShotgunMoveSpread*speedRatio
+		if player.Crouching {
+			spreadBase *= GameConfig.CrouchSpreadMult
 		}
 		for i := 0; i < pelletCount; i++ {
 			spreadAngle := baseAngle + (rand.Float64()-0.5)*2*spreadBase
@@ -327,7 +362,7 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	moveSpread = GameConfig.MachinegunMoveSpread
 	damage = GameConfig.MachinegunDamage
 
-	finalDirX, finalDirY := applySpread(dirX, dirY, baseSpread, moveSpread, moving)
+	finalDirX, finalDirY := applySpread(dirX, dirY, baseSpread, moveSpread, player)
 
 	// Also apply recoil on top of accuracy spread
 	recoil := GameConfig.MachinegunRecoil
@@ -335,6 +370,16 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	cos := math.Cos(recoilAngle)
 	sin := math.Sin(recoilAngle)
 	finalDirX, finalDirY = finalDirX*cos-finalDirY*sin, finalDirX*sin+finalDirY*cos
+
+	// Spray pattern: deterministic recoil offset based on consecutive shots
+	if player.SprayIndex < len(machinegunSprayPattern) {
+		patternAngle := machinegunSprayPattern[player.SprayIndex]
+		pCos := math.Cos(patternAngle)
+		pSin := math.Sin(patternAngle)
+		finalDirX, finalDirY = finalDirX*pCos-finalDirY*pSin, finalDirX*pSin+finalDirY*pCos
+	}
+	player.SprayIndex++
+	player.LastSprayReset = now
 
 	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
 	// Block shot if muzzle is inside/behind a wall
@@ -700,6 +745,24 @@ func detonateGrenade(g *Grenade, game *Game) {
 				}
 				// Flash intensity based on distance (closer = stronger)
 				intensity := 1.0 - (dist/radius)*0.7
+
+				// Look-away reduction: facing away reduces flash effect
+				aimDirX := math.Cos(p.AimAngle)
+				aimDirY := math.Sin(p.AimAngle)
+				toFlashX := g.X - p.X
+				toFlashY := g.Y - p.Y
+				toFlashDist := math.Sqrt(toFlashX*toFlashX + toFlashY*toFlashY)
+				if toFlashDist > 0 {
+					toFlashX /= toFlashDist
+					toFlashY /= toFlashDist
+				}
+				dot := aimDirX*toFlashX + aimDirY*toFlashY
+				// dot: 1 = facing flash, -1 = facing away
+				if dot < -0.34 { // >110° away
+					intensity *= 0.4
+				} else if dot < 0.17 { // roughly perpendicular
+					intensity *= 0.7
+				}
 
 				// Send per-player flash effect
 				flashMsg, _ := Serialize(map[string]interface{}{

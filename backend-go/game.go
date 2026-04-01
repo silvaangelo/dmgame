@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"time"
 )
 
@@ -68,7 +69,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 		})
 	}
 
-	// ── Player movement ──
+	// ── Player movement (velocity-based with acceleration/friction) ──
 	for _, player := range game.Players {
 		if player.HP <= 0 {
 			continue
@@ -76,26 +77,110 @@ func updateGame(game *Game) []playerStateSnapshot {
 
 		playerRadius := GameConfig.PlayerRadius
 		margin := playerRadius
-
 		speed := GameConfig.PlayerSpeed
 
-		// Move X axis first
-		if player.Keys.A {
-			player.X -= speed
+		// Tagging slow (reduced speed when recently hit)
+		if now < player.TaggedUntil {
+			speed *= GameConfig.TagSpeedMult
 		}
-		if player.Keys.D {
-			player.X += speed
+
+		// Crouch slow
+		if player.Crouching {
+			speed *= GameConfig.CrouchSpeedMult
 		}
+
+		// Counter-strafe detection: releasing a key while opposite is pressed
+		if !player.Keys.A && player.PrevKeysA && player.Keys.D {
+			player.CounterStrafeX = GameConfig.CounterStrafeFrames
+		}
+		if !player.Keys.D && player.PrevKeysD && player.Keys.A {
+			player.CounterStrafeX = GameConfig.CounterStrafeFrames
+		}
+		if !player.Keys.W && player.PrevKeysW && player.Keys.S {
+			player.CounterStrafeY = GameConfig.CounterStrafeFrames
+		}
+		if !player.Keys.S && player.PrevKeysS && player.Keys.W {
+			player.CounterStrafeY = GameConfig.CounterStrafeFrames
+		}
+		player.PrevKeysA = player.Keys.A
+		player.PrevKeysD = player.Keys.D
+		player.PrevKeysW = player.Keys.W
+		player.PrevKeysS = player.Keys.S
+		if player.CounterStrafeX > 0 {
+			player.CounterStrafeX--
+		}
+		if player.CounterStrafeY > 0 {
+			player.CounterStrafeY--
+		}
+
+		// Dodge roll override — bypass normal movement
+		if player.DodgeRolling {
+			if now >= player.DodgeRollEnd {
+				player.DodgeRolling = false
+			} else {
+				player.VX = player.DodgeRollDirX * GameConfig.DodgeRollSpeed
+				player.VY = player.DodgeRollDirY * GameConfig.DodgeRollSpeed
+			}
+		}
+
+		if !player.DodgeRolling {
+			// Compute desired direction
+			var inputDirX, inputDirY float64
+			if player.Keys.A {
+				inputDirX -= 1
+			}
+			if player.Keys.D {
+				inputDirX += 1
+			}
+			if player.Keys.W {
+				inputDirY -= 1
+			}
+			if player.Keys.S {
+				inputDirY += 1
+			}
+
+			// Diagonal normalization (prevents √2 speed boost)
+			inputLen := math.Sqrt(inputDirX*inputDirX + inputDirY*inputDirY)
+			if inputLen > 1.0 {
+				inputDirX /= inputLen
+				inputDirY /= inputLen
+			}
+
+			// Acceleration / friction
+			targetVX := inputDirX * speed
+			targetVY := inputDirY * speed
+			accel := GameConfig.PlayerAcceleration
+
+			if inputLen > 0 {
+				player.VX += (targetVX - player.VX) * accel
+				player.VY += (targetVY - player.VY) * accel
+			} else {
+				player.VX *= GameConfig.PlayerFriction
+				player.VY *= GameConfig.PlayerFriction
+			}
+
+			// Clamp to max speed
+			vLen := math.Sqrt(player.VX*player.VX + player.VY*player.VY)
+			if vLen > speed {
+				player.VX = player.VX / vLen * speed
+				player.VY = player.VY / vLen * speed
+			}
+			// Zero out very small velocities
+			if math.Abs(player.VX) < 0.01 {
+				player.VX = 0
+			}
+			if math.Abs(player.VY) < 0.01 {
+				player.VY = 0
+			}
+		}
+
+		// Apply X movement
+		player.X += player.VX
 		player.X = clamp(player.X, margin, GameConfig.ArenaWidth-margin)
 		resolveCollisions(player, globalObstacleGrid, playerRadius, true)
 
-		// Move Y axis
-		if player.Keys.W {
-			player.Y -= speed
-		}
-		if player.Keys.S {
-			player.Y += speed
-		}
+		// Apply Y movement
+		player.Y += player.VY
 		player.Y = clamp(player.Y, margin, GameConfig.ArenaHeight-margin)
 		resolveCollisions(player, globalObstacleGrid, playerRadius, false)
 	}
@@ -196,24 +281,46 @@ func updateGame(game *Game) []playerStateSnapshot {
 		nearbyObs := globalObstacleGrid.QueryRect(sweptMinX, sweptMinY, sweptW, sweptH)
 		hitObstacle := false
 		var hitX, hitY float64
+		var hitThinWall bool
 		for _, e := range nearbyObs {
 			o := e.Data.(*Obstacle)
 			if segmentIntersectsAABB(prevX, prevY, bullet.X, bullet.Y, o.X, o.Y, o.X+o.Size, o.Y+o.Size) {
 				hitObstacle = true
-				// Approximate hit position: clamp bullet pos to obstacle edge
+				hitThinWall = o.Thin
 				hitX = clamp(bullet.X, o.X, o.X+o.Size)
 				hitY = clamp(bullet.Y, o.Y, o.Y+o.Size)
 				break
 			}
 		}
 		if hitObstacle {
-			bulletRemoved[bi] = true
-			broadcast(game, map[string]interface{}{
-				"type": "bulletHitWall",
-				"x":    int(math.Round(hitX)),
-				"y":    int(math.Round(hitY)),
-			})
-			continue
+			// 1.14: Bullet penetration — thin walls allow pass-through with 60% damage loss
+			if hitThinWall && bullet.Penetrated == 0 {
+				bullet.Penetrated++
+				bullet.Damage = int(float64(bullet.Damage) * 0.4) // 60% loss
+				if bullet.Damage < 1 {
+					bullet.Damage = 1
+				}
+				// Slight spread increase after penetration
+				spreadAngle := (rand.Float64() - 0.5) * 0.08
+				cos := math.Cos(spreadAngle)
+				sin := math.Sin(spreadAngle)
+				bullet.DX, bullet.DY = bullet.DX*cos-bullet.DY*sin, bullet.DX*sin+bullet.DY*cos
+				// Broadcast wallbang event for visual feedback
+				broadcast(game, map[string]interface{}{
+					"type": "bulletHitWall",
+					"x":    int(math.Round(hitX)),
+					"y":    int(math.Round(hitY)),
+				})
+				// Don't remove bullet — it continues through
+			} else {
+				bulletRemoved[bi] = true
+				broadcast(game, map[string]interface{}{
+					"type": "bulletHitWall",
+					"x":    int(math.Round(hitX)),
+					"y":    int(math.Round(hitY)),
+				})
+				continue
+			}
 		}
 
 		// Player hit detection
@@ -286,6 +393,9 @@ func updateGame(game *Game) []playerStateSnapshot {
 				enemy.X = clamp(enemy.X+kbX, GameConfig.PlayerRadius, GameConfig.ArenaWidth-GameConfig.PlayerRadius)
 				enemy.Y = clamp(enemy.Y+kbY, GameConfig.PlayerRadius, GameConfig.ArenaHeight-GameConfig.PlayerRadius)
 			}
+
+			// Tagging: slow enemy on hit
+			enemy.TaggedUntil = now + GameConfig.TagDuration
 
 			// Broadcast headshot event for client-side feedback
 			if isHeadshot {

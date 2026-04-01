@@ -206,6 +206,16 @@ func resetPersistentRound(game *Game) {
 		p.LastFlashbangTime = 0
 		p.ChargingGrenade = ""
 		p.ThrowingGrenade = false
+		// Reset velocity and new mechanics
+		p.VX = 0
+		p.VY = 0
+		p.DodgeRolling = false
+		p.Crouching = false
+		p.TaggedUntil = 0
+		p.CounterStrafeX = 0
+		p.CounterStrafeY = 0
+		p.SprayIndex = 0
+		p.RespawnShimmerEnd = 0
 	}
 
 	// Respawn all players
@@ -472,6 +482,16 @@ func respawnPlayer(player *Player, game *Game) {
 		WeaponShotgun:    GameConfig.ShotgunAmmo,
 		WeaponSniper:     GameConfig.SniperAmmo,
 	}
+	// Reset velocity and new mechanics
+	player.VX = 0
+	player.VY = 0
+	player.DodgeRolling = false
+	player.Crouching = false
+	player.TaggedUntil = 0
+	player.CounterStrafeX = 0
+	player.CounterStrafeY = 0
+	player.SprayIndex = 0
+	player.RespawnShimmerEnd = unixMs() + GameConfig.RespawnShimmerDuration
 
 	// Push out of obstacles
 	pr := GameConfig.PlayerRadius

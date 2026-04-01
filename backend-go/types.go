@@ -94,20 +94,53 @@ type Player struct {
 	// Charging state (visible to other players via binary protocol)
 	// 0=none, GrenadeHE=charging grenade, GrenadeFlash=charging flashbang
 	ChargingGrenade GrenadeType `msgpack:"-"`
+
+	// Velocity-based movement
+	VX float64 `msgpack:"-"`
+	VY float64 `msgpack:"-"`
+
+	// Dodge roll
+	DodgeRolling         bool    `msgpack:"-"`
+	DodgeRollEnd         int64   `msgpack:"-"`
+	DodgeRollCooldownEnd int64   `msgpack:"-"`
+	DodgeRollDirX        float64 `msgpack:"-"`
+	DodgeRollDirY        float64 `msgpack:"-"`
+
+	// Crouch
+	Crouching bool `msgpack:"-"`
+
+	// Tagging (slow on hit)
+	TaggedUntil int64 `msgpack:"-"`
+
+	// Counter-strafe accuracy
+	CounterStrafeX int  `msgpack:"-"`
+	CounterStrafeY int  `msgpack:"-"`
+	PrevKeysA      bool `msgpack:"-"`
+	PrevKeysD      bool `msgpack:"-"`
+	PrevKeysW      bool `msgpack:"-"`
+	PrevKeysS      bool `msgpack:"-"`
+
+	// Spray pattern tracking
+	SprayIndex     int   `msgpack:"-"`
+	LastSprayReset int64 `msgpack:"-"`
+
+	// Respawn shimmer
+	RespawnShimmerEnd int64 `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.
 type Bullet struct {
-	ID        string     `msgpack:"id"`
-	ShortID   uint16     `msgpack:"shortId"`
-	X         float64    `msgpack:"x"`
-	Y         float64    `msgpack:"y"`
-	DX        float64    `msgpack:"dx"`
-	DY        float64    `msgpack:"dy"`
-	PlayerID  string     `msgpack:"playerId"`
-	Damage    int        `msgpack:"damage"`
-	Weapon    WeaponType `msgpack:"weapon"`
-	CreatedAt int64      `msgpack:"createdAt"`
+	ID         string     `msgpack:"id"`
+	ShortID    uint16     `msgpack:"shortId"`
+	X          float64    `msgpack:"x"`
+	Y          float64    `msgpack:"y"`
+	DX         float64    `msgpack:"dx"`
+	DY         float64    `msgpack:"dy"`
+	PlayerID   string     `msgpack:"playerId"`
+	Damage     int        `msgpack:"damage"`
+	Weapon     WeaponType `msgpack:"weapon"`
+	CreatedAt  int64      `msgpack:"createdAt"`
+	Penetrated int        `msgpack:"-"` // 1.14: how many walls this bullet has passed through
 }
 
 // Obstacle represents a wall block.
@@ -118,6 +151,7 @@ type Obstacle struct {
 	Size    float64 `msgpack:"size"`
 	Type    string  `msgpack:"type,omitempty"`
 	GroupID string  `msgpack:"groupId,omitempty"`
+	Thin    bool    `msgpack:"-"` // 1.14: thin walls allow bullet penetration
 }
 
 // Grenade represents a thrown grenade or flashbang in flight.

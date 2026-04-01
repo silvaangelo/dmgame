@@ -152,7 +152,6 @@ func GenerateObstaclesFromMap(m MapDef) []*Obstacle {
 	obstacles := make([]*Obstacle, 0, 256)
 
 	for _, rect := range m.Walls {
-		// How many tiles fit in this rect?
 		cols := int(rect.W / BlockSize)
 		rows := int(rect.H / BlockSize)
 		if cols < 1 {
@@ -162,7 +161,10 @@ func GenerateObstaclesFromMap(m MapDef) []*Obstacle {
 			rows = 1
 		}
 
-		groupID := nextEntityID() // group all tiles of one rect
+		// 1.14: Mark single-block-thick walls as thin (allow bullet penetration)
+		isThin := (cols == 1 || rows == 1)
+
+		groupID := nextEntityID()
 
 		for r := 0; r < rows; r++ {
 			for c := 0; c < cols; c++ {
@@ -173,6 +175,7 @@ func GenerateObstaclesFromMap(m MapDef) []*Obstacle {
 					Size:    BlockSize,
 					Type:    "wall",
 					GroupID: groupID,
+					Thin:    isThin,
 				})
 			}
 		}

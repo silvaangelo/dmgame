@@ -60,6 +60,25 @@ var GameConfig = struct {
 	UsernameMinLen int
 	UsernameMaxLen int
 	UsernamePattern *regexp.Regexp
+	// Movement physics (acceleration/deceleration)
+	PlayerAcceleration    float64
+	PlayerFriction        float64
+	// Dodge roll
+	DodgeRollSpeed        float64
+	DodgeRollDuration     int64
+	DodgeRollCooldown     int64
+	// Crouch
+	CrouchSpeedMult       float64
+	CrouchSpreadMult      float64
+	// Tagging (slow on hit)
+	TagDuration           int64
+	TagSpeedMult          float64
+	// Counter-strafe
+	CounterStrafeFrames   int
+	// Bullet penetration
+	PenetrationDamageMult float64
+	// Respawn shimmer
+	RespawnShimmerDuration int64
 }{
 	TickRate:        40,
 	MaxPlayers:      10,
@@ -117,6 +136,25 @@ var GameConfig = struct {
 	UsernameMinLen: 2,
 	UsernameMaxLen: 16,
 	UsernamePattern: regexp.MustCompile(`^[a-zA-Z0-9_]+$`),
+	// Movement physics
+	PlayerAcceleration:     0.50,
+	PlayerFriction:         0.70,
+	// Dodge roll
+	DodgeRollSpeed:         21.0,
+	DodgeRollDuration:      150,
+	DodgeRollCooldown:      3000,
+	// Crouch
+	CrouchSpeedMult:        0.4,
+	CrouchSpreadMult:       0.5,
+	// Tagging
+	TagDuration:            400,
+	TagSpeedMult:           0.7,
+	// Counter-strafe
+	CounterStrafeFrames:    2,
+	// Bullet penetration
+	PenetrationDamageMult:  0.4,
+	// Respawn shimmer
+	RespawnShimmerDuration: 1500,
 }
 
 // WeaponCycle is the order of weapons when cycling.
