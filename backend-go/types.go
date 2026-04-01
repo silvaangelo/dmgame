@@ -85,6 +85,11 @@ type Player struct {
 	// Grenade cooldowns (ms timestamp of last throw)
 	LastGrenadeTime   int64 `msgpack:"-"`
 	LastFlashbangTime int64 `msgpack:"-"`
+
+	// Throwing visual indicator
+	ThrowingGrenade     bool        `msgpack:"-"`
+	ThrowingGrenadeType GrenadeType `msgpack:"-"`
+	ThrowStartTime      int64       `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.

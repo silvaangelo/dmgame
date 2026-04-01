@@ -607,6 +607,7 @@ let lastGrenadeThrownTime = 0; // for cooldown display
 let lastFlashbangThrownTime = 0; // for cooldown display
 let grenadeKeyHeld = false;
 let flashbangKeyHeld = false;
+let grenadeThrowIndicators = []; // visual indicators above players who just threw
 
 // Cached DOM elements (avoid getElementById in hot paths)
 let _cachedDOM = null;
@@ -1591,6 +1592,41 @@ function renderGrenadeCooldownHUD() {
   ctx.textAlign = "start";
 }
 
+// Render throwing indicators above players who recently threw grenades
+function renderGrenadeThrowIndicators() {
+  var now = Date.now();
+  // Remove expired indicators
+  grenadeThrowIndicators = grenadeThrowIndicators.filter(function(ind) {
+    return now - ind.time < ind.duration;
+  });
+  // Draw indicator above each throwing player
+  grenadeThrowIndicators.forEach(function(ind) {
+    var p = players.find(function(pl) { return pl.id === ind.playerId; });
+    if (!p || p.hp <= 0) return;
+    var progress = (now - ind.time) / ind.duration;
+    var alpha = 1.0 - progress;
+    var floatY = -40 - progress * 12; // float upward
+    var renderX = p.x;
+    var renderY = p.y;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Draw grenade/flashbang icon + text above player
+    var label = ind.gType === "flashbang" ? "💥" : "🔥";
+    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = ind.gType === "flashbang" ? "#ccccff" : "#ffaa44";
+    ctx.fillText(label, renderX, renderY + floatY);
+    // Small arc indicator
+    ctx.strokeStyle = ind.gType === "flashbang" ? "rgba(200,200,255," + alpha.toFixed(2) + ")" : "rgba(255,120,30," + alpha.toFixed(2) + ")";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(renderX, renderY - 32, 14, -Math.PI, -Math.PI + Math.PI * 2 * (1 - progress));
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  });
+}
+
 // Low HP vignette rendering
 let lowHPVignetteGradient = null;
 let lowHPVignetteW = 0;
@@ -2114,6 +2150,7 @@ function showStartScreen() {
   flashbangKeyHeld = false;
   lastGrenadeThrownTime = 0;
   lastFlashbangThrownTime = 0;
+  grenadeThrowIndicators = [];
   previousBulletPositions.clear();
   screenShake = { intensity: 0, decay: 0.92 };
   killFeedEntries = [];
@@ -2492,6 +2529,20 @@ function connect() {
         var bombIdx2 = Math.floor(Math.random() * 5) + 1;
         playPositionalSound("bomb-" + bombIdx2, data.x, data.y, 0.4);
       }
+      return;
+    }
+
+    // ===== GRENADE THROWN (confirmation from server) =====
+    if (data.type === "grenadeThrown") {
+      // Play throw sound positionally from thrower's location
+      playPositionalSound("grenade-throw", data.x, data.y, 0.4);
+      // Track throwing animation for the player who threw
+      grenadeThrowIndicators.push({
+        playerId: data.playerId,
+        gType: data.gType,
+        time: Date.now(),
+        duration: 500
+      });
       return;
     }
 
@@ -2917,6 +2968,7 @@ function connect() {
       flashbangKeyHeld = false;
       lastGrenadeThrownTime = 0;
       lastFlashbangThrownTime = 0;
+      grenadeThrowIndicators = [];
       // Stop all footstep sounds
       footstepSources.forEach(function(fs) { try { fs.source.stop(); } catch(_) {} });
       footstepSources.clear();
@@ -3143,6 +3195,8 @@ document.addEventListener("keydown", (e) => {
 
   // G key to start charging grenade throw
   if (mappedKey === "g" && !grenadeKeyHeld) {
+    // Don't start charging if still on cooldown
+    if (Date.now() - lastGrenadeThrownTime < GRENADE_COOLDOWN_MS) return;
     grenadeKeyHeld = true;
     grenadeChargeStart = Date.now();
     return;
@@ -3150,6 +3204,8 @@ document.addEventListener("keydown", (e) => {
 
   // F key to start charging flashbang throw
   if (mappedKey === "f" && !flashbangKeyHeld) {
+    // Don't start charging if still on cooldown
+    if (Date.now() - lastFlashbangThrownTime < GRENADE_COOLDOWN_MS) return;
     flashbangKeyHeld = true;
     flashbangChargeStart = Date.now();
     return;
@@ -3229,10 +3285,13 @@ document.addEventListener("keyup", (e) => {
   if (mappedKey === "g" && grenadeKeyHeld) {
     grenadeKeyHeld = false;
     if (ws && gameReady) {
-      var chargeMs = Date.now() - grenadeChargeStart;
-      ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
-      lastGrenadeThrownTime = Date.now();
-      playSound("grenade-throw", 0.4);
+      // Client-side cooldown check — don't send if still on cooldown
+      var now = Date.now();
+      if (now - lastGrenadeThrownTime >= GRENADE_COOLDOWN_MS) {
+        var chargeMs = now - grenadeChargeStart;
+        ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
+        lastGrenadeThrownTime = now;
+      }
     }
     return;
   }
@@ -3241,10 +3300,13 @@ document.addEventListener("keyup", (e) => {
   if (mappedKey === "f" && flashbangKeyHeld) {
     flashbangKeyHeld = false;
     if (ws && gameReady) {
-      var chargeMs = Date.now() - flashbangChargeStart;
-      ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
-      lastFlashbangThrownTime = Date.now();
-      playSound("grenade-throw", 0.4);
+      // Client-side cooldown check — don't send if still on cooldown
+      var now = Date.now();
+      if (now - lastFlashbangThrownTime >= GRENADE_COOLDOWN_MS) {
+        var chargeMs = now - flashbangChargeStart;
+        ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
+        lastFlashbangThrownTime = now;
+      }
     }
     return;
   }
@@ -3304,16 +3366,22 @@ function releaseAllKeys() {
   // Release grenade/flashbang charge if held
   if (grenadeKeyHeld && ws && gameReady) {
     grenadeKeyHeld = false;
-    var chargeMs = Date.now() - grenadeChargeStart;
-    ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
-    lastGrenadeThrownTime = Date.now();
+    var now = Date.now();
+    if (now - lastGrenadeThrownTime >= GRENADE_COOLDOWN_MS) {
+      var chargeMs = now - grenadeChargeStart;
+      ws.send(serialize({ type: "throwGrenade", chargeMs: chargeMs }));
+      lastGrenadeThrownTime = now;
+    }
   }
   grenadeKeyHeld = false;
   if (flashbangKeyHeld && ws && gameReady) {
     flashbangKeyHeld = false;
-    var chargeMs = Date.now() - flashbangChargeStart;
-    ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
-    lastFlashbangThrownTime = Date.now();
+    var now = Date.now();
+    if (now - lastFlashbangThrownTime >= GRENADE_COOLDOWN_MS) {
+      var chargeMs = now - flashbangChargeStart;
+      ws.send(serialize({ type: "throwFlashbang", chargeMs: chargeMs }));
+      lastFlashbangThrownTime = now;
+    }
   }
   flashbangKeyHeld = false;
   for (const key of ["w", "a", "s", "d"]) {
@@ -4723,6 +4791,9 @@ function render() {
 
   // Render grenades in flight
   renderGrenades();
+
+  // Render grenade throw indicators above players
+  renderGrenadeThrowIndicators();
 
   // Render grenade explosions and debris
   renderGrenadeExplosions();

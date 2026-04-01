@@ -406,6 +406,7 @@ func removePlayerFromGame(playerID string, game *Game) {
 
 func respawnPlayer(player *Player, game *Game) {
 	player.WaitingForRespawn = false
+	player.ThrowingGrenade = false
 
 	bestX := GameConfig.ArenaWidth / 2
 	bestY := GameConfig.ArenaHeight / 2

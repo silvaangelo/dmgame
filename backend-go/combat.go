@@ -451,6 +451,11 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 		player.LastFlashbangTime = now
 	}
 
+	// Mark player as throwing (for visual indicator, auto-clears after 500ms)
+	player.ThrowingGrenade = true
+	player.ThrowingGrenadeType = grenadeType
+	player.ThrowStartTime = now
+
 	// Clamp charge time: min 100ms, max 1500ms
 	if chargeMs < 100 {
 		chargeMs = 100
@@ -487,6 +492,20 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 	}
 	game.NextShortID++
 	game.Grenades = append(game.Grenades, grenade)
+
+	// Broadcast throw confirmation so clients can play sounds & show visual
+	gTypeStr := "grenade"
+	if grenadeType == GrenadeFlash {
+		gTypeStr = "flashbang"
+	}
+	broadcast(game, map[string]interface{}{
+		"type":     "grenadeThrown",
+		"playerId": player.ID,
+		"username": player.Username,
+		"gType":    gTypeStr,
+		"x":        int(math.Round(player.X)),
+		"y":        int(math.Round(player.Y)),
+	})
 }
 
 // updateGrenades moves grenades, applies friction, checks collisions, and detonates expired ones.
@@ -625,6 +644,11 @@ func detonateGrenade(g *Grenade, game *Game) {
 						}
 					}
 					handleKill(thrower, p, "grenade", game, false)
+
+					// Self-kill: auto-respawn quickly (1s instead of normal 5s)
+					if g.PlayerID == p.ID {
+						p.DeathTime = unixMs() - GameConfig.RespawnTime + 1000
+					}
 				}
 			}
 		}

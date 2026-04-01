@@ -160,6 +160,10 @@ func updateGame(game *Game) []playerStateSnapshot {
 				respawnPlayer(player, game)
 			}
 		}
+		// Auto-clear throwing indicator after 500ms
+		if player.ThrowingGrenade && now-player.ThrowStartTime > 500 {
+			player.ThrowingGrenade = false
+		}
 	}
 
 	// ── Bullet physics ──
