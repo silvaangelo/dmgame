@@ -682,9 +682,6 @@ let fireLickParticles = [];
 // Chromatic aberration (2.4)
 let chromaticAberration = { intensity: 0, startTime: 0 };
 
-// Sniper scope (2.12)
-let sniperScopeAlpha = 0;
-
 // Hit-stop (2.14)
 let hitStopPlayers = new Map();
 
@@ -2713,7 +2710,7 @@ function connect() {
     // ===== GRENADE THROWN (confirmation from server) =====
     if (data.type === "grenadeThrown") {
       // Play throw sound positionally from thrower's location (350px range)
-      playPositionalSound("grenade-throw", data.x, data.y, 0.4, 1.0, 350);
+      playPositionalSound("grenade-throw", data.x, data.y, 0.12, 1.0, 350);
       // Track throwing animation for the player who threw
       grenadeThrowIndicators.push({
         playerId: data.playerId,
@@ -5565,9 +5562,6 @@ function render() {
   // 2.4: Chromatic aberration on heavy hits
   renderChromaticAberration();
 
-  // 2.12: Sniper scope overlay
-  renderSniperScope();
-
   // Grenade cooldown HUD
   renderGrenadeCooldownHUD();
 
@@ -5689,43 +5683,6 @@ function renderChromaticAberration() {
   // Simple CSS-based approach: briefly shift the canvas hue
   canvas.style.textShadow = offset + 'px 0 rgba(255,0,0,0.3), -' + offset + 'px 0 rgba(0,0,255,0.3)';
   if (elapsed > 140) canvas.style.textShadow = '';
-}
-
-// ===== 2.12: SNIPER SCOPE OVERLAY =====
-function renderSniperScope() {
-  var framePlayer = _framePlayer;
-  if (!framePlayer || framePlayer.hp <= 0) { sniperScopeAlpha = 0; return; }
-  var targetAlpha = (framePlayer.weapon === "sniper") ? 0.45 : 0;
-  sniperScopeAlpha += (targetAlpha - sniperScopeAlpha) * 0.1;
-  if (sniperScopeAlpha < 0.02) return;
-  var w = canvas.width, h = canvas.height;
-  var cx = w / 2, cy = h / 2;
-  ctx.save();
-  ctx.globalAlpha = sniperScopeAlpha;
-  // Thin scope reticle circle (small, centered)
-  ctx.strokeStyle = "rgba(100,200,255,0.4)";
-  ctx.lineWidth = 0.5;
-  ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.stroke();
-  // Short cross lines with gap in center
-  ctx.strokeStyle = "rgba(100,200,255,0.5)";
-  ctx.lineWidth = 0.7;
-  ctx.beginPath();
-  ctx.moveTo(cx - 50, cy); ctx.lineTo(cx - 8, cy);
-  ctx.moveTo(cx + 8, cy); ctx.lineTo(cx + 50, cy);
-  ctx.moveTo(cx, cy - 50); ctx.lineTo(cx, cy - 8);
-  ctx.moveTo(cx, cy + 8); ctx.lineTo(cx, cy + 50);
-  ctx.stroke();
-  // Mil-dots along crosshairs
-  for (var i = 1; i <= 2; i++) {
-    var d = i * 18;
-    ctx.fillStyle = "rgba(100,200,255,0.35)";
-    ctx.beginPath(); ctx.arc(cx + d, cy, 1.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx - d, cy, 1.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx, cy + d, 1.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx, cy - d, 1.2, 0, Math.PI*2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
 }
 
 // ===== 2.16: DEATH CAM =====
