@@ -343,7 +343,7 @@ const VISION_CONE_ANGLE = Math.PI * 0.85;  // ~117° total cone width (58° each
 const VISION_CONE_RANGE = 1200;             // How far the cone reaches (screen px)
 const VISION_NEAR_RADIUS = 80;            // Small peripheral circle around player
 const VISION_DARKNESS = 0.95;              // Opacity of darkness outside vision
-const VISION_BLUR = 60;                    // Blur radius (px) for soft edges
+const VISION_BLUR = 25;                    // Blur radius (px) for soft cone edges
 let _visionCanvas = null;  // darkness mask
 let _visionCtx = null;
 let _visionLightCanvas = null;  // light shape (blurred then used to punch darkness)
@@ -5377,25 +5377,12 @@ function render() {
     const vc = _visionCtx;
     const lc = _visionLightCtx;
 
-    // --- Step 0: Compute visibility polygon and clip the light canvas ---
+    // --- Step 0: Compute visibility polygon ---
     var visPoly = computeVisibilityPolygon(predictedX, predictedY, VISION_CONE_RANGE / CAMERA_SCALE + 100);
 
-    // --- Step 1: Draw sharp vision shape on the light canvas (white on transparent) ---
+    // --- Step 1: Draw vision shape on light canvas (no clip — masking after blur) ---
     lc.clearRect(0, 0, cw, ch);
     lc.globalCompositeOperation = 'source-over';
-
-    // Clip to visibility polygon so light doesn't pass through walls
-    if (visPoly.length > 2) {
-      lc.save();
-      lc.beginPath();
-      var vp0 = visPoly[0];
-      lc.moveTo((vp0.x - cameraX) * CAMERA_SCALE, (vp0.y - cameraY) * CAMERA_SCALE);
-      for (var vi = 1; vi < visPoly.length; vi++) {
-        lc.lineTo((visPoly[vi].x - cameraX) * CAMERA_SCALE, (visPoly[vi].y - cameraY) * CAMERA_SCALE);
-      }
-      lc.closePath();
-      lc.clip();
-    }
 
     // 1a. Peripheral circle around player
     var nearGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_NEAR_RADIUS);
@@ -5421,15 +5408,33 @@ function render() {
     lc.closePath();
     lc.fill();
 
-    // Restore clip so blur operates on the full canvas
-    if (visPoly.length > 2) lc.restore();
-
-    // --- Step 2: Blur the light shape for smooth edges ---
+    // --- Step 2: Blur the light shape for soft cone edges ---
     lc.filter = 'blur(' + VISION_BLUR + 'px)';
-    lc.globalCompositeOperation = 'copy';  // replace contents with blurred version
+    lc.globalCompositeOperation = 'copy';
     lc.drawImage(_visionLightCanvas, 0, 0);
     lc.filter = 'none';
     lc.globalCompositeOperation = 'source-over';
+
+    // --- Step 2b: Hard-mask light to (visibility polygon ∪ peripheral circle) ---
+    // Erases blur that leaked past wall edges. Peripheral circle union ensures
+    // player always sees immediate surroundings, even in tight corners.
+    if (visPoly.length > 2) {
+      lc.globalCompositeOperation = 'destination-in';
+      lc.beginPath();
+      // Sub-path 1: visibility polygon (hard shadow boundary)
+      var vp0 = visPoly[0];
+      lc.moveTo((vp0.x - cameraX) * CAMERA_SCALE, (vp0.y - cameraY) * CAMERA_SCALE);
+      for (var vi = 1; vi < visPoly.length; vi++) {
+        lc.lineTo((visPoly[vi].x - cameraX) * CAMERA_SCALE, (visPoly[vi].y - cameraY) * CAMERA_SCALE);
+      }
+      lc.closePath();
+      // Sub-path 2: peripheral circle (always visible — fixes corner blindness)
+      lc.moveTo(plrSX + VISION_NEAR_RADIUS + VISION_BLUR, plrSY);
+      lc.arc(plrSX, plrSY, VISION_NEAR_RADIUS + VISION_BLUR, 0, Math.PI * 2);
+      lc.fillStyle = '#fff';
+      lc.fill();
+      lc.globalCompositeOperation = 'source-over';
+    }
 
     // --- Step 3: Build final darkness mask ---
     vc.clearRect(0, 0, cw, ch);
