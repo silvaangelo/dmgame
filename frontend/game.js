@@ -702,6 +702,7 @@ let killFeedEntries = [];
 let gridCanvas = null;
 let gridPatternCache = null;
 let wallLookup = null;       // Set of "x,y" strings for fast wall neighbor checks
+let wallSegments = [];       // Pre-computed exterior wall edge segments for shadow casting
 let mapDecorations = [];     // Visual-only plant/prop decorations
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
@@ -2347,6 +2348,7 @@ function enterGame(data) {
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
   if (data.maxHp) maxHp = data.maxHp;
+  computeWallSegments();
 
   _cachedDOM = null;
   gameReady = true;
@@ -3191,6 +3193,7 @@ function connect() {
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
       if (data.maxHp) maxHp = data.maxHp;
+      computeWallSegments();
 
       // Update shortId map
       if (data.shortIdMap) {
@@ -4258,6 +4261,159 @@ function generateMapDecorations() {
   }
 }
 
+// ============ SHADOW CASTING: 2D RAYCASTING FOR LINE-OF-SIGHT ============
+
+/** Pre-compute merged exterior wall edge segments from gameObstacles + arena boundary. */
+function computeWallSegments() {
+  var bs = 40; // block size
+  var occupied = new Set();
+  for (var i = 0; i < gameObstacles.length; i++) {
+    var o = gameObstacles[i];
+    occupied.add(o.x + ',' + o.y);
+  }
+
+  // Collect raw exterior edges (horizontal and vertical separately)
+  var hEdges = []; // { x1, y, x2 } — horizontal edges (y is constant)
+  var vEdges = []; // { x, y1, y2 } — vertical edges (x is constant)
+
+  for (var i = 0; i < gameObstacles.length; i++) {
+    var o = gameObstacles[i];
+    var ox = o.x, oy = o.y;
+    // North edge: no wall above
+    if (!occupied.has(ox + ',' + (oy - bs))) hEdges.push({ x1: ox, x2: ox + bs, y: oy, groupId: o.groupId });
+    // South edge: no wall below
+    if (!occupied.has(ox + ',' + (oy + bs))) hEdges.push({ x1: ox, x2: ox + bs, y: oy + bs, groupId: o.groupId });
+    // West edge: no wall to the left
+    if (!occupied.has((ox - bs) + ',' + oy)) vEdges.push({ x: ox, y1: oy, y2: oy + bs, groupId: o.groupId });
+    // East edge: no wall to the right
+    if (!occupied.has((ox + bs) + ',' + oy)) vEdges.push({ x: ox + bs, y1: oy, y2: oy + bs, groupId: o.groupId });
+  }
+
+  // Merge colinear horizontal edges sharing same y and groupId
+  hEdges.sort(function(a, b) { return a.y - b.y || a.x1 - b.x1; });
+  var mergedH = [];
+  for (var i = 0; i < hEdges.length; i++) {
+    var e = hEdges[i];
+    if (mergedH.length > 0) {
+      var last = mergedH[mergedH.length - 1];
+      if (last.y === e.y && last.x2 === e.x1) {
+        last.x2 = e.x2;
+        continue;
+      }
+    }
+    mergedH.push({ x1: e.x1, x2: e.x2, y: e.y });
+  }
+
+  // Merge colinear vertical edges sharing same x and groupId
+  vEdges.sort(function(a, b) { return a.x - b.x || a.y1 - b.y1; });
+  var mergedV = [];
+  for (var i = 0; i < vEdges.length; i++) {
+    var e = vEdges[i];
+    if (mergedV.length > 0) {
+      var last = mergedV[mergedV.length - 1];
+      if (last.x === e.x && last.y2 === e.y1) {
+        last.y2 = e.y2;
+        continue;
+      }
+    }
+    mergedV.push({ x: e.x, y1: e.y1, y2: e.y2 });
+  }
+
+  // Convert to {x1,y1,x2,y2} segment format
+  var segs = [];
+  for (var i = 0; i < mergedH.length; i++) {
+    var e = mergedH[i];
+    segs.push({ x1: e.x1, y1: e.y, x2: e.x2, y2: e.y });
+  }
+  for (var i = 0; i < mergedV.length; i++) {
+    var e = mergedV[i];
+    segs.push({ x1: e.x, y1: e.y1, x2: e.x, y2: e.y2 });
+  }
+
+  // Add arena boundary segments
+  var aw = GAME_CONFIG.ARENA_WIDTH, ah = GAME_CONFIG.ARENA_HEIGHT;
+  segs.push({ x1: 0, y1: 0, x2: aw, y2: 0 });     // top
+  segs.push({ x1: aw, y1: 0, x2: aw, y2: ah });    // right
+  segs.push({ x1: aw, y1: ah, x2: 0, y2: ah });    // bottom
+  segs.push({ x1: 0, y1: ah, x2: 0, y2: 0 });      // left
+
+  wallSegments = segs;
+}
+
+/** Compute visibility polygon from (px,py) using raycasting against wallSegments. */
+function computeVisibilityPolygon(px, py, maxRange) {
+  // Filter to nearby segments (broad-phase)
+  var margin = maxRange + 80;
+  var nearSegs = [];
+  for (var i = 0; i < wallSegments.length; i++) {
+    var s = wallSegments[i];
+    // AABB of segment
+    var minX = s.x1 < s.x2 ? s.x1 : s.x2;
+    var maxX = s.x1 > s.x2 ? s.x1 : s.x2;
+    var minY = s.y1 < s.y2 ? s.y1 : s.y2;
+    var maxY = s.y1 > s.y2 ? s.y1 : s.y2;
+    // Check if segment AABB is within range of player
+    if (maxX < px - margin || minX > px + margin) continue;
+    if (maxY < py - margin || minY > py + margin) continue;
+    nearSegs.push(s);
+  }
+
+  // Collect unique vertices from nearby segments
+  var vertSet = new Set();
+  var vertices = [];
+  for (var i = 0; i < nearSegs.length; i++) {
+    var s = nearSegs[i];
+    var k1 = s.x1 + ',' + s.y1;
+    var k2 = s.x2 + ',' + s.y2;
+    if (!vertSet.has(k1)) { vertSet.add(k1); vertices.push(s.x1, s.y1); }
+    if (!vertSet.has(k2)) { vertSet.add(k2); vertices.push(s.x2, s.y2); }
+  }
+
+  // Cast rays: for each vertex, cast 3 rays (direct, +epsilon, -epsilon)
+  var eps = 0.00015;
+  var rays = [];
+  for (var i = 0; i < vertices.length; i += 2) {
+    var vx = vertices[i], vy = vertices[i + 1];
+    var ang = Math.atan2(vy - py, vx - px);
+    rays.push(ang - eps, ang, ang + eps);
+  }
+
+  // Also add rays at regular intervals around the max-range circle for smooth far edges
+  var stepCount = 48;
+  for (var i = 0; i < stepCount; i++) {
+    rays.push(-Math.PI + (2 * Math.PI * i / stepCount));
+  }
+
+  // For each ray angle, find closest intersection with all nearby segments
+  var points = [];
+  var mr2 = maxRange * maxRange;
+  for (var r = 0; r < rays.length; r++) {
+    var ang = rays[r];
+    var dx = Math.cos(ang);
+    var dy = Math.sin(ang);
+    // Default: max range
+    var closestT = maxRange;
+    for (var si = 0; si < nearSegs.length; si++) {
+      var seg = nearSegs[si];
+      var ex = seg.x2 - seg.x1;
+      var ey = seg.y2 - seg.y1;
+      var denom = dx * ey - dy * ex;
+      if (denom === 0) continue; // parallel
+      var t2 = (dx * (seg.y1 - py) - dy * (seg.x1 - px)) / denom;
+      if (t2 < 0 || t2 > 1) continue; // outside segment
+      var t1 = (ex * (py - seg.y1) - ey * (px - seg.x1)) / (-denom);
+      if (t1 > 0 && t1 < closestT) closestT = t1;
+    }
+    var hx = px + dx * closestT;
+    var hy = py + dy * closestT;
+    points.push({ x: hx, y: hy, ang: ang });
+  }
+
+  // Sort by angle
+  points.sort(function(a, b) { return a.ang - b.ang; });
+  return points;
+}
+
 // Update interpolated positions for smooth movement
 // 1.3: Delta-time interpolation (frame-rate independent)
 function updateInterpolation() {
@@ -5221,9 +5377,25 @@ function render() {
     const vc = _visionCtx;
     const lc = _visionLightCtx;
 
+    // --- Step 0: Compute visibility polygon and clip the light canvas ---
+    var visPoly = computeVisibilityPolygon(predictedX, predictedY, VISION_CONE_RANGE / CAMERA_SCALE + 100);
+
     // --- Step 1: Draw sharp vision shape on the light canvas (white on transparent) ---
     lc.clearRect(0, 0, cw, ch);
     lc.globalCompositeOperation = 'source-over';
+
+    // Clip to visibility polygon so light doesn't pass through walls
+    if (visPoly.length > 2) {
+      lc.save();
+      lc.beginPath();
+      var vp0 = visPoly[0];
+      lc.moveTo((vp0.x - cameraX) * CAMERA_SCALE, (vp0.y - cameraY) * CAMERA_SCALE);
+      for (var vi = 1; vi < visPoly.length; vi++) {
+        lc.lineTo((visPoly[vi].x - cameraX) * CAMERA_SCALE, (visPoly[vi].y - cameraY) * CAMERA_SCALE);
+      }
+      lc.closePath();
+      lc.clip();
+    }
 
     // 1a. Peripheral circle around player
     var nearGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_NEAR_RADIUS);
@@ -5248,6 +5420,9 @@ function render() {
     lc.arc(plrSX, plrSY, VISION_CONE_RANGE, aimAng - halfArc, aimAng + halfArc);
     lc.closePath();
     lc.fill();
+
+    // Restore clip so blur operates on the full canvas
+    if (visPoly.length > 2) lc.restore();
 
     // --- Step 2: Blur the light shape for smooth edges ---
     lc.filter = 'blur(' + VISION_BLUR + 'px)';
