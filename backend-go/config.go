@@ -216,10 +216,10 @@ var GameConfig = struct {
 	// Zombie infestation random event
 	ZombiesPerPlayer:      30,
 	ZombieHP:              28,
-	ZombieSpeed:           7.0, // slower than players so they can be kited
+	ZombieSpeed:           4.0, // slower than players so they can be kited
 	ZombieRadius:          18,
 	ZombieAttackRange:     40,
-	ZombieAttackDamage:    9,
+	ZombieAttackDamage:    5,
 	ZombieAttackCooldown:  1000,
 	ZombieColorVariants:   5,
 	ZombieSpawnDuration:   1500,
