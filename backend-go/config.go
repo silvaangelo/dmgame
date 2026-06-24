@@ -214,7 +214,7 @@ var GameConfig = struct {
 	ReaperKnockbackPerHit:  2.2,
 	ReaperKnockbackMax:     14.0,
 	// Zombie infestation random event
-	ZombiesPerPlayer:      12,
+	ZombiesPerPlayer:      30,
 	ZombieHP:              28,
 	ZombieSpeed:           7.0, // slower than players so they can be kited
 	ZombieRadius:          18,
