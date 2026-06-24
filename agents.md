@@ -43,6 +43,8 @@ Per player:  [shortId u16LE][x f32LE][y f32LE][hp i8][shots u8]  (25 bytes each)
              [weaponCode u8][kills u16LE][skin u8]
 Per bullet:  [bulletCount u16LE] header, then per bullet:          (11 bytes each)
              [shortId u16LE][x i16LE][y i16LE][weaponCode u8][angle f32LE]
+Reaper:      present only when flags bit0 (0x01) is set:           (17 bytes)
+             [x f32LE][y f32LE][hp u16LE][maxHp u16LE][facing f32LE][state u8]
 ```
 
 Weapon codes: `0=machinegun 1=shotgun 4=sniper`
@@ -78,6 +80,7 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 | `game.go`     | Game loop, physics, collision resolution, viewport    | `updateGame()`, `resolveCollisions()`, `startGameLoop()` |
 | `combat.go`   | Shooting, reload, muzzle/head position, kill handling | `shoot()`, `reloadWeapon()`, `handleKill()`       |
 | `round.go`    | Round timer, reset, player join/leave, respawn        | `startRoundTimer()`, `endRound()`, `addPlayerToGame()` |
+| `reaper.go`   | Grim Reaper boss random event (spawn, AI, combat)     | `maybeRollReaperSpawn()`, `updateReaper()`, `onReaperDefeated()` |
 | `maps.go`     | Hand-designed map definitions, obstacle generation    | `PickRandomMap()`, `GenerateObstaclesFromMap()`   |
 | `types.go`    | All type definitions                                  | `Player`, `Bullet`, `Game`, `Obstacle`, …         |
 | `config.go`   | All game constants                                    | `GameConfig`, `WeaponCycle`                       |
@@ -116,6 +119,32 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 1. Define the event in the backend where it occurs (e.g., `combat.go`, `round.go`)
 2. Call `broadcast(game, map[string]interface{}{"type": "myEvent", ...})` to send it
 3. Handle in `frontend/game.js` → `ws.onmessage` handler with `if (data.type === "myEvent")`
+
+### The Grim Reaper Random Event
+
+The Reaper is a server-authoritative boss that can spawn mid-round (see `reaper.go`).
+
+- **Spawn:** `maybeRollReaperSpawn()` is rolled each round tick once match time exceeds
+  `ReaperMinMatchTime` and at least `ReaperMinPlayers` are alive. Probability ramps with
+  elapsed time (`ReaperSpawnChanceBase` → `ReaperSpawnChanceMax`), at most once per round
+  (`Game.ReaperDoneThisRound`).
+- **Scaling:** HP and melee damage scale with alive player count
+  (`ReaperBaseHP`/`ReaperHPPerPlayer`, `ReaperAttackBaseDamage`/`ReaperAttackDmgPerPlr`).
+- **While active (`Game.ReaperActive`):** PvP and auto-respawn are gated off in `game.go`;
+  dead players spectate. Bullets damage the Reaper (`reaperTakeDamage`, capped knockback) and
+  do not hurt players.
+- **Resolution:** total wipe → `checkReaperWipe()` → `endRoundInternal(game, true)` (shared
+  game over, winner "☠ The Reaper"). Defeat → `onReaperDefeated()` revives players who died
+  during the fight and awards +1 to every alive player except the current leader.
+- **Wire format:** the Reaper rides on the binary state frame — set flags bit0 (`flagReaperPresent`)
+  and append the 17-byte block in `protocol.go` → `EncodeBinaryState()`, parsed in
+  `frontend/game.js` → `parseBinaryState()`. Events (`reaperSpawn`, `reaperAttack`, `reaperHit`,
+  `reaperDefeated`, plus `kill` with weapon `"reaper"`) are msgpack broadcasts handled in
+  `ws.onmessage`. Round reset clears all reaper state in `resetPersistentRound`.
+
+To add another random event, mirror this structure: a roll under `game.mu`, a state machine in
+its own file, gating flags on `Game`, a binary or msgpack channel for client rendering, and a
+full reset in `resetPersistentRound`.
 
 ### Changing Arena Size
 

@@ -161,9 +161,6 @@ func GenerateObstaclesFromMap(m MapDef) []*Obstacle {
 			rows = 1
 		}
 
-		// 1.14: Mark single-block-thick walls as thin (allow bullet penetration)
-		isThin := (cols == 1 || rows == 1)
-
 		groupID := nextEntityID()
 
 		for r := 0; r < rows; r++ {
@@ -175,7 +172,6 @@ func GenerateObstaclesFromMap(m MapDef) []*Obstacle {
 					Size:    BlockSize,
 					Type:    "wall",
 					GroupID: groupID,
-					Thin:    isThin,
 				})
 			}
 		}

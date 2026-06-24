@@ -27,6 +27,10 @@ const (
 	playerBytes  = 35 // +9 bytes: VX(4) + VY(4) + flags(1)
 	bulletBytes  = 11
 	grenadeBytes = 12 // shortId(2) + x(2) + y(2) + type(1) + aimAngle(4) + fuseProgress(1)
+	reaperBytes  = 17 // x(4) + y(4) + hp(2) + maxHp(2) + facing(4) + state(1)
+
+	// Header flags bits
+	flagReaperPresent = 0x01
 )
 
 // Weapon code mapping
@@ -48,6 +52,7 @@ type BinaryStateInput struct {
 	Players  []*Player
 	Bullets  []*Bullet
 	Grenades []*Grenade
+	Reaper   *Reaper // nil when no boss event is active
 }
 
 // EncodeBinaryState encodes a per-player state snapshot into compact binary.
@@ -56,6 +61,9 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 		len(input.Players)*playerBytes +
 		2 + len(input.Bullets)*bulletBytes +
 		2 + len(input.Grenades)*grenadeBytes
+	if input.Reaper != nil {
+		totalSize += reaperBytes
+	}
 
 	buf := make([]byte, totalSize)
 	off := 0
@@ -63,7 +71,11 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 	// Header
 	buf[off] = binaryMarker
 	off++
-	buf[off] = 0 // flags (reserved)
+	var headerFlags uint8 = 0
+	if input.Reaper != nil {
+		headerFlags |= flagReaperPresent
+	}
+	buf[off] = headerFlags
 	off++
 	binary.LittleEndian.PutUint32(buf[off:], input.Seq)
 	off += 4
@@ -184,6 +196,27 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 			progress = 1
 		}
 		buf[off] = byte(progress * 255)
+		off++
+	}
+
+	// Reaper (optional — only present when flagReaperPresent is set)
+	if input.Reaper != nil {
+		r := input.Reaper
+		putFloat32LE(buf[off:], float32(r.X))
+		off += 4
+		putFloat32LE(buf[off:], float32(r.Y))
+		off += 4
+		hp := r.HP
+		if hp < 0 {
+			hp = 0
+		}
+		binary.LittleEndian.PutUint16(buf[off:], uint16(hp))
+		off += 2
+		binary.LittleEndian.PutUint16(buf[off:], uint16(r.MaxHP))
+		off += 2
+		putFloat32LE(buf[off:], float32(r.Facing))
+		off += 4
+		buf[off] = byte(r.State)
 		off++
 	}
 

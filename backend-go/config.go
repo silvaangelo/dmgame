@@ -81,6 +81,25 @@ var GameConfig = struct {
 	PenetrationDamageMult float64
 	// Respawn shimmer
 	RespawnShimmerDuration int64
+	// Grim Reaper random event
+	ReaperMinMatchTime     int64   // ms into match before the event can trigger
+	ReaperSpawnChanceBase  float64 // per-second spawn probability right after MinMatchTime
+	ReaperSpawnChanceRamp  float64 // added to probability for each extra second elapsed
+	ReaperSpawnChanceMax   float64 // cap on per-second spawn probability
+	ReaperMinPlayers       int     // minimum alive players required to trigger
+	ReaperBaseHP           int     // base HP (1 player)
+	ReaperHPPerPlayer      int     // extra HP per additional alive player
+	ReaperSpeed            float64 // movement speed per tick (much faster than players)
+	ReaperRadius           float64 // collision/body radius
+	ReaperAttackRange      float64 // distance within which it can melee
+	ReaperAttackBaseDamage int     // base melee damage (1 player)
+	ReaperAttackDmgPerPlr  int     // extra melee damage per additional alive player
+	ReaperAttackCooldown   int64   // ms between melee swings
+	ReaperAttackWindup     int64   // ms telegraph before a swing lands
+	ReaperSpawnDuration    int64   // ms telegraph/fade-in before it becomes active
+	ReaperDeathDuration    int64   // ms death animation before cleanup
+	ReaperKnockbackPerHit  float64 // velocity added per bullet hit
+	ReaperKnockbackMax     float64 // cap on accumulated knockback velocity
 }{
 	TickRate:        40,
 	MaxPlayers:      10,
@@ -159,6 +178,25 @@ var GameConfig = struct {
 	PenetrationDamageMult:  0.4,
 	// Respawn shimmer
 	RespawnShimmerDuration: 1500,
+	// Grim Reaper random event
+	ReaperMinMatchTime:     10000, // 10s
+	ReaperSpawnChanceBase:  0.05, // ~5% per second right after 10s
+	ReaperSpawnChanceRamp:  0.0015, // grows the longer the round runs
+	ReaperSpawnChanceMax:   0.20,  // capped at 20% per second
+	ReaperMinPlayers:       2,
+	ReaperBaseHP:           900,
+	ReaperHPPerPlayer:      650,
+	ReaperSpeed:            19.0, // ~1.8x player speed
+	ReaperRadius:           30,
+	ReaperAttackRange:      62,
+	ReaperAttackBaseDamage: 55,
+	ReaperAttackDmgPerPlr:  12,
+	ReaperAttackCooldown:   850,
+	ReaperAttackWindup:     260,
+	ReaperSpawnDuration:    2500, // matches the start sound length
+	ReaperDeathDuration:    1200,
+	ReaperKnockbackPerHit:  2.2,
+	ReaperKnockbackMax:     14.0,
 }
 
 // WeaponCycle is the order of weapons when cycling.

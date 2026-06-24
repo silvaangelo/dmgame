@@ -45,6 +45,21 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ===== VIEW TRANSITIONS (start <-> game, death, round end) ===== */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 /* ===== CANVAS (fullscreen) ===== */
 canvas {
   position: fixed;
@@ -122,6 +137,18 @@ canvas {
 #startBox input:focus {
   border-color: #ff6b35;
   box-shadow: 0 0 15px rgba(255, 107, 53, 0.2);
+}
+
+#startBox input.input-error {
+  border-color: #ff5555;
+  box-shadow: 0 0 12px rgba(255, 85, 85, 0.45);
+  animation: inputErrorShake 0.35s ease-out;
+}
+
+@keyframes inputErrorShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
 }
 
 #startBox input::placeholder {

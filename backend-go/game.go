@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"time"
 )
 
@@ -239,8 +238,10 @@ func updateGame(game *Game) []playerStateSnapshot {
 	}
 
 	// ── Auto-respawn dead players after configured respawn time ──
+	// Suspended while the Grim Reaper event is active: the fallen stay down
+	// until the boss is defeated (which revives them) or the team is wiped.
 	for _, player := range game.Players {
-		if player.WaitingForRespawn && player.DeathTime > 0 {
+		if player.WaitingForRespawn && player.DeathTime > 0 && !game.ReaperActive {
 			if now-player.DeathTime >= GameConfig.RespawnTime {
 				respawnPlayer(player, game)
 			}
@@ -249,6 +250,14 @@ func updateGame(game *Game) []playerStateSnapshot {
 		if player.ThrowingGrenade && now-player.ThrowStartTime > 500 {
 			player.ThrowingGrenade = false
 		}
+	}
+
+	// ── Grim Reaper boss event ──
+	updateReaper(game, now)
+	if game.RoundEnded || game.ReaperWipePending {
+		// A team wipe ended the event mid-tick; the game loop ends the round
+		// after releasing game.mu. Stop here.
+		return nil
 	}
 
 	// ── Bullet physics ──
@@ -281,46 +290,50 @@ func updateGame(game *Game) []playerStateSnapshot {
 		nearbyObs := globalObstacleGrid.QueryRect(sweptMinX, sweptMinY, sweptW, sweptH)
 		hitObstacle := false
 		var hitX, hitY float64
-		var hitThinWall bool
 		for _, e := range nearbyObs {
 			o := e.Data.(*Obstacle)
 			if segmentIntersectsAABB(prevX, prevY, bullet.X, bullet.Y, o.X, o.Y, o.X+o.Size, o.Y+o.Size) {
 				hitObstacle = true
-				hitThinWall = o.Thin
 				hitX = clamp(bullet.X, o.X, o.X+o.Size)
 				hitY = clamp(bullet.Y, o.Y, o.Y+o.Size)
 				break
 			}
 		}
 		if hitObstacle {
-			// 1.14: Bullet penetration — thin walls allow pass-through with 60% damage loss
-			if hitThinWall && bullet.Penetrated == 0 {
-				bullet.Penetrated++
-				bullet.Damage = int(float64(bullet.Damage) * 0.4) // 60% loss
-				if bullet.Damage < 1 {
-					bullet.Damage = 1
+			bulletRemoved[bi] = true
+			broadcast(game, map[string]interface{}{
+				"type": "bulletHitWall",
+				"x":    int(math.Round(hitX)),
+				"y":    int(math.Round(hitY)),
+			})
+			continue
+		}
+
+		// ── Grim Reaper hit detection ──
+		// While the event is active, bullets damage the boss (and never players).
+		if game.Reaper != nil {
+			r := game.Reaper
+			if segmentHitsCircle(prevX, prevY, bullet.X, bullet.Y, r.X, r.Y, r.Radius) {
+				if reaperTakeDamage(game, bullet.Damage, bullet.DX, bullet.DY) {
+					bulletRemoved[bi] = true
+					broadcast(game, map[string]interface{}{
+						"type": "reaperHit",
+						"x":    int(math.Round(bullet.X)),
+						"y":    int(math.Round(bullet.Y)),
+						"hp":   r.HP,
+						"maxHp": r.MaxHP,
+					})
+					if game.RoundEnded {
+						return nil
+					}
+					continue
 				}
-				// Slight spread increase after penetration
-				spreadAngle := (rand.Float64() - 0.5) * 0.08
-				cos := math.Cos(spreadAngle)
-				sin := math.Sin(spreadAngle)
-				bullet.DX, bullet.DY = bullet.DX*cos-bullet.DY*sin, bullet.DX*sin+bullet.DY*cos
-				// Broadcast wallbang event for visual feedback
-				broadcast(game, map[string]interface{}{
-					"type": "bulletHitWall",
-					"x":    int(math.Round(hitX)),
-					"y":    int(math.Round(hitY)),
-				})
-				// Don't remove bullet — it continues through
-			} else {
-				bulletRemoved[bi] = true
-				broadcast(game, map[string]interface{}{
-					"type": "bulletHitWall",
-					"x":    int(math.Round(hitX)),
-					"y":    int(math.Round(hitY)),
-				})
-				continue
 			}
+		}
+
+		// While the reaper event is active, players cannot damage each other.
+		if game.ReaperActive {
+			continue
 		}
 
 		// Player hit detection
@@ -489,6 +502,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 			Players:  visPlayers,
 			Bullets:  visBullets,
 			Grenades: visGrenades,
+			Reaper:   game.Reaper,
 		})
 
 		snapshots = append(snapshots, playerStateSnapshot{player: viewer, data: buf})
@@ -630,7 +644,14 @@ func startGameLoop(game *Game) {
 				if game.Started {
 					snapshots = updateGame(game)
 				}
+				wipe := game.ReaperWipePending
+				game.ReaperWipePending = false
 				game.mu.Unlock()
+				// End the round (Reaper wiped the team) outside the game lock —
+				// endRoundInternal acquires game.mu itself.
+				if wipe {
+					endRoundInternal(game, true)
+				}
 				// Send binary state frames OUTSIDE the game lock so a slow
 				// client can never stall the game loop.
 				for _, snap := range snapshots {

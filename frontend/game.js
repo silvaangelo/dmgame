@@ -13,6 +13,8 @@ var myShortId = 0;
 
 var BINARY_MARKER = 0x42;
 var BINARY_WEAPON_MAP = { 0: "machinegun", 1: "shotgun", 4: "sniper" };
+// Grenade type codes (must match backend grenadeTypeCodes in protocol.go)
+var GRENADE_TYPE_MAP = { 0: "grenade", 1: "flashbang" };
 
 function isBinaryState(buf) {
   if (!(buf instanceof ArrayBuffer) || buf.byteLength < 8) return false;
@@ -97,11 +99,24 @@ function parseBinaryState(buf) {
     }
   }
 
+  // Reaper (optional — present only when header flag bit0 is set)
+  var parsedReaper = null;
+  if ((flags & 0x01) && off + 17 <= dv.byteLength) {
+    var rx = dv.getFloat32(off, true); off += 4;
+    var ry = dv.getFloat32(off, true); off += 4;
+    var rhp = dv.getUint16(off, true); off += 2;
+    var rmax = dv.getUint16(off, true); off += 2;
+    var rfacing = dv.getFloat32(off, true); off += 4;
+    var rstate = dv.getUint8(off); off += 1;
+    parsedReaper = { x: rx, y: ry, hp: rhp, maxHp: rmax, facing: rfacing, state: rstate };
+  }
+
   return {
     seq: seq,
     players: parsedPlayers,
     bullets: parsedBullets,
     grenades: parsedGrenades,
+    reaper: parsedReaper,
   };
 }
 
@@ -116,6 +131,9 @@ function handleBinaryState(buf) {
   var parsedPlayers = s.players;
   var parsedBullets = s.bullets;
   grenades = s.grenades || [];
+
+  // ── Grim Reaper boss state ──
+  updateReaperFromState(s.reaper);
 
   // Death/damage detection
   parsedPlayers.forEach(function(p) {
@@ -337,17 +355,6 @@ const CAMERA_SCALE_DEFAULT = 1.1;
 const CAMERA_SCALE_SNIPER = CAMERA_SCALE_DEFAULT * 0.75; // 25% zoom out for sniper
 let _cameraInitialized = false;
 
-// Vision funnel: directional cone in the aim direction + small peripheral circle.
-// Everything outside is 95% dark. Edges are smoothed with a canvas blur filter.
-const VISION_CONE_ANGLE = Math.PI * 0.85;  // ~117° total cone width (58° each side)
-const VISION_CONE_RANGE = 1200;             // How far the cone reaches (screen px)
-const VISION_NEAR_RADIUS = 80;            // Small peripheral circle around player
-const VISION_DARKNESS = 0.95;              // Opacity of darkness outside vision
-const VISION_BLUR = 25;                    // Blur radius (px) for soft cone edges
-let _visionCanvas = null;  // darkness mask
-let _visionCtx = null;
-let _visionLightCanvas = null;  // light shape (blurred then used to punch darkness)
-let _visionLightCtx = null;
 
 // ===== OBJECT POOLING & IN-PLACE COMPACTION =====
 // Avoid GC pressure from creating new arrays every frame with .filter()
@@ -433,6 +440,14 @@ var spritesLoaded = false;
   spriteFlashbang.src = "assets/sprites/flashbang.png";
 })();
 
+// Grim Reaper boss sprite — a 2-pose sheet (left = attack/scythe-raised,
+// right = walk/scythe-lowered). Loaded independently; frame width is derived
+// from naturalWidth/2 at draw time so no dimensions are hardcoded.
+var spriteReaper = new Image();
+var spriteReaperLoaded = false;
+spriteReaper.onload = function () { spriteReaperLoaded = true; };
+spriteReaper.src = "assets/sprites/grim-reaper.png";
+
 // Pixel art texture sprite sheets
 var txGrass = new Image();
 var txWall = new Image();
@@ -496,17 +511,19 @@ function getMuzzlePosition(px, py, angle, weapon) {
   };
 }
 
-// Client-side muzzle-wall check — mirrors server's muzzleBlockedByWall().
-// Steps along the line from player center to muzzle tip and checks if any
-// point intersects an obstacle. Prevents "ghost shots" where the client
-// fires effects but the server refunds the bullet.
-function isMuzzleBlockedByWall(px, py, mx, my) {
+// Client-side muzzle-wall clamp — mirrors server's clampMuzzleToWall().
+// Steps along the line from player center to the muzzle tip; if a wall is hit,
+// returns the last clear point before it, otherwise the full muzzle point. This
+// keeps the bullet spawn origin identical to the server so shots near a wall
+// never clip it on one side while clearing it on the other.
+function clampMuzzleToWall(px, py, mx, my) {
   var dx = mx - px;
   var dy = my - py;
   var dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < 1) return false;
+  if (dist < 1) return { x: mx, y: my };
   var stepSize = 10;
   var steps = Math.ceil(dist / stepSize);
+  var lastClearX = px, lastClearY = py;
   for (var si = 1; si <= steps; si++) {
     var t = si / steps;
     var sx = px + dx * t;
@@ -515,11 +532,13 @@ function isMuzzleBlockedByWall(px, py, mx, my) {
       var o = gameObstacles[oi];
       if (o.destroyed) continue;
       if (sx >= o.x && sx <= o.x + o.size && sy >= o.y && sy <= o.y + o.size) {
-        return true;
+        return { x: lastClearX, y: lastClearY };
       }
     }
+    lastClearX = sx;
+    lastClearY = sy;
   }
-  return false;
+  return { x: mx, y: my };
 }
 
 // Get head world position given player center, aim angle, and weapon
@@ -551,6 +570,7 @@ const WEAPON_KILL_ICONS = {
   sniper: "🎯",
   grenade: "💣",
   flashbang: "💥",
+  reaper: "☠",
 };
 
 let ws;
@@ -617,7 +637,335 @@ let grenadeExplosions = []; // client-side explosion effects
 let grenadeDebris = []; // debris particles from explosions
 let flashbangOverlay = { alpha: 0, decay: 0.97 }; // white flash overlay
 let grenadeRedPulse = { alpha: 0, decay: 0.95 }; // red pulse overlay for HE
-var GRENADE_TYPE_MAP = { 0: "grenade", 1: "flashbang" };
+
+// ===== GRIM REAPER BOSS EVENT STATE =====
+// Reaper state constants mirror the backend ReaperState enum.
+const REAPER_SPAWNING = 0;
+const REAPER_CHASING = 1;
+const REAPER_ATTACKING = 2;
+const REAPER_DYING = 3;
+let reaper = null;            // { x, y, hp, maxHp, facing, state, dispX, dispY }
+let reaperActive = false;     // true between spawn and defeat/wipe (drives event UI)
+let prevReaperState = -1;     // for detecting state transitions
+let prevReaperHp = 0;         // for detecting damage flashes
+let reaperVignette = 0;       // 0..1 persistent dark vignette while event runs
+let reaperSlashes = [];       // melee swing arc effects
+let reaperSpawnFx = [];       // spawn telegraph rings
+let reaperDeathFx = [];       // death dissolve particles
+let reaperBannerTime = 0;     // ms timestamp of the last big banner (for fade)
+let reaperBanner = null;      // { text, color, time } center-screen announcement
+
+// Apply a parsed reaper snapshot (or null) to client state, smoothing motion
+// and firing client-side effects on spawn/death/hit transitions.
+function updateReaperFromState(rp) {
+  if (!rp) {
+    // No reaper in the frame. If we had one mid-fight that vanished without a
+    // death (e.g. round reset), clear it.
+    if (reaper && reaper.state !== REAPER_DYING) {
+      reaper = null;
+      reaperActive = false;
+    }
+    return;
+  }
+
+  if (!reaper) {
+    // First frame of a new reaper — initialise interpolated display position.
+    reaper = { x: rp.x, y: rp.y, hp: rp.hp, maxHp: rp.maxHp, facing: rp.facing, state: rp.state, dispX: rp.x, dispY: rp.y };
+    prevReaperState = rp.state;
+    prevReaperHp = rp.hp;
+  }
+
+  // Damage flash: HP dropped between frames.
+  if (rp.hp < prevReaperHp) {
+    createBlood(rp.x, rp.y);
+    for (var i = 0; i < 3; i++) createImpactSparks(rp.x, rp.y);
+  }
+
+  // State transition: just started dying.
+  if (rp.state === REAPER_DYING && prevReaperState !== REAPER_DYING) {
+    createReaperDeathFx(rp.x, rp.y);
+  }
+
+  reaper.x = rp.x;
+  reaper.y = rp.y;
+  reaper.hp = rp.hp;
+  reaper.maxHp = rp.maxHp;
+  reaper.facing = rp.facing;
+  reaper.state = rp.state;
+  if (reaper.dispX === undefined) { reaper.dispX = rp.x; reaper.dispY = rp.y; }
+
+  prevReaperState = rp.state;
+  prevReaperHp = rp.hp;
+}
+
+// Smoothly interpolate the reaper's drawn position toward its server position.
+function updateReaperInterpolation() {
+  if (!reaper) return;
+  if (reaper.dispX === undefined) { reaper.dispX = reaper.x; reaper.dispY = reaper.y; }
+  reaper.dispX += (reaper.x - reaper.dispX) * 0.35;
+  reaper.dispY += (reaper.y - reaper.dispY) * 0.35;
+}
+
+// Draw the Grim Reaper boss (sprite, shadow, HP bar) in world space.
+function renderReaper() {
+  if (!reaper) return;
+  var rx = reaper.dispX !== undefined ? reaper.dispX : reaper.x;
+  var ry = reaper.dispY !== undefined ? reaper.dispY : reaper.y;
+  if (!isOnScreen(rx, ry)) return;
+  var now = Date.now();
+
+  // Fade-in flicker while spawning, faint while dying.
+  var alpha = 1;
+  if (reaper.state === REAPER_SPAWNING) {
+    alpha = 0.5 + 0.4 * Math.abs(Math.sin(now / 90));
+  } else if (reaper.state === REAPER_DYING) {
+    alpha = 0.45;
+  }
+
+  // Drop shadow
+  ctx.save();
+  ctx.globalAlpha = 0.35 * alpha;
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.ellipse(rx, ry + 24, 28, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Sprite (2-pose sheet: frame 0 = attack/scythe-raised, frame 1 = walk)
+  var drawn = false;
+  if (spriteReaperLoaded && spriteReaper.naturalWidth > 0) {
+    var fw = spriteReaper.naturalWidth / 2;
+    var fh = spriteReaper.naturalHeight;
+    var rh = 120;
+    var rw = rh * (fw / fh);
+    var frameIndex = (reaper.state === REAPER_ATTACKING) ? 0 : 1;
+    // Each pose has an opposite natural facing; flip so it faces its target.
+    var naturalLeft = (frameIndex === 1);
+    var faceLeft = Math.cos(reaper.facing) < 0;
+    var flip = (faceLeft !== naturalLeft);
+    var bob = (reaper.state === REAPER_CHASING) ? Math.sin(now / 110) * 2 : 0;
+    ctx.save();
+    ctx.translate(rx, ry);
+    if (flip) ctx.scale(-1, 1);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(spriteReaper, frameIndex * fw, 0, fw, fh, -rw / 2, -rh * 0.62 + bob, rw, rh);
+    ctx.restore();
+    drawn = true;
+  }
+  if (!drawn) {
+    // Fallback: dark hooded blob with red eyes
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#15151a";
+    ctx.beginPath();
+    ctx.arc(rx, ry, 30, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#cc1111";
+    ctx.beginPath();
+    ctx.arc(rx - 7, ry - 4, 3, 0, Math.PI * 2);
+    ctx.arc(rx + 7, ry - 4, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // HP bar + label (only once actually fighting)
+  if (reaper.state === REAPER_CHASING || reaper.state === REAPER_ATTACKING) {
+    var barW = 84, barH = 7;
+    var bx = rx - barW / 2, by = ry - 66;
+    var frac = Math.max(0, Math.min(1, reaper.hp / (reaper.maxHp || 1)));
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+    ctx.fillStyle = "#2a0a0a";
+    ctx.fillRect(bx, by, barW, barH);
+    var grad = ctx.createLinearGradient(bx, 0, bx + barW, 0);
+    grad.addColorStop(0, "#ff2a2a");
+    grad.addColorStop(1, "#8a0000");
+    ctx.fillStyle = grad;
+    ctx.fillRect(bx, by, barW * frac, barH);
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, barW, barH);
+    ctx.fillStyle = "#e8e8e8";
+    ctx.font = "bold 9px 'Share Tech Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("\u2620 THE REAPER", rx, by - 4);
+    ctx.textAlign = "start";
+    ctx.restore();
+  }
+}
+
+/* ===== Reaper effect particles ===== */
+
+function createReaperSpawnFx(x, y) {
+  reaperSpawnFx.push({ x: x, y: y, r: 8, maxR: 95, life: 1, delay: 0 });
+  reaperSpawnFx.push({ x: x, y: y, r: 8, maxR: 140, life: 1, delay: 10 });
+}
+
+function renderReaperSpawnFx() {
+  for (var i = 0; i < reaperSpawnFx.length; i++) {
+    var f = reaperSpawnFx[i];
+    if (f.delay > 0) { f.delay--; continue; }
+    f.r += (f.maxR - f.r) * 0.06;
+    f.life -= 0.012;
+    if (f.life <= 0) continue;
+    if (!isOnScreen(f.x, f.y)) continue;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, f.life) * 0.7;
+    ctx.strokeStyle = "#b51d1d";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  compactInPlace(reaperSpawnFx, function (f) { return f.life > 0; });
+}
+
+function createReaperSlash(x, y, facing) {
+  reaperSlashes.push({ x: x, y: y, facing: facing, life: 1 });
+}
+
+function renderReaperSlashes() {
+  for (var i = 0; i < reaperSlashes.length; i++) {
+    var s = reaperSlashes[i];
+    s.life -= 0.06;
+    if (s.life <= 0) continue;
+    if (!isOnScreen(s.x, s.y)) continue;
+    var prog = 1 - s.life;
+    var reach = 50;
+    var a0 = -1.1 + prog * 0.7;
+    var a1 = 1.1 + prog * 0.7;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.facing);
+    ctx.globalAlpha = Math.max(0, s.life) * 0.5;
+    ctx.strokeStyle = "rgba(255,80,80,0.6)";
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.arc(0, 0, reach, a0, a1);
+    ctx.stroke();
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.strokeStyle = "#ff2b2b";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, reach, a0, a1);
+    ctx.stroke();
+    ctx.restore();
+  }
+  compactInPlace(reaperSlashes, function (s) { return s.life > 0; });
+}
+
+function createReaperDeathFx(x, y) {
+  for (var i = 0; i < 44; i++) {
+    var a = Math.random() * Math.PI * 2;
+    var sp = 1 + Math.random() * 4.5;
+    reaperDeathFx.push({
+      x: x + (Math.random() - 0.5) * 22,
+      y: y + (Math.random() - 0.5) * 34,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 1.5,
+      life: 1,
+      size: 2 + Math.random() * 4,
+      color: Math.random() < 0.5 ? "#15151c" : "#5a1020",
+    });
+  }
+}
+
+function renderReaperDeathFx() {
+  for (var i = 0; i < reaperDeathFx.length; i++) {
+    var p = reaperDeathFx[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.08;
+    p.vx *= 0.97;
+    p.life -= 0.02;
+    if (p.life <= 0) continue;
+    if (!isOnScreen(p.x, p.y)) continue;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  compactInPlace(reaperDeathFx, function (p) { return p.life > 0; });
+}
+
+// Show a large center-screen reaper announcement banner.
+function showReaperBanner(text, color) {
+  reaperBanner = { text: text, color: color || "#ff3030", time: Date.now() };
+}
+
+// Screen-space overlay: dark vignette + banner while the event is active.
+function renderReaperOverlay() {
+  // Vignette eases toward target each frame.
+  var target = reaperActive ? 1 : 0;
+  reaperVignette += (target - reaperVignette) * 0.05;
+  if (reaperVignette > 0.01) {
+    var cw = canvas.width, ch = canvas.height;
+    var g = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.3, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+    g.addColorStop(0, "rgba(20,0,0,0)");
+    g.addColorStop(1, "rgba(20,0,0," + (0.55 * reaperVignette).toFixed(3) + ")");
+    ctx.save();
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.restore();
+
+    // Small persistent indicator top-center while active.
+    if (reaperActive) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = "#ff3b3b";
+      ctx.font = "bold 16px 'Share Tech Mono', monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("\u2620 THE REAPER STALKS THE ARENA \u2620", canvas.width / 2, 92);
+      ctx.textAlign = "start";
+      ctx.restore();
+    }
+  }
+
+  // Banner (fades over ~2.6s)
+  if (reaperBanner) {
+    var elapsed = Date.now() - reaperBanner.time;
+    var dur = 2600;
+    if (elapsed > dur) {
+      reaperBanner = null;
+    } else {
+      var t = elapsed / dur;
+      var a = t < 0.15 ? t / 0.15 : (1 - (t - 0.15) / 0.85);
+      var scale = 0.8 + Math.min(1, t / 0.15) * 0.2;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, a);
+      ctx.translate(canvas.width / 2, canvas.height * 0.32);
+      ctx.scale(scale, scale);
+      ctx.font = "bold 44px 'Share Tech Mono', monospace";
+      ctx.textAlign = "center";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.strokeText(reaperBanner.text, 0, 0);
+      ctx.fillStyle = reaperBanner.color;
+      ctx.fillText(reaperBanner.text, 0, 0);
+      ctx.textAlign = "start";
+      ctx.restore();
+    }
+  }
+}
+
+// Clear all reaper state and effects (round reset / leaving game).
+function resetReaperState() {
+  reaper = null;
+  reaperActive = false;
+  prevReaperState = -1;
+  prevReaperHp = 0;
+  reaperSlashes = [];
+  reaperSpawnFx = [];
+  reaperDeathFx = [];
+  reaperBanner = null;
+}
+
+
 var GRENADE_COOLDOWN_MS = 2000; // 2s between throws
 var GRENADE_RECHARGE_MS = 15000; // 15s to recharge a used grenade
 var MAX_GRENADES = 2; // max grenades of each type
@@ -702,7 +1050,6 @@ let killFeedEntries = [];
 let gridCanvas = null;
 let gridPatternCache = null;
 let wallLookup = null;       // Set of "x,y" strings for fast wall neighbor checks
-let wallSegments = [];       // Pre-computed exterior wall edge segments for shadow casting
 let mapDecorations = [];     // Visual-only plant/prop decorations
 const KILL_FEED_DURATION = 4000;
 const KILL_FEED_MAX = 5;
@@ -1984,6 +2331,10 @@ function initAudio() {
   for (let i = 1; i <= 8; i++) loadAudioBuffer(`win-${i}`, `${a}/match-win/win-${i}.mp3`);
   for (let i = 1; i <= 9; i++) loadAudioBuffer(`lose-${i}`, `${a}/match-lose/lose-${i}.mp3`);
 
+  // Grim Reaper boss event
+  loadAudioBuffer("reaper-start", `${a}/grimp-reaper-start.wav`);
+  loadAudioBuffer("reaper-swing", `${a}/guns/grimp-reaper-swing.wav`);
+
   // Kill streak announcements (random variant picked at play time)
   loadAudioBuffer("streak-double-1", `${a}/killstreaks/double-kill.mp3`);
   loadAudioBuffer("streak-double-2", `${a}/killstreaks/double-kill-2.mp3`);
@@ -2249,17 +2600,34 @@ let previousHP = 8;
 
 // ===== SHOW/HIDE SCREENS =====
 
+// Wrap a DOM-mutating update in a View Transition when supported, so discrete
+// screen changes (start <-> game, death, round end) cross-fade smoothly.
+// Falls back to running the update immediately when the API is unavailable or
+// the user prefers reduced motion.
+function withViewTransition(updateFn) {
+  if (
+    typeof document.startViewTransition === "function" &&
+    !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  ) {
+    document.startViewTransition(updateFn);
+  } else {
+    updateFn();
+  }
+}
+
 function showStartScreen() {
-  document.getElementById("startScreen").style.display = "flex";
-  canvas.style.display = "none";
-  document.getElementById("gameUI").style.display = "none";
-  document.getElementById("leaderboard").style.display = "none";
-  document.getElementById("killFeed").style.display = "none";
-  document.getElementById("playerList").style.display = "none";
-  const deathOv = document.getElementById("deathOverlay");
-  if (deathOv) deathOv.style.display = "none";
-  const roundOv = document.getElementById("roundEndOverlay");
-  if (roundOv) roundOv.style.display = "none";
+  withViewTransition(function() {
+    document.getElementById("startScreen").style.display = "flex";
+    canvas.style.display = "none";
+    document.getElementById("gameUI").style.display = "none";
+    document.getElementById("leaderboard").style.display = "none";
+    document.getElementById("killFeed").style.display = "none";
+    document.getElementById("playerList").style.display = "none";
+    const deathOv = document.getElementById("deathOverlay");
+    if (deathOv) deathOv.style.display = "none";
+    const roundOv = document.getElementById("roundEndOverlay");
+    if (roundOv) roundOv.style.display = "none";
+  });
   const mobileCtrl = document.getElementById("mobileControls");
   if (mobileCtrl) mobileCtrl.classList.remove("active");
 
@@ -2291,6 +2659,12 @@ function showStartScreen() {
   lastFlashbangThrownTime = 0;
   grenadeThrowIndicators = [];
   previousBulletPositions.clear();
+  playerTargets.clear();
+  bulletTrails.clear();
+  hitStopPlayers.clear();
+  wallHitDebris = [];
+  pendingInputs = [];
+  resetReaperState();
   screenShake = { intensity: 0, decay: 0.92 };
   killFeedEntries = [];
   killFeedDirty = true;
@@ -2318,12 +2692,13 @@ function showStartScreen() {
 
 function enterGame(data) {
   // Hide start screen, show game
-  document.getElementById("startScreen").style.display = "none";
-  canvas.style.display = "block";
-  document.getElementById("gameUI").style.display = "block";
-  document.getElementById("leaderboard").style.display = "block";
-  document.getElementById("killFeed").style.display = "flex";
-
+  withViewTransition(function() {
+    document.getElementById("startScreen").style.display = "none";
+    canvas.style.display = "block";
+    document.getElementById("gameUI").style.display = "block";
+    document.getElementById("leaderboard").style.display = "block";
+    document.getElementById("killFeed").style.display = "flex";
+  });
   // Set up game state from server
   playerId = data.playerId;
   loggedInUsername = data.username;
@@ -2348,7 +2723,6 @@ function enterGame(data) {
   if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
   if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
   if (data.maxHp) maxHp = data.maxHp;
-  computeWallSegments();
 
   _cachedDOM = null;
   gameReady = true;
@@ -2485,13 +2859,11 @@ function tryShoot() {
 
   // Compute muzzle position from sprite data
   const aimAngle = Math.atan2(dirY, dirX);
-  const muzzle = getMuzzlePosition(predictedX, predictedY, aimAngle, weapon);
+  const rawMuzzle = getMuzzlePosition(predictedX, predictedY, aimAngle, weapon);
 
-  // Client-side muzzle-wall check: don't shoot if muzzle is inside a wall
-  // (matches server-side muzzleBlockedByWall — prevents ghost shots)
-  if (isMuzzleBlockedByWall(predictedX, predictedY, muzzle.x, muzzle.y)) {
-    return;
-  }
+  // Clamp muzzle to the last clear point before any wall (mirrors server's
+  // clampMuzzleToWall) so the predicted bullet spawns where the server spawns it.
+  const muzzle = clampMuzzleToWall(predictedX, predictedY, rawMuzzle.x, rawMuzzle.y);
 
   ws.send(serialize({ type: "shoot", dirX: dirX, dirY: dirY }));
 
@@ -2626,7 +2998,7 @@ function connect() {
           }
           // Hide death overlay
           const deathOv = document.getElementById("deathOverlay");
-          if (deathOv) deathOv.style.display = "none";
+          if (deathOv) withViewTransition(function() { deathOv.style.display = "none"; });
           // 2.1: Clear death screen desaturation
           deathScreenActive = false;
           canvas.style.filter = '';
@@ -2667,6 +3039,46 @@ function connect() {
       createImpactSparks(data.x, data.y);
       // 2.18: Environmental hit feedback — stone debris + dust
       createWallHitDebris(data.x, data.y);
+      return;
+    }
+
+    // ===== GRIM REAPER: SPAWN =====
+    if (data.type === "reaperSpawn") {
+      reaperActive = true;
+      createReaperSpawnFx(data.x, data.y);
+      showReaperBanner("\u2620 THE REAPER AWAKENS \u2620", "#ff2b2b");
+      showToast("PvP disabled \u2014 defeat the Reaper together!", "#ff2b2b");
+      playSound("reaper-start", 0.9);
+      triggerScreenShake(10);
+      return;
+    }
+
+    // ===== GRIM REAPER: MELEE SWING =====
+    if (data.type === "reaperAttack") {
+      createReaperSlash(data.x, data.y, data.facing || 0);
+      playPositionalSound("reaper-swing", data.x, data.y, 0.7, 1.0, 900);
+      return;
+    }
+
+    // ===== GRIM REAPER: BULLET HIT =====
+    if (data.type === "reaperHit") {
+      createImpactSparks(data.x, data.y);
+      return;
+    }
+
+    // ===== GRIM REAPER: DEFEATED =====
+    if (data.type === "reaperDefeated") {
+      reaperActive = false;
+      createReaperDeathFx(data.x, data.y);
+      showReaperBanner("THE REAPER HAS FALLEN", "#ffd24a");
+      var winIdx = Math.floor(Math.random() * 8) + 1;
+      playSound("win-" + winIdx, 0.7);
+      triggerScreenShake(8);
+      // Show "+1" if the local player was rewarded.
+      var rewarded = data.rewarded || [];
+      if (rewarded.indexOf(loggedInUsername) !== -1) {
+        showToast("\u2795 +1 for surviving the Reaper!", "#ffd24a");
+      }
       return;
     }
 
@@ -2771,11 +3183,11 @@ function connect() {
           // Show death overlay with respawn button
           const deathOv = document.getElementById("deathOverlay");
           if (deathOv) {
-            deathOv.style.display = "flex";
             const killerEl = document.getElementById("deathKiller");
             if (killerEl) killerEl.textContent = "Killed by " + data.killer;
             const droppedEl = document.getElementById("deathDroppedScore");
             if (droppedEl) droppedEl.style.display = "none";
+            withViewTransition(function() { deathOv.style.display = "flex"; });
           }
           // Start auto-respawn countdown
           startAutoRespawnTimer();
@@ -3067,15 +3479,23 @@ function connect() {
     if (data.type === "roundEnd") {
       roundEnded = true;
       isMouseDown = false;
+      // The reaper event (if any) is over once the round ends.
+      resetReaperState();
       // Release all movement keys
       for (var rk in currentKeys) currentKeys[rk] = false;
       keysPressed.clear();
 
       var overlay = document.getElementById("roundEndOverlay");
       if (overlay) {
-        overlay.style.display = "flex";
+        withViewTransition(function() { overlay.style.display = "flex"; });
         var winnerEl = document.getElementById("roundEndWinner");
-        if (winnerEl) winnerEl.textContent = "\ud83c\udfc6 " + esc(data.winnerName) + " wins!";
+        if (winnerEl) {
+          if (data.reaperGameOver) {
+            winnerEl.textContent = "\u2620 THE REAPER CLAIMED YOU ALL \u2620";
+          } else {
+            winnerEl.textContent = "\ud83c\udfc6 " + esc(data.winnerName) + " wins!";
+          }
+        }
 
         var sbEl = document.getElementById("roundEndScoreboard");
         if (sbEl && data.scoreboard) {
@@ -3126,7 +3546,10 @@ function connect() {
 
         // Play win/lose sound
         var localP = players.find(function(p) { return p.id === playerId; });
-        if (localP && localP.username === data.winnerName) {
+        if (data.reaperGameOver) {
+          // Boss wiped the team — everyone gets the defeat sting.
+          playSound("lose-" + data.audioIndex, 0.6);
+        } else if (localP && localP.username === data.winnerName) {
           playSound("win-" + data.audioIndex, 0.6);
         } else {
           playSound("lose-" + data.audioIndex, 0.6);
@@ -3141,6 +3564,8 @@ function connect() {
     // ===== ROUND START (new round) =====
     if (data.type === "roundStart") {
       roundEnded = false;
+      // Clear any lingering reaper event state from the previous round.
+      resetReaperState();
 
       // Hide round end overlay
       var roundOv = document.getElementById("roundEndOverlay");
@@ -3193,7 +3618,6 @@ function connect() {
       if (data.arenaWidth) GAME_CONFIG.ARENA_WIDTH = data.arenaWidth;
       if (data.arenaHeight) GAME_CONFIG.ARENA_HEIGHT = data.arenaHeight;
       if (data.maxHp) maxHp = data.maxHp;
-      computeWallSegments();
 
       // Update shortId map
       if (data.shortIdMap) {
@@ -3220,9 +3644,14 @@ function connect() {
 
   ws.onclose = function() {
     console.log("WebSocket closed");
+    var wasInGame = gameReady;
     ws = null;
     // Show start screen again
     showStartScreen();
+    // Let the player know an in-progress session dropped (auto-reconnect follows)
+    if (wasInGame) {
+      showToast("\u26a0 Connection lost \u2014 reconnecting\u2026", "#ff9933");
+    }
     // Reconnect after delay
     setTimeout(connect, 3000);
   };
@@ -3238,22 +3667,30 @@ function doJoin() {
   const trimmed = (usernameInput.value || "").trim();
   const usernamePattern = /^[a-zA-Z0-9_]+$/;
 
-  if (!trimmed) {
-    errorEl.textContent = "⚠ Enter a name!";
+  function showNameError(msg) {
+    errorEl.textContent = msg;
     errorEl.style.display = "block";
+    // Re-trigger the shake animation even if the class is already present
+    usernameInput.classList.remove("input-error");
+    void usernameInput.offsetWidth;
+    usernameInput.classList.add("input-error");
+    usernameInput.focus();
+  }
+
+  if (!trimmed) {
+    showNameError("⚠ Enter a name!");
     return;
   }
   if (trimmed.length < 2 || trimmed.length > 16) {
-    errorEl.textContent = "⚠ Name must be 2-16 characters.";
-    errorEl.style.display = "block";
+    showNameError("⚠ Name must be 2-16 characters.");
     return;
   }
   if (!usernamePattern.test(trimmed)) {
-    errorEl.textContent = "⚠ Only letters, numbers and underscore allowed.";
-    errorEl.style.display = "block";
+    showNameError("⚠ Only letters, numbers and underscore allowed.");
     return;
   }
   errorEl.style.display = "none";
+  usernameInput.classList.remove("input-error");
 
   playBtn.disabled = true;
   playBtn.style.opacity = "0.6";
@@ -4261,159 +4698,6 @@ function generateMapDecorations() {
   }
 }
 
-// ============ SHADOW CASTING: 2D RAYCASTING FOR LINE-OF-SIGHT ============
-
-/** Pre-compute merged exterior wall edge segments from gameObstacles + arena boundary. */
-function computeWallSegments() {
-  var bs = 40; // block size
-  var occupied = new Set();
-  for (var i = 0; i < gameObstacles.length; i++) {
-    var o = gameObstacles[i];
-    occupied.add(o.x + ',' + o.y);
-  }
-
-  // Collect raw exterior edges (horizontal and vertical separately)
-  var hEdges = []; // { x1, y, x2 } — horizontal edges (y is constant)
-  var vEdges = []; // { x, y1, y2 } — vertical edges (x is constant)
-
-  for (var i = 0; i < gameObstacles.length; i++) {
-    var o = gameObstacles[i];
-    var ox = o.x, oy = o.y;
-    // North edge: no wall above
-    if (!occupied.has(ox + ',' + (oy - bs))) hEdges.push({ x1: ox, x2: ox + bs, y: oy, groupId: o.groupId });
-    // South edge: no wall below
-    if (!occupied.has(ox + ',' + (oy + bs))) hEdges.push({ x1: ox, x2: ox + bs, y: oy + bs, groupId: o.groupId });
-    // West edge: no wall to the left
-    if (!occupied.has((ox - bs) + ',' + oy)) vEdges.push({ x: ox, y1: oy, y2: oy + bs, groupId: o.groupId });
-    // East edge: no wall to the right
-    if (!occupied.has((ox + bs) + ',' + oy)) vEdges.push({ x: ox + bs, y1: oy, y2: oy + bs, groupId: o.groupId });
-  }
-
-  // Merge colinear horizontal edges sharing same y and groupId
-  hEdges.sort(function(a, b) { return a.y - b.y || a.x1 - b.x1; });
-  var mergedH = [];
-  for (var i = 0; i < hEdges.length; i++) {
-    var e = hEdges[i];
-    if (mergedH.length > 0) {
-      var last = mergedH[mergedH.length - 1];
-      if (last.y === e.y && last.x2 === e.x1) {
-        last.x2 = e.x2;
-        continue;
-      }
-    }
-    mergedH.push({ x1: e.x1, x2: e.x2, y: e.y });
-  }
-
-  // Merge colinear vertical edges sharing same x and groupId
-  vEdges.sort(function(a, b) { return a.x - b.x || a.y1 - b.y1; });
-  var mergedV = [];
-  for (var i = 0; i < vEdges.length; i++) {
-    var e = vEdges[i];
-    if (mergedV.length > 0) {
-      var last = mergedV[mergedV.length - 1];
-      if (last.x === e.x && last.y2 === e.y1) {
-        last.y2 = e.y2;
-        continue;
-      }
-    }
-    mergedV.push({ x: e.x, y1: e.y1, y2: e.y2 });
-  }
-
-  // Convert to {x1,y1,x2,y2} segment format
-  var segs = [];
-  for (var i = 0; i < mergedH.length; i++) {
-    var e = mergedH[i];
-    segs.push({ x1: e.x1, y1: e.y, x2: e.x2, y2: e.y });
-  }
-  for (var i = 0; i < mergedV.length; i++) {
-    var e = mergedV[i];
-    segs.push({ x1: e.x, y1: e.y1, x2: e.x, y2: e.y2 });
-  }
-
-  // Add arena boundary segments
-  var aw = GAME_CONFIG.ARENA_WIDTH, ah = GAME_CONFIG.ARENA_HEIGHT;
-  segs.push({ x1: 0, y1: 0, x2: aw, y2: 0 });     // top
-  segs.push({ x1: aw, y1: 0, x2: aw, y2: ah });    // right
-  segs.push({ x1: aw, y1: ah, x2: 0, y2: ah });    // bottom
-  segs.push({ x1: 0, y1: ah, x2: 0, y2: 0 });      // left
-
-  wallSegments = segs;
-}
-
-/** Compute visibility polygon from (px,py) using raycasting against wallSegments. */
-function computeVisibilityPolygon(px, py, maxRange) {
-  // Filter to nearby segments (broad-phase)
-  var margin = maxRange + 80;
-  var nearSegs = [];
-  for (var i = 0; i < wallSegments.length; i++) {
-    var s = wallSegments[i];
-    // AABB of segment
-    var minX = s.x1 < s.x2 ? s.x1 : s.x2;
-    var maxX = s.x1 > s.x2 ? s.x1 : s.x2;
-    var minY = s.y1 < s.y2 ? s.y1 : s.y2;
-    var maxY = s.y1 > s.y2 ? s.y1 : s.y2;
-    // Check if segment AABB is within range of player
-    if (maxX < px - margin || minX > px + margin) continue;
-    if (maxY < py - margin || minY > py + margin) continue;
-    nearSegs.push(s);
-  }
-
-  // Collect unique vertices from nearby segments
-  var vertSet = new Set();
-  var vertices = [];
-  for (var i = 0; i < nearSegs.length; i++) {
-    var s = nearSegs[i];
-    var k1 = s.x1 + ',' + s.y1;
-    var k2 = s.x2 + ',' + s.y2;
-    if (!vertSet.has(k1)) { vertSet.add(k1); vertices.push(s.x1, s.y1); }
-    if (!vertSet.has(k2)) { vertSet.add(k2); vertices.push(s.x2, s.y2); }
-  }
-
-  // Cast rays: for each vertex, cast 3 rays (direct, +epsilon, -epsilon)
-  var eps = 0.00015;
-  var rays = [];
-  for (var i = 0; i < vertices.length; i += 2) {
-    var vx = vertices[i], vy = vertices[i + 1];
-    var ang = Math.atan2(vy - py, vx - px);
-    rays.push(ang - eps, ang, ang + eps);
-  }
-
-  // Also add rays at regular intervals around the max-range circle for smooth far edges
-  var stepCount = 48;
-  for (var i = 0; i < stepCount; i++) {
-    rays.push(-Math.PI + (2 * Math.PI * i / stepCount));
-  }
-
-  // For each ray angle, find closest intersection with all nearby segments
-  var points = [];
-  var mr2 = maxRange * maxRange;
-  for (var r = 0; r < rays.length; r++) {
-    var ang = rays[r];
-    var dx = Math.cos(ang);
-    var dy = Math.sin(ang);
-    // Default: max range
-    var closestT = maxRange;
-    for (var si = 0; si < nearSegs.length; si++) {
-      var seg = nearSegs[si];
-      var ex = seg.x2 - seg.x1;
-      var ey = seg.y2 - seg.y1;
-      var denom = dx * ey - dy * ex;
-      if (denom === 0) continue; // parallel
-      var t2 = (dx * (seg.y1 - py) - dy * (seg.x1 - px)) / denom;
-      if (t2 < 0 || t2 > 1) continue; // outside segment
-      var t1 = (ex * (py - seg.y1) - ey * (px - seg.x1)) / (-denom);
-      if (t1 > 0 && t1 < closestT) closestT = t1;
-    }
-    var hx = px + dx * closestT;
-    var hy = py + dy * closestT;
-    points.push({ x: hx, y: hy, ang: ang });
-  }
-
-  // Sort by angle
-  points.sort(function(a, b) { return a.ang - b.ang; });
-  return points;
-}
-
 // Update interpolated positions for smooth movement
 // 1.3: Delta-time interpolation (frame-rate independent)
 function updateInterpolation() {
@@ -5209,6 +5493,13 @@ function render() {
     }
   });
 
+  // ── Grim Reaper boss (world space, above players) ──
+  updateReaperInterpolation();
+  renderReaperSpawnFx();
+  renderReaper();
+  renderReaperSlashes();
+  renderReaperDeathFx();
+
   // Render bullets — update predicted bullets and check wall collision
   bullets = bullets.filter(function(b) {
     if (b.predicted && b.dx !== undefined) {
@@ -5356,100 +5647,8 @@ function render() {
   // === Restore camera scale — switch to screen-space for HUD overlays ===
   ctx.restore(); // Restore camera scale
 
-  // ── VISION FUNNEL: directional cone toward aim + small peripheral circle ──
-  if (framePlayer && framePlayer.hp > 0) {
-    const plrSX = (predictedX - cameraX) * CAMERA_SCALE;
-    const plrSY = (predictedY - cameraY) * CAMERA_SCALE;
-    const aimAng = Math.atan2(mouseY - predictedY, mouseX - predictedX);
-    const cw = canvas.width, ch = canvas.height;
-
-    // Lazy-init / resize offscreen canvases
-    if (!_visionCanvas || _visionCanvas.width !== cw || _visionCanvas.height !== ch) {
-      _visionCanvas = document.createElement('canvas');
-      _visionCanvas.width = cw;
-      _visionCanvas.height = ch;
-      _visionCtx = _visionCanvas.getContext('2d');
-      _visionLightCanvas = document.createElement('canvas');
-      _visionLightCanvas.width = cw;
-      _visionLightCanvas.height = ch;
-      _visionLightCtx = _visionLightCanvas.getContext('2d');
-    }
-    const vc = _visionCtx;
-    const lc = _visionLightCtx;
-
-    // --- Step 0: Compute visibility polygon ---
-    var visPoly = computeVisibilityPolygon(predictedX, predictedY, VISION_CONE_RANGE / CAMERA_SCALE + 100);
-
-    // --- Step 1: Draw vision shape on light canvas (no clip — masking after blur) ---
-    lc.clearRect(0, 0, cw, ch);
-    lc.globalCompositeOperation = 'source-over';
-
-    // 1a. Peripheral circle around player
-    var nearGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_NEAR_RADIUS);
-    nearGrad.addColorStop(0, 'rgba(255,255,255,0.75)');
-    nearGrad.addColorStop(0.7, 'rgba(255,255,255,0.35)');
-    nearGrad.addColorStop(1, 'rgba(255,255,255,0)');
-    lc.fillStyle = nearGrad;
-    lc.beginPath();
-    lc.arc(plrSX, plrSY, VISION_NEAR_RADIUS, 0, Math.PI * 2);
-    lc.fill();
-
-    // 1b. Directional cone with distance falloff
-    var halfArc = VISION_CONE_ANGLE / 2;
-    var coneGrad = lc.createRadialGradient(plrSX, plrSY, 0, plrSX, plrSY, VISION_CONE_RANGE);
-    coneGrad.addColorStop(0, 'rgba(255,255,255,1)');
-    coneGrad.addColorStop(0.65, 'rgba(255,255,255,1)');
-    coneGrad.addColorStop(0.88, 'rgba(255,255,255,0.45)');
-    coneGrad.addColorStop(1, 'rgba(255,255,255,0)');
-    lc.fillStyle = coneGrad;
-    lc.beginPath();
-    lc.moveTo(plrSX, plrSY);
-    lc.arc(plrSX, plrSY, VISION_CONE_RANGE, aimAng - halfArc, aimAng + halfArc);
-    lc.closePath();
-    lc.fill();
-
-    // --- Step 2: Blur the light shape for soft cone edges ---
-    lc.filter = 'blur(' + VISION_BLUR + 'px)';
-    lc.globalCompositeOperation = 'copy';
-    lc.drawImage(_visionLightCanvas, 0, 0);
-    lc.filter = 'none';
-    lc.globalCompositeOperation = 'source-over';
-
-    // --- Step 2b: Hard-mask light to (visibility polygon ∪ peripheral circle) ---
-    // Erases blur that leaked past wall edges. Peripheral circle union ensures
-    // player always sees immediate surroundings, even in tight corners.
-    if (visPoly.length > 2) {
-      lc.globalCompositeOperation = 'destination-in';
-      lc.beginPath();
-      // Sub-path 1: visibility polygon (hard shadow boundary)
-      var vp0 = visPoly[0];
-      lc.moveTo((vp0.x - cameraX) * CAMERA_SCALE, (vp0.y - cameraY) * CAMERA_SCALE);
-      for (var vi = 1; vi < visPoly.length; vi++) {
-        lc.lineTo((visPoly[vi].x - cameraX) * CAMERA_SCALE, (visPoly[vi].y - cameraY) * CAMERA_SCALE);
-      }
-      lc.closePath();
-      // Sub-path 2: peripheral circle (always visible — fixes corner blindness)
-      lc.moveTo(plrSX + VISION_NEAR_RADIUS + VISION_BLUR, plrSY);
-      lc.arc(plrSX, plrSY, VISION_NEAR_RADIUS + VISION_BLUR, 0, Math.PI * 2);
-      lc.fillStyle = '#fff';
-      lc.fill();
-      lc.globalCompositeOperation = 'source-over';
-    }
-
-    // --- Step 3: Build final darkness mask ---
-    vc.clearRect(0, 0, cw, ch);
-    vc.globalCompositeOperation = 'source-over';
-    vc.fillStyle = 'rgba(0,0,0,' + VISION_DARKNESS + ')';
-    vc.fillRect(0, 0, cw, ch);
-
-    // Punch out the blurred light shape from the darkness
-    vc.globalCompositeOperation = 'destination-out';
-    vc.drawImage(_visionLightCanvas, 0, 0);
-    vc.globalCompositeOperation = 'source-over';
-
-    // --- Step 4: Composite the darkness mask onto the main canvas ---
-    ctx.drawImage(_visionCanvas, 0, 0);
-  }
+  // Grim Reaper event overlay (vignette + banners) in screen space
+  renderReaperOverlay();
 
   // Render crosshair (in screen space)
   if (framePlayer) {

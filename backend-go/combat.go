@@ -49,19 +49,23 @@ func muzzlePosition(px, py, dirX, dirY float64, weapon WeaponType) (float64, flo
 	return px + muzzleOffsetX*cos - muzzleOffsetY*sin, py + muzzleOffsetX*sin + muzzleOffsetY*cos
 }
 
-// muzzleBlockedByWall checks whether any obstacle sits between the player
-// center (px,py) and the computed muzzle point (mx,my). It steps along the
-// line in small increments and queries the spatial grid at each point.
-func muzzleBlockedByWall(px, py, mx, my float64) bool {
+// clampMuzzleToWall returns a bullet spawn point along the line from the player
+// center (px,py) toward the computed muzzle point (mx,my). It steps along the
+// line in small increments; if any obstacle is hit, it returns the last clear
+// point before the wall, otherwise it returns the full muzzle point. This keeps
+// the spawn origin identical on client and server so bullets never clip a wall
+// on one side while clearing it on the other.
+func clampMuzzleToWall(px, py, mx, my float64) (float64, float64) {
 	dx := mx - px
 	dy := my - py
 	dist := math.Sqrt(dx*dx + dy*dy)
 	if dist < 1 {
-		return false
+		return mx, my
 	}
 	// Step in increments smaller than the smallest obstacle (BlockSize=40)
 	stepSize := 10.0
 	steps := int(math.Ceil(dist / stepSize))
+	lastClearX, lastClearY := px, py
 	for i := 1; i <= steps; i++ {
 		t := float64(i) / float64(steps)
 		sx := px + dx*t
@@ -70,11 +74,12 @@ func muzzleBlockedByWall(px, py, mx, my float64) bool {
 		for _, e := range nearby {
 			o := e.Data.(*Obstacle)
 			if sx >= o.X && sx <= o.X+o.Size && sy >= o.Y && sy <= o.Y+o.Size {
-				return true
+				return lastClearX, lastClearY
 			}
 		}
+		lastClearX, lastClearY = sx, sy
 	}
-	return false
+	return mx, my
 }
 
 /* ================= KILL STREAKS ================= */
@@ -251,19 +256,8 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		finalDirX, finalDirY := applySpread(dirX, dirY, GameConfig.SniperBaseSpread, GameConfig.SniperMoveSpread, player)
 
 		mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponSniper)
-		// Block shot if muzzle is inside/behind a wall
-		if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
-			// Refund the shot
-			player.Shots++
-			player.LastShotTime = 0
-			if player.Reloading {
-				player.Reloading = false
-				if player.ReloadTimer != nil {
-					player.ReloadTimer.Stop()
-				}
-			}
-			return
-		}
+		// Clamp spawn to the last clear point before any wall
+		mzX, mzY = clampMuzzleToWall(player.X, player.Y, mzX, mzY)
 		bullet := &Bullet{
 			ID:        nextEntityID(),
 			ShortID:   game.NextShortID,
@@ -314,18 +308,8 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 		pelletCount := GameConfig.ShotgunPellets
 		baseAngle := math.Atan2(dirY, dirX)
 		mzX, mzY := muzzlePosition(player.X, player.Y, dirX, dirY, WeaponShotgun)
-		// Block shot if muzzle is inside/behind a wall
-		if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
-			player.Shots++
-			player.LastShotTime = 0
-			if player.Reloading {
-				player.Reloading = false
-				if player.ReloadTimer != nil {
-					player.ReloadTimer.Stop()
-				}
-			}
-			return
-		}
+		// Clamp spawn to the last clear point before any wall
+		mzX, mzY = clampMuzzleToWall(player.X, player.Y, mzX, mzY)
 		// Movement adds extra spread to shotgun (velocity-scaled)
 		speedRatio := playerSpeed(player) / GameConfig.PlayerSpeed
 		if isCounterStrafing(player) {
@@ -386,18 +370,8 @@ func shoot(player *Player, game *Game, dirX, dirY float64) {
 	player.LastSprayReset = now
 
 	mzX, mzY := muzzlePosition(player.X, player.Y, finalDirX, finalDirY, WeaponMachinegun)
-	// Block shot if muzzle is inside/behind a wall
-	if muzzleBlockedByWall(player.X, player.Y, mzX, mzY) {
-		player.Shots++
-		player.LastShotTime = 0
-		if player.Reloading {
-			player.Reloading = false
-			if player.ReloadTimer != nil {
-				player.ReloadTimer.Stop()
-			}
-		}
-		return
-	}
+	// Clamp spawn to the last clear point before any wall
+	mzX, mzY = clampMuzzleToWall(player.X, player.Y, mzX, mzY)
 	bullet := &Bullet{
 		ID:        nextEntityID(),
 		ShortID:   game.NextShortID,

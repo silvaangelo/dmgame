@@ -21,6 +21,8 @@ func startRoundTimer(game *Game) {
 			game.mu.Lock()
 			elapsed := unixMs() - game.MatchStartTime
 			remaining := max(0, int((roundDuration-elapsed+999)/1000)) // ceil
+			// Grim Reaper random event: roll for a spawn each second past the threshold.
+			maybeRollReaperSpawn(game, elapsed)
 			game.mu.Unlock()
 
 			broadcast(game, map[string]interface{}{
@@ -37,8 +39,16 @@ func startRoundTimer(game *Game) {
 }
 
 func endRound(game *Game) {
+	endRoundInternal(game, false)
+}
+
+// endRoundInternal ends the round. When reaperGameOver is true the round is
+// ending because the Grim Reaper wiped the entire team — the boss "wins" and
+// every player is shown the defeat screen.
+func endRoundInternal(game *Game, reaperGameOver bool) {
 	game.mu.Lock()
 	game.RoundEnded = true
+	game.ReaperActive = false
 
 	// Build scoreboard
 	type scoreEntry struct {
@@ -66,6 +76,9 @@ func endRound(game *Game) {
 	winnerName := "Nobody"
 	if len(scoreboard) > 0 {
 		winnerName = scoreboard[0].Username
+	}
+	if reaperGameOver {
+		winnerName = "☠ The Reaper"
 	}
 
 	// Save stats
@@ -143,12 +156,13 @@ func endRound(game *Game) {
 			loseIdx++
 		}
 		msg, _ := Serialize(map[string]interface{}{
-			"type":         "roundEnd",
-			"winnerName":   winnerName,
-			"scoreboard":   scoreboard,
-			"audioIndex":   audioIndex,
-			"restartDelay": GameConfig.RoundRestartDelay,
-			"mvpAwards":    mvpAwards,
+			"type":           "roundEnd",
+			"winnerName":     winnerName,
+			"scoreboard":     scoreboard,
+			"audioIndex":     audioIndex,
+			"restartDelay":   GameConfig.RoundRestartDelay,
+			"mvpAwards":      mvpAwards,
+			"reaperGameOver": reaperGameOver,
 		})
 		pendingMsgs = append(pendingMsgs, pendingMsg{player: p, data: msg})
 	}
@@ -177,6 +191,12 @@ func resetPersistentRound(game *Game) {
 	game.Bullets = make([]*Bullet, 0)
 	game.Grenades = make([]*Grenade, 0)
 	game.StateSequence = 0
+
+	// Clear any Grim Reaper event state for the new round.
+	game.Reaper = nil
+	game.ReaperActive = false
+	game.ReaperDoneThisRound = false
+	game.ReaperWipePending = false
 
 	// Reset all player stats
 	for _, p := range game.Players {
@@ -218,6 +238,7 @@ func resetPersistentRound(game *Game) {
 		p.CounterStrafeY = 0
 		p.SprayIndex = 0
 		p.RespawnShimmerEnd = 0
+		p.DiedDuringReaper = false
 	}
 
 	// Respawn all players

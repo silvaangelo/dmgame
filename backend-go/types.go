@@ -24,6 +24,16 @@ const (
 	GrenadeFlash GrenadeType = "flashbang"
 )
 
+// ReaperState represents the Grim Reaper boss's current behaviour state.
+type ReaperState uint8
+
+const (
+	ReaperSpawning  ReaperState = 0 // telegraph + fade-in, invulnerable
+	ReaperChasing   ReaperState = 1 // moving toward nearest player
+	ReaperAttacking ReaperState = 2 // melee windup + swing
+	ReaperDying     ReaperState = 3 // death animation, no longer acts
+)
+
 // Keys tracks WASD input state.
 type Keys struct {
 	W bool `msgpack:"w"`
@@ -128,6 +138,9 @@ type Player struct {
 
 	// Respawn shimmer
 	RespawnShimmerEnd int64 `msgpack:"-"`
+
+	// Grim Reaper event: set when killed by the reaper so they can be revived on victory
+	DiedDuringReaper bool `msgpack:"-"`
 }
 
 // Bullet represents a projectile in flight.
@@ -142,7 +155,6 @@ type Bullet struct {
 	Damage     int        `msgpack:"damage"`
 	Weapon     WeaponType `msgpack:"weapon"`
 	CreatedAt  int64      `msgpack:"createdAt"`
-	Penetrated int        `msgpack:"-"` // 1.14: how many walls this bullet has passed through
 }
 
 // Obstacle represents a wall block.
@@ -153,7 +165,6 @@ type Obstacle struct {
 	Size    float64 `msgpack:"size"`
 	Type    string  `msgpack:"type,omitempty"`
 	GroupID string  `msgpack:"groupId,omitempty"`
-	Thin    bool    `msgpack:"-"` // 1.14: thin walls allow bullet penetration
 }
 
 // Grenade represents a thrown grenade or flashbang in flight.
@@ -169,6 +180,26 @@ type Grenade struct {
 	CreatedAt int64
 	FuseTime  int64   // ms until detonation from creation
 	Friction  float64 // deceleration factor per tick
+}
+
+// Reaper is the Grim Reaper boss spawned by the random event. It is a
+// server-controlled NPC (not a Player) that hunts and melees players.
+type Reaper struct {
+	X      float64
+	Y      float64
+	VX     float64 // velocity (movement + knockback), per tick
+	VY     float64
+	HP     int
+	MaxHP  int
+	Radius float64
+
+	State      ReaperState
+	StateStart int64 // ms timestamp the current state began
+
+	Facing         float64 // radians, direction the reaper faces (for sprite flip/aim)
+	TargetID       string  // player ID currently being hunted
+	LastAttackTime int64   // ms timestamp of last melee swing
+	AttackDamage   int     // scaled melee damage per hit
 }
 
 // Game holds all state for a game instance.
@@ -187,6 +218,12 @@ type Game struct {
 
 	StateSequence  uint32
 	MatchStartTime int64
+
+	// Grim Reaper random event
+	Reaper              *Reaper // nil when no event active
+	ReaperActive        bool    // true while the event is running (spawn..defeat/wipe)
+	ReaperDoneThisRound bool    // event already triggered this round (at most once)
+	ReaperWipePending   bool    // a team wipe ended the event; end the round after the tick
 
 	// Round timer
 	RoundStartTime int64
