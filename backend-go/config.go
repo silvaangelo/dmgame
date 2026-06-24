@@ -179,14 +179,14 @@ var GameConfig = struct {
 	// Respawn shimmer
 	RespawnShimmerDuration: 1500,
 	// Grim Reaper random event
-	ReaperMinMatchTime:     10000, // 10s
-	ReaperSpawnChanceBase:  0.05, // ~5% per second right after 10s
+	ReaperMinMatchTime:     15000, // 15s
+	ReaperSpawnChanceBase:  0.025, // ~2.5% per second right after 15s
 	ReaperSpawnChanceRamp:  0.0015, // grows the longer the round runs
 	ReaperSpawnChanceMax:   0.20,  // capped at 20% per second
 	ReaperMinPlayers:       2,
-	ReaperBaseHP:           900,
-	ReaperHPPerPlayer:      650,
-	ReaperSpeed:            19.0, // ~1.8x player speed
+	ReaperBaseHP:           1000,
+	ReaperHPPerPlayer:      750,
+	ReaperSpeed:            15.0, // ~1.5x player speed
 	ReaperRadius:           30,
 	ReaperAttackRange:      62,
 	ReaperAttackBaseDamage: 55,

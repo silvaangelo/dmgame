@@ -35,16 +35,6 @@ func aliveCount(game *Game) int {
 	return n
 }
 
-// findPlayerByID returns the player with the given ID, or nil.
-func findPlayerByID(game *Game, id string) *Player {
-	for _, p := range game.Players {
-		if p.ID == id {
-			return p
-		}
-	}
-	return nil
-}
-
 // nearestAlivePlayer returns the closest living player to (x,y), or nil.
 func nearestAlivePlayer(game *Game, x, y float64) *Player {
 	var best *Player
@@ -171,12 +161,11 @@ func updateReaper(game *Game, now int64) {
 		applyReaperMovement(game, r, 0, 0)
 
 	case ReaperChasing:
-		target := findPlayerByID(game, r.TargetID)
-		if target == nil || target.HP <= 0 {
-			target = nearestAlivePlayer(game, r.X, r.Y)
-			if target != nil {
-				r.TargetID = target.ID
-			}
+		// Always pursue the closest living player, re-evaluating every tick so
+		// the reaper switches targets the moment someone else gets nearer.
+		target := nearestAlivePlayer(game, r.X, r.Y)
+		if target != nil {
+			r.TargetID = target.ID
 		}
 		if target == nil {
 			// No one left alive — the wipe check will end the event.

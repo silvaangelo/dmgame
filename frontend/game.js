@@ -440,13 +440,19 @@ var spritesLoaded = false;
   spriteFlashbang.src = "assets/sprites/flashbang.png";
 })();
 
-// Grim Reaper boss sprite — a 2-pose sheet (left = attack/scythe-raised,
-// right = walk/scythe-lowered). Loaded independently; frame width is derived
-// from naturalWidth/2 at draw time so no dimensions are hardcoded.
-var spriteReaper = new Image();
-var spriteReaperLoaded = false;
-spriteReaper.onload = function () { spriteReaperLoaded = true; };
-spriteReaper.src = "assets/sprites/grim-reaper.png";
+// Grim Reaper boss sprites — two separate full-frame images.
+// walk:   scythe lowered, figure naturally faces RIGHT (used while chasing/idle).
+// attack: scythe raised mid-swing, figure naturally faces LEFT.
+// Each is flipped horizontally at draw time to face the current target.
+var spriteReaperWalk = new Image();
+var spriteReaperWalkLoaded = false;
+spriteReaperWalk.onload = function () { spriteReaperWalkLoaded = true; };
+spriteReaperWalk.src = "assets/sprites/grim-reaper-walk.png";
+
+var spriteReaperAttack = new Image();
+var spriteReaperAttackLoaded = false;
+spriteReaperAttack.onload = function () { spriteReaperAttackLoaded = true; };
+spriteReaperAttack.src = "assets/sprites/grim-reaper-attack.png";
 
 // Pixel art texture sprite sheets
 var txGrass = new Image();
@@ -648,6 +654,7 @@ let reaper = null;            // { x, y, hp, maxHp, facing, state, dispX, dispY 
 let reaperActive = false;     // true between spawn and defeat/wipe (drives event UI)
 let prevReaperState = -1;     // for detecting state transitions
 let prevReaperHp = 0;         // for detecting damage flashes
+let reaperHitFlash = 0;       // ms timestamp of the last bullet hit (white flash)
 let reaperVignette = 0;       // 0..1 persistent dark vignette while event runs
 let reaperSlashes = [];       // melee swing arc effects
 let reaperSpawnFx = [];       // spawn telegraph rings
@@ -675,10 +682,11 @@ function updateReaperFromState(rp) {
     prevReaperHp = rp.hp;
   }
 
-  // Damage flash: HP dropped between frames.
-  if (rp.hp < prevReaperHp) {
-    createBlood(rp.x, rp.y);
-    for (var i = 0; i < 3; i++) createImpactSparks(rp.x, rp.y);
+  // Damage flash fallback: if HP dropped between frames but no per-bullet
+  // reaperHit event drove the flash (e.g. a dropped event), flash anyway.
+  if (rp.hp < prevReaperHp && (!reaperHitFlash || Date.now() - reaperHitFlash > 90)) {
+    reaperHitFlash = Date.now();
+    createImpactSparks(rp.x, rp.y);
   }
 
   // State transition: just started dying.
@@ -731,16 +739,18 @@ function renderReaper() {
   ctx.fill();
   ctx.restore();
 
-  // Sprite (2-pose sheet: frame 0 = attack/scythe-raised, frame 1 = walk)
+  // Sprite: distinct walk / attack images, each flipped to face the target.
   var drawn = false;
-  if (spriteReaperLoaded && spriteReaper.naturalWidth > 0) {
-    var fw = spriteReaper.naturalWidth / 2;
-    var fh = spriteReaper.naturalHeight;
+  var attacking = (reaper.state === REAPER_ATTACKING);
+  var spr = attacking ? spriteReaperAttack : spriteReaperWalk;
+  var sprLoaded = attacking ? spriteReaperAttackLoaded : spriteReaperWalkLoaded;
+  if (sprLoaded && spr.naturalWidth > 0) {
+    var fw = spr.naturalWidth;
+    var fh = spr.naturalHeight;
     var rh = 120;
     var rw = rh * (fw / fh);
-    var frameIndex = (reaper.state === REAPER_ATTACKING) ? 0 : 1;
-    // Each pose has an opposite natural facing; flip so it faces its target.
-    var naturalLeft = (frameIndex === 1);
+    // The attack pose naturally faces left, the walk pose faces right.
+    var naturalLeft = attacking;
     var faceLeft = Math.cos(reaper.facing) < 0;
     var flip = (faceLeft !== naturalLeft);
     var bob = (reaper.state === REAPER_CHASING) ? Math.sin(now / 110) * 2 : 0;
@@ -748,7 +758,16 @@ function renderReaper() {
     ctx.translate(rx, ry);
     if (flip) ctx.scale(-1, 1);
     ctx.globalAlpha = alpha;
-    ctx.drawImage(spriteReaper, frameIndex * fw, 0, fw, fh, -rw / 2, -rh * 0.62 + bob, rw, rh);
+    ctx.drawImage(spr, -rw / 2, -rh * 0.62 + bob, rw, rh);
+    // White impact flash: re-draw the sprite as a bright silhouette right after
+    // a bullet lands so it's obvious the reaper is taking damage.
+    var sinceHit = now - reaperHitFlash;
+    if (reaperHitFlash && sinceHit < 130) {
+      ctx.globalAlpha = alpha * (1 - sinceHit / 130);
+      ctx.filter = "brightness(0) invert(1)";
+      ctx.drawImage(spr, -rw / 2, -rh * 0.62 + bob, rw, rh);
+      ctx.filter = "none";
+    }
     ctx.restore();
     drawn = true;
   }
@@ -3062,7 +3081,18 @@ function connect() {
 
     // ===== GRIM REAPER: BULLET HIT =====
     if (data.type === "reaperHit") {
+      // Clear, punchy feedback so players know their shots are landing.
+      reaperHitFlash = Date.now();
       createImpactSparks(data.x, data.y);
+      createImpactSparks(data.x, data.y);
+      createBlood(data.x, data.y);
+      createHitMarker();
+      if (data.damage) createFloatingNumber(data.x, data.y, data.damage, false);
+      // Keep the reaper HP bar in sync immediately (don't wait for next frame).
+      if (reaper && typeof data.hp === "number") {
+        reaper.hp = data.hp;
+        if (data.maxHp) reaper.maxHp = data.maxHp;
+      }
       return;
     }
 

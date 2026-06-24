@@ -322,6 +322,7 @@ func updateGame(game *Game) []playerStateSnapshot {
 						"y":    int(math.Round(bullet.Y)),
 						"hp":   r.HP,
 						"maxHp": r.MaxHP,
+						"damage": bullet.Damage,
 					})
 					if game.RoundEnded {
 						return nil
