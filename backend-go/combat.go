@@ -531,8 +531,11 @@ func throwGrenade(player *Player, game *Game, grenadeType GrenadeType, chargeMs 
 	dirX := math.Cos(player.AimAngle)
 	dirY := math.Sin(player.AimAngle)
 
-	// Speed scales strongly with charge: quick tap = weak lob, full charge = powerful throw
-	speed := GameConfig.GrenadeSpeed * (0.25 + 0.75*chargeRatio)
+	// Speed scales strongly with charge: quick tap = weak lob, full charge =
+	// powerful, fast throw that travels much farther.
+	speedMult := GameConfig.GrenadeThrowSpeedMin +
+		(GameConfig.GrenadeThrowSpeedMax-GameConfig.GrenadeThrowSpeedMin)*chargeRatio
+	speed := GameConfig.GrenadeSpeed * speedMult
 
 	// Movement momentum: if the player is moving, add their velocity to the throw
 	var moveVX, moveVY float64

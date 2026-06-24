@@ -53,6 +53,8 @@ var GameConfig = struct {
 	GrenadeFuseMin       int64   // minimum fuse time ms (short press)
 	GrenadeFuseMax       int64   // maximum fuse time ms (long press)
 	GrenadeSpeed         float64 // initial throw speed
+	GrenadeThrowSpeedMin float64 // speed multiplier at zero charge (quick tap)
+	GrenadeThrowSpeedMax float64 // speed multiplier at full charge (long hold)
 	GrenadeFriction      float64 // velocity multiplier per tick (deceleration)
 	GrenadeDamage        int     // HE grenade max damage
 	GrenadeRadius        float64 // explosion radius
@@ -149,7 +151,9 @@ var GameConfig = struct {
 	GrenadeRechargeTime:  15000,
 	GrenadeFuseMin:       600,
 	GrenadeFuseMax:       3000,
-	GrenadeSpeed:         26.0,
+	GrenadeSpeed:         30.0,
+	GrenadeThrowSpeedMin: 0.3,
+	GrenadeThrowSpeedMax: 1.4,
 	GrenadeFriction:      0.94,
 	GrenadeDamage:        70,
 	GrenadeRadius:        350.0,
