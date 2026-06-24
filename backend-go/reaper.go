@@ -54,28 +54,9 @@ func nearestAlivePlayer(game *Game, x, y float64) *Player {
 	return best
 }
 
-// maybeRollReaperSpawn performs the per-second probability check that can start
-// the event. The longer the round runs, the more likely a spawn becomes.
-// Caller must hold game.mu.
-func maybeRollReaperSpawn(game *Game, elapsed int64) {
-	if game.RoundEnded || game.ReaperActive || game.ReaperDoneThisRound {
-		return
-	}
-	if elapsed < GameConfig.ReaperMinMatchTime {
-		return
-	}
-	if aliveCount(game) < GameConfig.ReaperMinPlayers {
-		return
-	}
-	secondsPast := float64(elapsed-GameConfig.ReaperMinMatchTime) / 1000.0
-	chance := GameConfig.ReaperSpawnChanceBase + secondsPast*GameConfig.ReaperSpawnChanceRamp
-	if chance > GameConfig.ReaperSpawnChanceMax {
-		chance = GameConfig.ReaperSpawnChanceMax
-	}
-	if rand.Float64() < chance {
-		spawnReaper(game)
-	}
-}
+// maybeRollReaperSpawn is retained as a thin wrapper for spawning the reaper;
+// the actual per-second roll and event selection lives in events.go
+// (maybeRollRandomEvent), which keeps the two enemy events mutually exclusive.
 
 // spawnReaper creates the boss, scaling its HP and damage to the number of
 // living players, and broadcasts the spawn event. Caller must hold game.mu.

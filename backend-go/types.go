@@ -202,6 +202,23 @@ type Reaper struct {
 	AttackDamage   int     // scaled melee damage per hit
 }
 
+// Zombie is a single enemy in the Zombie Infestation random event. Unlike the
+// Reaper there are many of them, so the struct is deliberately small and the
+// AI is cheap (pick a random target, walk toward it, bite on contact).
+type Zombie struct {
+	X        float64
+	Y        float64
+	HP       int
+	Radius   float64
+	ShortID  uint16
+	Color    uint8   // colour variant (0..ZombieColorVariants-1) for client tint
+	Facing   float64 // radians, movement direction (client may flip/rotate)
+	TargetID string  // player ID this zombie shambles toward (chosen at random)
+
+	LastAttackTime int64 // ms timestamp of last bite
+	SpawnTime      int64 // ms timestamp the zombie appeared (rise telegraph)
+}
+
 // Game holds all state for a game instance.
 type Game struct {
 	mu sync.Mutex // protects all game state
@@ -224,6 +241,14 @@ type Game struct {
 	ReaperActive        bool    // true while the event is running (spawn..defeat/wipe)
 	ReaperDoneThisRound bool    // event already triggered this round (at most once)
 	ReaperWipePending   bool    // a team wipe ended the event; end the round after the tick
+
+	// Zombie infestation random event
+	Zombies             []*Zombie // active horde (empty when no event)
+	ZombieActive        bool      // true while the infestation is running
+	ZombieDoneThisRound bool      // event already triggered this round (at most once)
+
+	// Tick control
+	tickCount uint64 // increments every simulation tick (drives broadcast divisor)
 
 	// Round timer
 	RoundStartTime int64

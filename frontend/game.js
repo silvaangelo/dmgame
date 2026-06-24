@@ -99,6 +99,19 @@ function parseBinaryState(buf) {
     }
   }
 
+  // Zombies (counted block; count is 0 when no infestation is active)
+  var parsedZombies = [];
+  if (off + 2 <= dv.byteLength) {
+    var zombieCount = dv.getUint16(off, true); off += 2;
+    for (var zi = 0; zi < zombieCount; zi++) {
+      var zsid = dv.getUint16(off, true); off += 2;
+      var zx = dv.getInt16(off, true); off += 2;
+      var zy = dv.getInt16(off, true); off += 2;
+      var zcol = dv.getUint8(off); off += 1;
+      parsedZombies.push({ id: "z" + zsid, x: zx, y: zy, color: zcol });
+    }
+  }
+
   // Reaper (optional — present only when header flag bit0 is set)
   var parsedReaper = null;
   if ((flags & 0x01) && off + 17 <= dv.byteLength) {
@@ -116,6 +129,7 @@ function parseBinaryState(buf) {
     players: parsedPlayers,
     bullets: parsedBullets,
     grenades: parsedGrenades,
+    zombies: parsedZombies,
     reaper: parsedReaper,
   };
 }
@@ -134,6 +148,9 @@ function handleBinaryState(buf) {
 
   // ── Grim Reaper boss state ──
   updateReaperFromState(s.reaper);
+
+  // ── Zombie infestation state ──
+  updateZombiesFromState(s.zombies);
 
   // Death/damage detection
   parsedPlayers.forEach(function(p) {
@@ -454,6 +471,33 @@ var spriteReaperAttackLoaded = false;
 spriteReaperAttack.onload = function () { spriteReaperAttackLoaded = true; };
 spriteReaperAttack.src = "assets/sprites/grim-reaper-attack.png";
 
+// Zombie sprite (single forward-facing image). On load we pre-bake a handful of
+// colour-tinted copies onto offscreen canvases so the horde can be drawn with a
+// single drawImage per zombie (no per-frame canvas filter, which is expensive).
+var ZOMBIE_TINTS = [
+  "none",
+  "hue-rotate(40deg) saturate(1.3)",
+  "hue-rotate(-35deg) saturate(1.2)",
+  "hue-rotate(110deg) saturate(0.9)",
+  "brightness(0.78) saturate(1.4)",
+];
+var spriteZombie = new Image();
+var spriteZombieLoaded = false;
+var zombieTintCanvases = []; // index = colour variant -> offscreen canvas
+spriteZombie.onload = function () {
+  spriteZombieLoaded = true;
+  for (var i = 0; i < ZOMBIE_TINTS.length; i++) {
+    var c = document.createElement("canvas");
+    c.width = spriteZombie.naturalWidth;
+    c.height = spriteZombie.naturalHeight;
+    var cx = c.getContext("2d");
+    cx.filter = ZOMBIE_TINTS[i];
+    cx.drawImage(spriteZombie, 0, 0);
+    zombieTintCanvases.push(c);
+  }
+};
+spriteZombie.src = "assets/sprites/zombie-walk-1.png";
+
 // Pixel art texture sprite sheets
 var txGrass = new Image();
 var txWall = new Image();
@@ -577,6 +621,7 @@ const WEAPON_KILL_ICONS = {
   grenade: "💣",
   flashbang: "💥",
   reaper: "☠",
+  zombie: "🧟",
 };
 
 let ws;
@@ -643,6 +688,12 @@ let grenadeExplosions = []; // client-side explosion effects
 let grenadeDebris = []; // debris particles from explosions
 let flashbangOverlay = { alpha: 0, decay: 0.97 }; // white flash overlay
 let grenadeRedPulse = { alpha: 0, decay: 0.95 }; // red pulse overlay for HE
+
+// ===== ZOMBIE INFESTATION EVENT STATE =====
+let zombies = [];            // latest parsed list: [{ id, x, y, color }]
+let zombieDisp = new Map();  // id -> { x, y } smoothed display position
+let zombieActive = false;    // true between zombieSpawn and zombieCleared
+let zombieRemaining = 0;     // last known horde size (for the HUD counter)
 
 // ===== GRIM REAPER BOSS EVENT STATE =====
 // Reaper state constants mirror the backend ReaperState enum.
@@ -982,6 +1033,84 @@ function resetReaperState() {
   reaperSpawnFx = [];
   reaperDeathFx = [];
   reaperBanner = null;
+}
+
+/* ================= ZOMBIE INFESTATION ================= */
+
+// Apply a parsed zombie list to client state, keeping a smoothed display
+// position per zombie so the horde interpolates between the 20Hz state frames.
+function updateZombiesFromState(list) {
+  zombies = list || [];
+  var seen = new Set();
+  for (var i = 0; i < zombies.length; i++) {
+    var z = zombies[i];
+    seen.add(z.id);
+    if (!zombieDisp.has(z.id)) {
+      zombieDisp.set(z.id, { x: z.x, y: z.y });
+    }
+  }
+  // Drop display entries for zombies no longer in view / alive.
+  zombieDisp.forEach(function (_, id) {
+    if (!seen.has(id)) zombieDisp.delete(id);
+  });
+}
+
+// Smoothly move each zombie's drawn position toward its server position.
+function updateZombieInterpolation(t) {
+  for (var i = 0; i < zombies.length; i++) {
+    var z = zombies[i];
+    var d = zombieDisp.get(z.id);
+    if (d) {
+      d.x += (z.x - d.x) * t;
+      d.y += (z.y - d.y) * t;
+    }
+  }
+}
+
+// Draw the horde. Uses pre-baked colour-tinted canvases (one drawImage each).
+function renderZombies() {
+  if (!zombies.length) return;
+  var now = Date.now();
+  var zh = 54; // drawn height in world px
+  for (var i = 0; i < zombies.length; i++) {
+    var z = zombies[i];
+    var d = zombieDisp.get(z.id) || z;
+    if (!isOnScreen(d.x, d.y)) continue;
+
+    // Shadow
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y + zh * 0.4, zh * 0.28, zh * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    var img = (spriteZombieLoaded && zombieTintCanvases[z.color]) || spriteZombie;
+    if (spriteZombieLoaded && img && img.width > 0) {
+      var iw = img.width, ih = img.height;
+      var zw = zh * (iw / ih);
+      // Subtle shamble bob so the horde feels alive without per-zombie state.
+      var bob = Math.sin(now / 180 + (z.id.charCodeAt(1) || 0)) * 1.5;
+      ctx.drawImage(img, d.x - zw / 2, d.y - zh * 0.78 + bob, zw, zh);
+    } else {
+      // Fallback blob
+      ctx.save();
+      ctx.fillStyle = "#5a7a3a";
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+// Clear all zombie state (round reset / leaving game).
+function resetZombieState() {
+  zombies = [];
+  zombieDisp.clear();
+  zombieActive = false;
+  zombieRemaining = 0;
 }
 
 
@@ -2684,6 +2813,7 @@ function showStartScreen() {
   wallHitDebris = [];
   pendingInputs = [];
   resetReaperState();
+  resetZombieState();
   screenShake = { intensity: 0, decay: 0.92 };
   killFeedEntries = [];
   killFeedDirty = true;
@@ -3112,6 +3242,41 @@ function connect() {
       return;
     }
 
+    // ===== ZOMBIE INFESTATION: SPAWN =====
+    if (data.type === "zombieSpawn") {
+      zombieActive = true;
+      zombieRemaining = data.count || 0;
+      showReaperBanner("\ud83e\udddf ZOMBIE INFESTATION \ud83e\udddf", "#7fd94a");
+      showToast("PvP disabled \u2014 clear the horde together!", "#7fd94a");
+      playSound("reaper-start", 0.7);
+      triggerScreenShake(8);
+      return;
+    }
+
+    // ===== ZOMBIE INFESTATION: A ZOMBIE DIED =====
+    if (data.type === "zombieKilled") {
+      createBlood(data.x, data.y);
+      createBloodStain(data.x, data.y);
+      if (zombieRemaining > 0) zombieRemaining--;
+      // Floating "+1" only for the local player's own kills (avoid horde spam).
+      if (data.killer && data.killer === loggedInUsername) {
+        createFloatingNumber(data.x, data.y, 1, false);
+      }
+      return;
+    }
+
+    // ===== ZOMBIE INFESTATION: HORDE CLEARED =====
+    if (data.type === "zombieCleared") {
+      zombieActive = false;
+      zombieRemaining = 0;
+      zombies = [];
+      zombieDisp.clear();
+      showReaperBanner("THE HORDE IS CLEARED", "#ffd24a");
+      var zwinIdx = Math.floor(Math.random() * 8) + 1;
+      playSound("win-" + zwinIdx, 0.6);
+      return;
+    }
+
     // ===== GRENADE EXPLOSION =====
     if (data.type === "grenadeExplosion") {
       var gdx = data.x - predictedX, gdy = data.y - predictedY;
@@ -3511,6 +3676,7 @@ function connect() {
       isMouseDown = false;
       // The reaper event (if any) is over once the round ends.
       resetReaperState();
+      resetZombieState();
       // Release all movement keys
       for (var rk in currentKeys) currentKeys[rk] = false;
       keysPressed.clear();
@@ -3596,6 +3762,7 @@ function connect() {
       roundEnded = false;
       // Clear any lingering reaper event state from the previous round.
       resetReaperState();
+      resetZombieState();
 
       // Hide round end overlay
       var roundOv = document.getElementById("roundEndOverlay");
@@ -4744,6 +4911,7 @@ function updateInterpolation() {
     target.currentX += (target.targetX - target.currentX) * t;
     target.currentY += (target.targetY - target.currentY) * t;
   });
+  updateZombieInterpolation(t);
 }
 
 // ============ MINIMAP ============
@@ -5530,6 +5698,9 @@ function render() {
   renderReaperSlashes();
   renderReaperDeathFx();
 
+  // ── Zombie infestation horde (world space) ──
+  renderZombies();
+
   // Render bullets — update predicted bullets and check wall collision
   bullets = bullets.filter(function(b) {
     if (b.predicted && b.dx !== undefined) {
@@ -5679,6 +5850,18 @@ function render() {
 
   // Grim Reaper event overlay (vignette + banners) in screen space
   renderReaperOverlay();
+
+  // Zombie infestation HUD counter (screen space)
+  if (zombieActive && zombieRemaining > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = "#7fd94a";
+    ctx.font = "bold 16px 'Share Tech Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("\ud83e\udddf INFESTATION \u2014 " + zombieRemaining + " LEFT", canvas.width / 2, 92);
+    ctx.textAlign = "start";
+    ctx.restore();
+  }
 
   // Render crosshair (in screen space)
   if (framePlayer) {

@@ -16,6 +16,7 @@ const cullMargin = 2400.0
 var (
 	globalObstacleGrid = NewSpatialGrid(cellSize)
 	globalPlayerGrid   = NewSpatialGrid(cellSize)
+	globalZombieGrid   = NewSpatialGrid(cellSize)
 )
 
 /* ================= GAME LOOP ================= */
@@ -260,6 +261,24 @@ func updateGame(game *Game) []playerStateSnapshot {
 		return nil
 	}
 
+	// ── Zombie infestation event ──
+	updateZombies(game, now)
+	// Rebuild the zombie spatial grid so bullets can hit the horde in O(1).
+	globalZombieGrid.Clear()
+	if game.ZombieActive {
+		for _, z := range game.Zombies {
+			if z.HP > 0 {
+				globalZombieGrid.Insert(&SpatialEntry{
+					ID:   "",
+					X:    z.X,
+					Y:    z.Y,
+					Size: z.Radius,
+					Data: z,
+				})
+			}
+		}
+	}
+
 	// ── Bullet physics ──
 	// Use a slice-based set for O(1) removal lookups without map allocation
 	bulletRemoved := make([]bool, len(game.Bullets))
@@ -332,8 +351,35 @@ func updateGame(game *Game) []playerStateSnapshot {
 			}
 		}
 
-		// While the reaper event is active, players cannot damage each other.
-		if game.ReaperActive {
+		// ── Zombie infestation hit detection ──
+		// While the horde is active, bullets damage zombies (and never players).
+		if game.ZombieActive {
+			var hitZombie *Zombie
+			nearbyZ := globalZombieGrid.QueryRadius(bullet.X, bullet.Y, GameConfig.ZombieRadius+8)
+			for _, e := range nearbyZ {
+				z := e.Data.(*Zombie)
+				if z.HP <= 0 {
+					continue
+				}
+				zdx := z.X - bullet.X
+				zdy := z.Y - bullet.Y
+				rr := z.Radius + 4
+				if zdx*zdx+zdy*zdy <= rr*rr {
+					hitZombie = z
+					break
+				}
+			}
+			if hitZombie != nil {
+				bulletRemoved[bi] = true
+				zombieTakeDamage(game, hitZombie, bullet.Damage, bullet.PlayerID)
+				// No per-hit broadcast (the horde is large): the bullet vanishing
+				// and the zombieKilled death effect are the feedback.
+				continue
+			}
+		}
+
+		// While any enemy event is active, players cannot damage each other.
+		if enemyEventActive(game) {
 			continue
 		}
 
@@ -456,6 +502,14 @@ func updateGame(game *Game) []playerStateSnapshot {
 	updateGrenades(game, now)
 
 	// ── Per-player viewport-culled binary state broadcast ──
+	// The simulation runs every tick, but to keep the server light (especially
+	// during large horde events) we only encode and send the binary state every
+	// StateBroadcastDivisor ticks. Clients interpolate between frames.
+	game.tickCount++
+	if GameConfig.StateBroadcastDivisor > 1 && game.tickCount%uint64(GameConfig.StateBroadcastDivisor) != 0 {
+		return nil
+	}
+
 	// Snapshots are encoded here (inside the lock) and sent after the lock is released.
 	game.StateSequence++
 	seq := game.StateSequence
@@ -497,12 +551,22 @@ func updateGame(game *Game) []playerStateSnapshot {
 				visGrenades = append(visGrenades, g)
 			}
 		}
+		var visZombies []*Zombie
+		if game.ZombieActive {
+			visZombies = make([]*Zombie, 0, len(game.Zombies))
+			for _, z := range game.Zombies {
+				if z.HP > 0 && math.Abs(z.X-vx) < half && math.Abs(z.Y-vy) < half {
+					visZombies = append(visZombies, z)
+				}
+			}
+		}
 
 		buf := EncodeBinaryState(&BinaryStateInput{
 			Seq:      seq,
 			Players:  visPlayers,
 			Bullets:  visBullets,
 			Grenades: visGrenades,
+			Zombies:  visZombies,
 			Reaper:   game.Reaper,
 		})
 

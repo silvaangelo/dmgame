@@ -43,9 +43,16 @@ Per player:  [shortId u16LE][x f32LE][y f32LE][hp i8][shots u8]  (25 bytes each)
              [weaponCode u8][kills u16LE][skin u8]
 Per bullet:  [bulletCount u16LE] header, then per bullet:          (11 bytes each)
              [shortId u16LE][x i16LE][y i16LE][weaponCode u8][angle f32LE]
+Per grenade: [grenadeCount u16LE] header, then per grenade:        (12 bytes each)
+Per zombie:  [zombieCount u16LE] header, then per zombie:          (7 bytes each)
+             [shortId u16LE][x i16LE][y i16LE][color u8]
 Reaper:      present only when flags bit0 (0x01) is set:           (17 bytes)
              [x f32LE][y f32LE][hp u16LE][maxHp u16LE][facing f32LE][state u8]
 ```
+
+Block order on the wire: players, bullets, grenades, zombies, then the optional
+reaper block. The state frame is broadcast at `TickRate / StateBroadcastDivisor`
+(simulation runs every tick; clients interpolate between frames).
 
 Weapon codes: `0=machinegun 1=shotgun 4=sniper`
 
@@ -80,7 +87,9 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 | `game.go`     | Game loop, physics, collision resolution, viewport    | `updateGame()`, `resolveCollisions()`, `startGameLoop()` |
 | `combat.go`   | Shooting, reload, muzzle/head position, kill handling | `shoot()`, `reloadWeapon()`, `handleKill()`       |
 | `round.go`    | Round timer, reset, player join/leave, respawn        | `startRoundTimer()`, `endRound()`, `addPlayerToGame()` |
-| `reaper.go`   | Grim Reaper boss random event (spawn, AI, combat)     | `maybeRollReaperSpawn()`, `updateReaper()`, `onReaperDefeated()` |
+| `events.go`   | Shared random-event roll (mutually-exclusive enemy events) | `maybeRollRandomEvent()`, `enemyEventActive()`    |
+| `reaper.go`   | Grim Reaper boss random event (spawn, AI, combat)     | `spawnReaper()`, `updateReaper()`, `onReaperDefeated()` |
+| `zombie.go`   | Zombie Infestation horde random event (spawn, AI, kills) | `spawnZombies()`, `updateZombies()`, `zombieTakeDamage()` |
 | `maps.go`     | Hand-designed map definitions, obstacle generation    | `PickRandomMap()`, `GenerateObstaclesFromMap()`   |
 | `types.go`    | All type definitions                                  | `Player`, `Bullet`, `Game`, `Obstacle`, …         |
 | `config.go`   | All game constants                                    | `GameConfig`, `WeaponCycle`                       |
@@ -120,31 +129,62 @@ Per-player WebSocket writes use `player.ConnMu sync.Mutex` independently from th
 2. Call `broadcast(game, map[string]interface{}{"type": "myEvent", ...})` to send it
 3. Handle in `frontend/game.js` → `ws.onmessage` handler with `if (data.type === "myEvent")`
 
+### Random Events (shared rules)
+
+Two mutually-exclusive co-op "enemy events" exist: the Grim Reaper boss (`reaper.go`)
+and the Zombie Infestation horde (`zombie.go`). `events.go` orchestrates them:
+
+- `maybeRollRandomEvent()` runs each round tick (under `game.mu`) once match time exceeds
+  `ReaperMinMatchTime` and at least `ReaperMinPlayers` are alive. When the shared per-second
+  probability fires, it picks **uniformly at random** among the events not yet used this round
+  (`ReaperDoneThisRound` / `ZombieDoneThisRound`) — equal chance, at most one per round, never
+  simultaneous.
+- `enemyEventActive(game)` (= `ReaperActive || ZombieActive`) gates **player-vs-player damage**
+  off in the `game.go` bullet loop for the duration of either event.
+
 ### The Grim Reaper Random Event
 
 The Reaper is a server-authoritative boss that can spawn mid-round (see `reaper.go`).
 
-- **Spawn:** `maybeRollReaperSpawn()` is rolled each round tick once match time exceeds
-  `ReaperMinMatchTime` and at least `ReaperMinPlayers` are alive. Probability ramps with
-  elapsed time (`ReaperSpawnChanceBase` → `ReaperSpawnChanceMax`), at most once per round
-  (`Game.ReaperDoneThisRound`).
+- **Spawn:** `spawnReaper()` is invoked by `maybeRollRandomEvent()` (see above).
 - **Scaling:** HP and melee damage scale with alive player count
   (`ReaperBaseHP`/`ReaperHPPerPlayer`, `ReaperAttackBaseDamage`/`ReaperAttackDmgPerPlr`).
 - **While active (`Game.ReaperActive`):** PvP and auto-respawn are gated off in `game.go`;
   dead players spectate. Bullets damage the Reaper (`reaperTakeDamage`, capped knockback) and
   do not hurt players.
-- **Resolution:** total wipe → `checkReaperWipe()` → `endRoundInternal(game, true)` (shared
-  game over, winner "☠ The Reaper"). Defeat → `onReaperDefeated()` revives players who died
-  during the fight and awards +1 to every alive player except the current leader.
+- **Resolution:** total wipe → `checkReaperWipe()` sets `Game.ReaperWipePending`; the game loop
+  ends the round after the tick (shared game over, winner "☠ The Reaper"). Defeat →
+  `onReaperDefeated()` revives players who died during the fight and awards +1 to every alive
+  player except the current leader.
 - **Wire format:** the Reaper rides on the binary state frame — set flags bit0 (`flagReaperPresent`)
   and append the 17-byte block in `protocol.go` → `EncodeBinaryState()`, parsed in
   `frontend/game.js` → `parseBinaryState()`. Events (`reaperSpawn`, `reaperAttack`, `reaperHit`,
   `reaperDefeated`, plus `kill` with weapon `"reaper"`) are msgpack broadcasts handled in
   `ws.onmessage`. Round reset clears all reaper state in `resetPersistentRound`.
 
-To add another random event, mirror this structure: a roll under `game.mu`, a state machine in
-its own file, gating flags on `Game`, a binary or msgpack channel for client rendering, and a
-full reset in `resetPersistentRound`.
+### The Zombie Infestation Random Event
+
+A horde of many cheap NPCs (see `zombie.go`), spawned `ZombiesPerPlayer` × alive players.
+
+- **Spawn:** `spawnZombies()` (via `maybeRollRandomEvent()`). Each zombie gets a random colour
+  variant and a randomly-chosen target player; it walks at player speed and bites on contact.
+- **While active (`Game.ZombieActive`):** PvP is disabled; players **still respawn normally**.
+  Bullets damage zombies via `globalZombieGrid`; `zombieTakeDamage()` credits the shooter with a
+  kill (reflected in the binary `kills` field). Zombies that bite a player to death broadcast a
+  `kill` with killer "🧟 Zombie", weapon `"zombie"`.
+- **Resolution:** the event ends when the last zombie dies → `onZombiesCleared()` (`zombieCleared`
+  broadcast). No shared game over.
+- **Wire format:** zombies ride on the binary state frame as a counted block (7 bytes each:
+  `shortId u16, x i16, y i16, color u8`) between the grenades and reaper blocks. Effect events
+  `zombieSpawn`, `zombieKilled`, `zombieCleared` are msgpack broadcasts. The client tint-bakes
+  the sprite once per colour and draws one `drawImage` per zombie.
+- **Performance:** no zombie-zombie collision, one obstacle grid query per zombie per tick, and
+  the binary state is broadcast at `TickRate / StateBroadcastDivisor` (20 Hz) while simulation
+  stays at 40 Hz — clients interpolate (`updateZombieInterpolation`).
+
+To add another random event, mirror this structure: register it in `events.go`'s available list,
+give it a state file, gating flags on `Game`, a binary or msgpack channel for client rendering,
+and a full reset in `resetPersistentRound`.
 
 ### Changing Arena Size
 

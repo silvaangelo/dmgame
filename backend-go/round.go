@@ -21,8 +21,8 @@ func startRoundTimer(game *Game) {
 			game.mu.Lock()
 			elapsed := unixMs() - game.MatchStartTime
 			remaining := max(0, int((roundDuration-elapsed+999)/1000)) // ceil
-			// Grim Reaper random event: roll for a spawn each second past the threshold.
-			maybeRollReaperSpawn(game, elapsed)
+			// Random events (Grim Reaper / Zombie Infestation): roll each second.
+			maybeRollRandomEvent(game, elapsed)
 			game.mu.Unlock()
 
 			broadcast(game, map[string]interface{}{
@@ -49,6 +49,7 @@ func endRoundInternal(game *Game, reaperGameOver bool) {
 	game.mu.Lock()
 	game.RoundEnded = true
 	game.ReaperActive = false
+	game.ZombieActive = false
 
 	// Build scoreboard
 	type scoreEntry struct {
@@ -197,6 +198,11 @@ func resetPersistentRound(game *Game) {
 	game.ReaperActive = false
 	game.ReaperDoneThisRound = false
 	game.ReaperWipePending = false
+
+	// Clear any Zombie Infestation event state for the new round.
+	game.Zombies = nil
+	game.ZombieActive = false
+	game.ZombieDoneThisRound = false
 
 	// Reset all player stats
 	for _, p := range game.Players {

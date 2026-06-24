@@ -27,6 +27,7 @@ const (
 	playerBytes  = 35 // +9 bytes: VX(4) + VY(4) + flags(1)
 	bulletBytes  = 11
 	grenadeBytes = 12 // shortId(2) + x(2) + y(2) + type(1) + aimAngle(4) + fuseProgress(1)
+	zombieBytes  = 7  // shortId(2) + x(2) + y(2) + color(1)
 	reaperBytes  = 17 // x(4) + y(4) + hp(2) + maxHp(2) + facing(4) + state(1)
 
 	// Header flags bits
@@ -52,7 +53,8 @@ type BinaryStateInput struct {
 	Players  []*Player
 	Bullets  []*Bullet
 	Grenades []*Grenade
-	Reaper   *Reaper // nil when no boss event is active
+	Zombies  []*Zombie // empty when no infestation is active
+	Reaper   *Reaper   // nil when no boss event is active
 }
 
 // EncodeBinaryState encodes a per-player state snapshot into compact binary.
@@ -60,7 +62,8 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 	totalSize := headerBytes +
 		len(input.Players)*playerBytes +
 		2 + len(input.Bullets)*bulletBytes +
-		2 + len(input.Grenades)*grenadeBytes
+		2 + len(input.Grenades)*grenadeBytes +
+		2 + len(input.Zombies)*zombieBytes
 	if input.Reaper != nil {
 		totalSize += reaperBytes
 	}
@@ -196,6 +199,20 @@ func EncodeBinaryState(input *BinaryStateInput) []byte {
 			progress = 1
 		}
 		buf[off] = byte(progress * 255)
+		off++
+	}
+
+	// Zombies (counted block; count is 0 when no infestation is active)
+	binary.LittleEndian.PutUint16(buf[off:], uint16(len(input.Zombies)))
+	off += 2
+	for _, z := range input.Zombies {
+		binary.LittleEndian.PutUint16(buf[off:], z.ShortID)
+		off += 2
+		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(z.X))))
+		off += 2
+		binary.LittleEndian.PutUint16(buf[off:], uint16(int16(math.Round(z.Y))))
+		off += 2
+		buf[off] = z.Color
 		off++
 	}
 

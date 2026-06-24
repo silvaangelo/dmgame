@@ -102,6 +102,18 @@ var GameConfig = struct {
 	ReaperDeathDuration    int64   // ms death animation before cleanup
 	ReaperKnockbackPerHit  float64 // velocity added per bullet hit
 	ReaperKnockbackMax     float64 // cap on accumulated knockback velocity
+	// Zombie infestation random event
+	ZombiesPerPlayer     int     // zombies spawned per alive player
+	ZombieHP             int     // hit points per zombie
+	ZombieSpeed          float64 // movement speed per tick (matches player speed)
+	ZombieRadius         float64 // collision/body radius
+	ZombieAttackRange    float64 // contact distance at which it can bite
+	ZombieAttackDamage   int     // damage per bite
+	ZombieAttackCooldown int64   // ms between bites from one zombie
+	ZombieColorVariants  int     // number of colour tints for visual variety
+	ZombieSpawnDuration  int64   // ms telegraph/rise before zombies become active
+	// Performance
+	StateBroadcastDivisor int // encode+send the binary state every N simulation ticks
 }{
 	TickRate:        40,
 	MaxPlayers:      10,
@@ -201,6 +213,18 @@ var GameConfig = struct {
 	ReaperDeathDuration:    1200,
 	ReaperKnockbackPerHit:  2.2,
 	ReaperKnockbackMax:     14.0,
+	// Zombie infestation random event
+	ZombiesPerPlayer:      20,
+	ZombieHP:              45,
+	ZombieSpeed:           10.5, // == PlayerSpeed
+	ZombieRadius:          18,
+	ZombieAttackRange:     40,
+	ZombieAttackDamage:    12,
+	ZombieAttackCooldown:  900,
+	ZombieColorVariants:   5,
+	ZombieSpawnDuration:   1500,
+	// Performance: simulate at TickRate, broadcast state at TickRate/Divisor.
+	StateBroadcastDivisor: 2, // 40Hz sim -> 20Hz state frames (clients interpolate)
 }
 
 // WeaponCycle is the order of weapons when cycling.
