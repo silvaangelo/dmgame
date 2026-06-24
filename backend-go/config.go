@@ -200,9 +200,9 @@ var GameConfig = struct {
 	ReaperSpawnChanceRamp:  0.0015, // grows the longer the round runs
 	ReaperSpawnChanceMax:   0.20,  // capped at 20% per second
 	ReaperMinPlayers:       2,
-	ReaperBaseHP:           1000,
-	ReaperHPPerPlayer:      750,
-	ReaperSpeed:            15.0, // ~1.5x player speed
+	ReaperBaseHP:           650,
+	ReaperHPPerPlayer:      450,
+	ReaperSpeed:            13.0, // ~1.25x player speed (kiteable)
 	ReaperRadius:           30,
 	ReaperAttackRange:      62,
 	ReaperAttackBaseDamage: 55,
@@ -214,17 +214,22 @@ var GameConfig = struct {
 	ReaperKnockbackPerHit:  2.2,
 	ReaperKnockbackMax:     14.0,
 	// Zombie infestation random event
-	ZombiesPerPlayer:      20,
-	ZombieHP:              45,
-	ZombieSpeed:           10.5, // == PlayerSpeed
+	ZombiesPerPlayer:      12,
+	ZombieHP:              28,
+	ZombieSpeed:           7.0, // slower than players so they can be kited
 	ZombieRadius:          18,
 	ZombieAttackRange:     40,
-	ZombieAttackDamage:    12,
-	ZombieAttackCooldown:  900,
+	ZombieAttackDamage:    9,
+	ZombieAttackCooldown:  1000,
 	ZombieColorVariants:   5,
 	ZombieSpawnDuration:   1500,
 	// Performance: simulate at TickRate, broadcast state at TickRate/Divisor.
-	StateBroadcastDivisor: 2, // 40Hz sim -> 20Hz state frames (clients interpolate)
+	// Keep at 1 (full-rate broadcast). The client renders entities at the
+	// broadcast rate (local prediction only steps on packets/key events, and
+	// remote interpolation is tuned for full-rate frames), so any value > 1
+	// causes teleporting/rubber-banding. Only raise this alongside a proper
+	// snapshot-interpolation + local-prediction rewrite.
+	StateBroadcastDivisor: 1, // 40Hz sim -> 40Hz state frames
 }
 
 // WeaponCycle is the order of weapons when cycling.

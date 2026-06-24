@@ -178,9 +178,11 @@ A horde of many cheap NPCs (see `zombie.go`), spawned `ZombiesPerPlayer` × aliv
   `shortId u16, x i16, y i16, color u8`) between the grenades and reaper blocks. Effect events
   `zombieSpawn`, `zombieKilled`, `zombieCleared` are msgpack broadcasts. The client tint-bakes
   the sprite once per colour and draws one `drawImage` per zombie.
-- **Performance:** no zombie-zombie collision, one obstacle grid query per zombie per tick, and
-  the binary state is broadcast at `TickRate / StateBroadcastDivisor` (20 Hz) while simulation
-  stays at 40 Hz — clients interpolate (`updateZombieInterpolation`).
+- **Performance:** no zombie-zombie collision, one obstacle grid query per zombie per tick. The
+  binary state is broadcast at `TickRate / StateBroadcastDivisor` (currently 40 Hz, divisor 1);
+  clients interpolate (`updateZombieInterpolation`). Raising the divisor reduces server load but
+  causes teleporting/rubber-banding unless paired with a snapshot-interpolation rewrite, since the
+  client renders entities at the broadcast rate.
 
 To add another random event, mirror this structure: register it in `events.go`'s available list,
 give it a state file, gating flags on `Game`, a binary or msgpack channel for client rendering,
